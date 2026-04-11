@@ -18,10 +18,10 @@ import hmac
 import logging
 import secrets
 import time
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import urlencode
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse, HTMLResponse
+from starlette.responses import JSONResponse, RedirectResponse
 from starlette.routing import Route
 
 from . import config
@@ -32,12 +32,31 @@ logger = logging.getLogger(__name__)
 # Maps code -> {client_id, redirect_uri, code_challenge, code_challenge_method, expires_at}
 _auth_codes: dict[str, dict] = {}
 
+# In-memory dynamic client registrations
+# Maps client_id -> {client_secret, redirect_uris}
+_registered_clients: dict[str, dict] = {}
+
 # Clean up expired codes periodically
 def _cleanup_codes():
     now = time.time()
     expired = [k for k, v in _auth_codes.items() if v["expires_at"] < now]
     for k in expired:
         del _auth_codes[k]
+
+
+def _get_registered_client(client_id: str) -> dict | None:
+    """Return dynamic or pre-configured client metadata for a client_id."""
+    if client_id in _registered_clients:
+        return _registered_clients[client_id]
+
+    if client_id == config.VAULT_OAUTH_CLIENT_ID and config.VAULT_OAUTH_CLIENT_SECRET:
+        return {
+            "client_secret": config.VAULT_OAUTH_CLIENT_SECRET,
+            "redirect_uris": None,
+            "allow_client_credentials": True,
+        }
+
+    return None
 
 
 async def oauth_metadata(request: Request) -> JSONResponse:
@@ -72,8 +91,16 @@ async def oauth_authorize(request: Request):
     if response_type != "code":
         return JSONResponse({"error": "unsupported_response_type"}, status_code=400)
 
+    client = _get_registered_client(client_id)
+    if client is None:
+        return JSONResponse({"error": "invalid_client"}, status_code=401)
+
     if not redirect_uri:
         return JSONResponse({"error": "invalid_request", "error_description": "redirect_uri required"}, status_code=400)
+
+    allowed_redirect_uris = client["redirect_uris"]
+    if allowed_redirect_uris is not None and redirect_uri not in allowed_redirect_uris:
+        return JSONResponse({"error": "invalid_request", "error_description": "redirect_uri not registered"}, status_code=400)
 
     # Generate authorization code
     _cleanup_codes()
@@ -134,10 +161,26 @@ async def _handle_authorization_code(form, client_id: str, client_secret: str) -
     if code not in _auth_codes:
         return JSONResponse({"error": "invalid_grant", "error_description": "Invalid or expired code"}, status_code=400)
 
-    code_data = _auth_codes.pop(code)
+    code_data = _auth_codes[code]
+    client = _get_registered_client(client_id)
+
+    if client is None:
+        return JSONResponse({"error": "invalid_client"}, status_code=401)
+
+    if not hmac.compare_digest(client_id, code_data["client_id"]):
+        return JSONResponse({"error": "invalid_grant", "error_description": "client_id mismatch"}, status_code=400)
+
+    if not client_secret:
+        return JSONResponse({"error": "invalid_client", "error_description": "client_secret required"}, status_code=401)
+
+    if not hmac.compare_digest(client_secret, client["client_secret"]):
+        return JSONResponse({"error": "invalid_client"}, status_code=401)
 
     # Verify redirect_uri matches
-    if redirect_uri and code_data["redirect_uri"] and redirect_uri != code_data["redirect_uri"]:
+    if not redirect_uri:
+        return JSONResponse({"error": "invalid_request", "error_description": "redirect_uri required"}, status_code=400)
+
+    if code_data["redirect_uri"] and redirect_uri != code_data["redirect_uri"]:
         return JSONResponse({"error": "invalid_grant", "error_description": "redirect_uri mismatch"}, status_code=400)
 
     # Verify PKCE code_challenge if one was provided during authorization
@@ -153,6 +196,7 @@ async def _handle_authorization_code(form, client_id: str, client_secret: str) -
         if not hmac.compare_digest(computed_challenge, code_data["code_challenge"]):
             return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"}, status_code=400)
 
+    _auth_codes.pop(code, None)
     logger.info("OAuth token issued via authorization_code grant")
     return JSONResponse({
         "access_token": config.VAULT_MCP_TOKEN,
@@ -163,13 +207,16 @@ async def _handle_authorization_code(form, client_id: str, client_secret: str) -
 
 async def _handle_client_credentials(client_id: str, client_secret: str) -> JSONResponse:
     """Exchange client credentials for a bearer token."""
-    if not config.VAULT_OAUTH_CLIENT_SECRET:
-        return JSONResponse({"error": "server_error"}, status_code=500)
+    client = _get_registered_client(client_id)
+    if client is None:
+        return JSONResponse({"error": "invalid_client"}, status_code=401)
 
-    id_match = hmac.compare_digest(client_id, config.VAULT_OAUTH_CLIENT_ID)
-    secret_match = hmac.compare_digest(client_secret, config.VAULT_OAUTH_CLIENT_SECRET)
+    if not client.get("allow_client_credentials", False):
+        return JSONResponse({"error": "unauthorized_client"}, status_code=401)
 
-    if not (id_match and secret_match):
+    secret_match = hmac.compare_digest(client_secret, client["client_secret"])
+
+    if not secret_match:
         logger.warning(f"OAuth client_credentials failed (client_id={client_id!r})")
         return JSONResponse({"error": "invalid_client"}, status_code=401)
 
@@ -192,16 +239,29 @@ async def oauth_register(request: Request) -> JSONResponse:
     except Exception:
         body = {}
 
-    # Generate a unique client_id for this registration
+    redirect_uris = body.get("redirect_uris", [])
+    if not isinstance(redirect_uris, list) or not all(isinstance(uri, str) and uri for uri in redirect_uris):
+        return JSONResponse({"error": "invalid_client_metadata", "error_description": "redirect_uris must be a list of non-empty strings"}, status_code=400)
+
+    if not redirect_uris:
+        return JSONResponse({"error": "invalid_client_metadata", "error_description": "redirect_uris required"}, status_code=400)
+
+    # Generate unique credentials for this registration instead of reusing the global secret
     client_id = f"vault-mcp-{secrets.token_hex(8)}"
+    client_secret = secrets.token_urlsafe(32)
+    _registered_clients[client_id] = {
+        "client_secret": client_secret,
+        "redirect_uris": set(redirect_uris),
+        "allow_client_credentials": False,
+    }
 
     return JSONResponse({
         "client_id": client_id,
-        "client_secret": config.VAULT_OAUTH_CLIENT_SECRET,
+        "client_secret": client_secret,
         "client_name": body.get("client_name", "Obsidian Vault MCP Client"),
         "grant_types": ["authorization_code"],
         "response_types": ["code"],
-        "redirect_uris": body.get("redirect_uris", []),
+        "redirect_uris": redirect_uris,
         "token_endpoint_auth_method": "client_secret_post",
     }, status_code=201)
 
