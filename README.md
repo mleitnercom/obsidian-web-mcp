@@ -2,7 +2,7 @@
 
 A secure, remote-accessible MCP server that gives LLMs read/write access to your Obsidian vault from anywhere -- your desktop, your phone, a hotel Wi-Fi network. Unlike local-only Obsidian MCP servers, this one runs over HTTPS with real authentication, so Claude (or any MCP client) can reach your vault whether you're at your desk or not.
 
-It reads and writes markdown files on disk, parses YAML frontmatter, maintains an in-memory frontmatter index for fast queries, and handles full-text search -- all behind OAuth 2.0 authentication and a Cloudflare Tunnel that never exposes your machine directly to the internet.
+It reads and writes markdown files on disk, parses YAML frontmatter, serializes YAML date/datetime values safely into JSON responses, maintains an in-memory frontmatter index for fast queries, and handles full-text search -- all behind OAuth 2.0 authentication and a Cloudflare Tunnel that never exposes your machine directly to the internet.
 
 ## Why This Exists
 
@@ -55,7 +55,7 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_batch_read` | Read multiple files in one call; handles missing files gracefully |
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content |
-| `vault_search` | Full-text search across vault files (uses ripgrep if available, falls back to Python) |
+| `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
 | `vault_list` | List directory contents with recursion depth, glob filtering, and file/dir toggles |
 | `vault_move` | Move or rename a file or directory within the vault |
@@ -87,6 +87,13 @@ export VAULT_PATH="$HOME/Obsidian/MyVault"
 
 # Run the server
 uv run vault-mcp
+```
+
+If you prefer `pip` instead of `uv`:
+
+```bash
+python -m pip install -e .
+vault-mcp
 ```
 
 The server starts on port 8420 by default. It serves MCP over Streamable HTTP at `/mcp/`.
@@ -201,6 +208,12 @@ The server coexists with Obsidian Sync (or any file-based sync mechanism) withou
 
 ```bash
 uv run pytest tests/ -v
+```
+
+If you are using `pip` instead of `uv`, run:
+
+```bash
+python -m pytest tests/ -v
 ```
 
 Tests use temporary directories and never touch your real vault.
