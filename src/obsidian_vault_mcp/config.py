@@ -1,10 +1,18 @@
 import os
 from pathlib import Path
 
+
+def _env_int(name: str, default: int) -> int:
+    """Parse an integer environment variable with a safe fallback."""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
 # Vault configuration
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", os.path.expanduser("~/Obsidian/MyVault")))
 VAULT_MCP_TOKEN = os.environ.get("VAULT_MCP_TOKEN", "")
-VAULT_MCP_PORT = int(os.environ.get("VAULT_MCP_PORT", "8420"))
+VAULT_MCP_PORT = _env_int("VAULT_MCP_PORT", 8420)
 
 # OAuth 2.0 client credentials (for Claude app integration)
 VAULT_OAUTH_CLIENT_ID = os.environ.get("VAULT_OAUTH_CLIENT_ID", "vault-mcp-client")
@@ -14,12 +22,12 @@ VAULT_OAUTH_AUTH_PASSWORD = os.environ.get("VAULT_OAUTH_AUTH_PASSWORD", "")
 VAULT_OAUTH_SESSION_SECRET = os.environ.get("VAULT_OAUTH_SESSION_SECRET", "")
 
 # Safety limits
-MAX_CONTENT_SIZE = 1_000_000  # 1MB max write size
-MAX_BATCH_SIZE = 20           # Max files per batch operation
-MAX_SEARCH_RESULTS = 50       # Max results per search
-DEFAULT_SEARCH_RESULTS = 20
-MAX_LIST_DEPTH = 5            # Max directory recursion depth
-CONTEXT_LINES = 2             # Default lines of context in search results
+MAX_CONTENT_SIZE = _env_int("VAULT_MAX_CONTENT_SIZE", 1_000_000)
+MAX_BATCH_SIZE = _env_int("VAULT_MAX_BATCH_SIZE", 20)
+MAX_SEARCH_RESULTS = _env_int("VAULT_MAX_SEARCH_RESULTS", 50)
+DEFAULT_SEARCH_RESULTS = _env_int("VAULT_DEFAULT_SEARCH_RESULTS", 20)
+MAX_LIST_DEPTH = _env_int("VAULT_MAX_LIST_DEPTH", 5)
+CONTEXT_LINES = _env_int("VAULT_CONTEXT_LINES", 2)
 
 # Directories to never expose or modify
 EXCLUDED_DIRS = {".obsidian", ".trash", ".git", ".DS_Store"}
@@ -28,5 +36,12 @@ EXCLUDED_DIRS = {".obsidian", ".trash", ".git", ".DS_Store"}
 FRONTMATTER_INDEX_DEBOUNCE = 5.0
 
 # Rate limiting (requests per minute) -- track in-memory, enforce per-token
-RATE_LIMIT_READ = 100
-RATE_LIMIT_WRITE = 30
+RATE_LIMIT_READ = _env_int("VAULT_RATE_LIMIT_READ", 100)
+RATE_LIMIT_WRITE = _env_int("VAULT_RATE_LIMIT_WRITE", 30)
+RATE_LIMIT_OAUTH_AUTHORIZE = _env_int("VAULT_RATE_LIMIT_OAUTH_AUTHORIZE", 30)
+RATE_LIMIT_OAUTH_TOKEN = _env_int("VAULT_RATE_LIMIT_OAUTH_TOKEN", 30)
+RATE_LIMIT_OAUTH_REGISTER = _env_int("VAULT_RATE_LIMIT_OAUTH_REGISTER", 10)
+
+# Dynamic OAuth client registration limits
+REGISTERED_CLIENT_TTL_SECONDS = _env_int("VAULT_REGISTERED_CLIENT_TTL_SECONDS", 3600)
+MAX_REGISTERED_CLIENTS = _env_int("VAULT_MAX_REGISTERED_CLIENTS", 128)

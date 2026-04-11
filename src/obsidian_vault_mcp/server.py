@@ -12,13 +12,33 @@ from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from . import config
 from .config import VAULT_MCP_PORT, VAULT_MCP_TOKEN, VAULT_PATH
 from .frontmatter_index import FrontmatterIndex
+from .rate_limit import check_rate_limit, current_auth_principal
+from .vault import vault_json_dumps
 
 logger = logging.getLogger(__name__)
 
 # Global frontmatter index instance
 frontmatter_index = FrontmatterIndex()
+
+
+def _enforce_tool_rate_limit(scope: str, limit: int) -> None:
+    """Enforce per-token tool rate limits for the current authenticated request."""
+    principal = current_auth_principal()
+    if principal is None:
+        raise ValueError("Missing authenticated request context for rate limiting")
+    check_rate_limit(f"tool_{scope}", principal, limit)
+
+
+def _tool_rate_limit_error(scope: str, limit: int) -> str | None:
+    """Return a JSON error payload if the current request exceeded its rate limit."""
+    try:
+        _enforce_tool_rate_limit(scope, limit)
+    except ValueError as e:
+        return vault_json_dumps({"error": str(e)})
+    return None
 
 
 @asynccontextmanager
@@ -79,6 +99,9 @@ from .models import (
 def vault_read(path: str) -> str:
     """Read a file from the vault."""
     inp = VaultReadInput(path=path)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
     return _vault_read(inp.path)
 
 
@@ -90,6 +113,9 @@ def vault_read(path: str) -> str:
 def vault_batch_read(paths: list[str], include_content: bool = True) -> str:
     """Read multiple files at once."""
     inp = VaultBatchReadInput(paths=paths, include_content=include_content)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
     return _vault_batch_read(inp.paths, inp.include_content)
 
 
@@ -101,6 +127,9 @@ def vault_batch_read(paths: list[str], include_content: bool = True) -> str:
 def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontmatter: bool = False) -> str:
     """Write a file to the vault."""
     inp = VaultWriteInput(path=path, content=content, create_dirs=create_dirs, merge_frontmatter=merge_frontmatter)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
     return _vault_write(inp.path, inp.content, inp.create_dirs, inp.merge_frontmatter)
 
 
@@ -112,6 +141,9 @@ def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontma
 def vault_batch_frontmatter_update(updates: list[dict]) -> str:
     """Batch update frontmatter fields."""
     inp = VaultBatchFrontmatterUpdateInput(updates=updates)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
     return _vault_batch_frontmatter_update(inp.updates)
 
 
@@ -129,6 +161,9 @@ def vault_search(
 ) -> str:
     """Search vault file contents."""
     inp = VaultSearchInput(query=query, path_prefix=path_prefix, file_pattern=file_pattern, max_results=max_results, context_lines=context_lines)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
     return _vault_search(inp.query, inp.path_prefix, inp.file_pattern, inp.max_results, inp.context_lines)
 
 
@@ -146,6 +181,9 @@ def vault_search_frontmatter(
 ) -> str:
     """Search by frontmatter fields."""
     inp = VaultSearchFrontmatterInput(field=field, value=value, match_type=match_type, path_prefix=path_prefix, max_results=max_results)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
     return _vault_search_frontmatter(inp.field, inp.value, inp.match_type, inp.path_prefix, inp.max_results)
 
 
@@ -163,6 +201,9 @@ def vault_list(
 ) -> str:
     """List vault directory contents."""
     inp = VaultListInput(path=path, depth=depth, include_files=include_files, include_dirs=include_dirs, pattern=pattern)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
     return _vault_list(inp.path, inp.depth, inp.include_files, inp.include_dirs, inp.pattern)
 
 
@@ -174,6 +215,9 @@ def vault_list(
 def vault_move(source: str, destination: str, create_dirs: bool = True) -> str:
     """Move a file or directory."""
     inp = VaultMoveInput(source=source, destination=destination, create_dirs=create_dirs)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
     return _vault_move(inp.source, inp.destination, inp.create_dirs)
 
 
@@ -185,6 +229,9 @@ def vault_move(source: str, destination: str, create_dirs: bool = True) -> str:
 def vault_delete(path: str, confirm: bool = False) -> str:
     """Delete a file (move to .trash/)."""
     inp = VaultDeleteInput(path=path, confirm=confirm)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
     return _vault_delete(inp.path, inp.confirm)
 
 
@@ -227,9 +274,8 @@ def main():
             forwarded_allow_ips="*",
         )
     except Exception as e:
-        logger.warning(f"Could not build app ({e}), falling back to mcp.run()")
-        logger.warning("Auth will NOT be enforced in this mode")
-        mcp.run(transport="streamable-http", port=VAULT_MCP_PORT)
+        logger.exception("Could not build authenticated app; refusing to start")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

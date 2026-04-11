@@ -53,7 +53,9 @@ This is a server that provides network access to your personal notes. Security i
 
 **Writes are atomic.** Every file write goes to a temporary file first, then atomically replaces the target via `os.replace()`. This guarantees that neither Obsidian nor Obsidian Sync ever sees a partially-written file -- the operation either completes fully or doesn't happen at all.
 
-**Safety limits prevent abuse.** Writes are capped at 1MB per file, batch operations at 20 files per request, and search results at 50 matches. Deletions are soft -- files move to `.trash/` rather than being permanently removed, matching Obsidian's own behavior. The delete tool also requires an explicit `confirm=true` parameter as a safety gate.
+**Safety limits prevent abuse.** By default, writes are capped at 1MB per file, batch operations at 20 files per request, search results at 50 matches, and directory recursion at 5 levels. These limits are configurable via environment variables for larger vaults or more permissive deployments. Deletions are soft -- files move to `.trash/` rather than being permanently removed, matching Obsidian's own behavior. The delete tool also requires an explicit `confirm=true` parameter as a safety gate.
+
+**Authentication fails closed.** If the authenticated Starlette app cannot be constructed at startup, the process exits instead of falling back to an unauthenticated MCP server.
 
 ## Tools
 
@@ -120,6 +122,19 @@ All configuration is via environment variables:
 | `VAULT_OAUTH_AUTH_USERNAME` | No | (none) | Optional username required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
+| `VAULT_MAX_CONTENT_SIZE` | No | `1000000` | Maximum bytes allowed per write operation |
+| `VAULT_MAX_BATCH_SIZE` | No | `20` | Maximum files allowed in a batch read/frontmatter update |
+| `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard upper bound for search results |
+| `VAULT_DEFAULT_SEARCH_RESULTS` | No | `20` | Default search result count when the client does not specify one |
+| `VAULT_MAX_LIST_DEPTH` | No | `5` | Maximum recursion depth for `vault_list` |
+| `VAULT_CONTEXT_LINES` | No | `2` | Default context lines returned around search hits |
+| `VAULT_RATE_LIMIT_READ` | No | `100` | Per-token read requests per minute |
+| `VAULT_RATE_LIMIT_WRITE` | No | `30` | Per-token write requests per minute |
+| `VAULT_RATE_LIMIT_OAUTH_AUTHORIZE` | No | `30` | Per-IP `/oauth/authorize` requests per minute |
+| `VAULT_RATE_LIMIT_OAUTH_TOKEN` | No | `30` | Per-IP `/oauth/token` requests per minute |
+| `VAULT_RATE_LIMIT_OAUTH_REGISTER` | No | `10` | Per-IP `/oauth/register` requests per minute |
+| `VAULT_REGISTERED_CLIENT_TTL_SECONDS` | No | `3600` | How long dynamic OAuth client registrations stay valid in memory |
+| `VAULT_MAX_REGISTERED_CLIENTS` | No | `128` | Maximum retained dynamic OAuth client registrations in memory |
 
 Generate tokens with: `python -c "import secrets; print(secrets.token_hex(32))"`
 

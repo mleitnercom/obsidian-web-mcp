@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _auth_codes: dict[str, dict] = {}
 
 # In-memory dynamic client registrations
-# Maps client_id -> {client_secret, redirect_uris}
+# Maps client_id -> {client_secret, redirect_uris, created_at}
 _registered_clients: dict[str, dict] = {}
 _SESSION_COOKIE_NAME = "vault_mcp_oauth_session"
 _SESSION_TTL_SECONDS = 3600
@@ -45,6 +45,32 @@ def _cleanup_codes():
     expired = [k for k, v in _auth_codes.items() if v["expires_at"] < now]
     for k in expired:
         del _auth_codes[k]
+
+
+def _cleanup_registered_clients() -> None:
+    """Expire old dynamic client registrations and cap total retained clients."""
+    now = time.time()
+    expired = [
+        client_id
+        for client_id, data in _registered_clients.items()
+        if (now - data.get("created_at", now)) > config.REGISTERED_CLIENT_TTL_SECONDS
+    ]
+    for client_id in expired:
+        del _registered_clients[client_id]
+
+    while len(_registered_clients) >= config.MAX_REGISTERED_CLIENTS and _registered_clients:
+        oldest_client_id = min(
+            _registered_clients,
+            key=lambda client_id: _registered_clients[client_id].get("created_at", 0.0),
+        )
+        del _registered_clients[oldest_client_id]
+
+
+def _client_ip(request: Request) -> str:
+    """Return the best-effort client IP for rate limiting."""
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
 
 
 def _oauth_login_enabled() -> bool:
@@ -151,6 +177,8 @@ def _authorize_redirect_url(params: dict[str, str]) -> str:
 
 def _get_registered_client(client_id: str) -> dict | None:
     """Return dynamic or pre-configured client metadata for a client_id."""
+    _cleanup_registered_clients()
+
     if client_id in _registered_clients:
         return _registered_clients[client_id]
 
@@ -186,6 +214,13 @@ async def oauth_authorize(request: Request):
     personal server, we auto-approve: generate an auth code and redirect
     back to Claude immediately.
     """
+    from .rate_limit import check_rate_limit
+
+    try:
+        check_rate_limit("oauth_authorize", _client_ip(request), config.RATE_LIMIT_OAUTH_AUTHORIZE)
+    except ValueError as e:
+        return JSONResponse({"error": "rate_limited", "error_description": str(e)}, status_code=429)
+
     if request.method == "POST":
         try:
             form = await request.form()
@@ -266,6 +301,13 @@ async def oauth_authorize(request: Request):
 
 async def oauth_token(request: Request) -> JSONResponse:
     """OAuth 2.0 token endpoint -- authorization code grant with PKCE."""
+    from .rate_limit import check_rate_limit
+
+    try:
+        check_rate_limit("oauth_token", _client_ip(request), config.RATE_LIMIT_OAUTH_TOKEN)
+    except ValueError as e:
+        return JSONResponse({"error": "rate_limited", "error_description": str(e)}, status_code=429)
+
     try:
         form = await request.form()
     except Exception:
@@ -371,6 +413,13 @@ async def oauth_register(request: Request) -> JSONResponse:
     Claude calls this during initial setup to register as an OAuth client.
     Returns pre-configured credentials.
     """
+    from .rate_limit import check_rate_limit
+
+    try:
+        check_rate_limit("oauth_register", _client_ip(request), config.RATE_LIMIT_OAUTH_REGISTER)
+    except ValueError as e:
+        return JSONResponse({"error": "rate_limited", "error_description": str(e)}, status_code=429)
+
     try:
         body = await request.json()
     except Exception:
@@ -383,6 +432,8 @@ async def oauth_register(request: Request) -> JSONResponse:
     if not redirect_uris:
         return JSONResponse({"error": "invalid_client_metadata", "error_description": "redirect_uris required"}, status_code=400)
 
+    _cleanup_registered_clients()
+
     # Generate unique credentials for this registration instead of reusing the global secret
     client_id = f"vault-mcp-{secrets.token_hex(8)}"
     client_secret = secrets.token_urlsafe(32)
@@ -390,6 +441,7 @@ async def oauth_register(request: Request) -> JSONResponse:
         "client_secret": client_secret,
         "redirect_uris": set(redirect_uris),
         "allow_client_credentials": False,
+        "created_at": time.time(),
     }
 
     return JSONResponse({

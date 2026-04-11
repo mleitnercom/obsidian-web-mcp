@@ -7,6 +7,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .config import VAULT_MCP_TOKEN
+from .rate_limit import reset_current_auth_principal, set_current_auth_principal
 
 # Paths that don't require bearer auth (OAuth flow + health)
 _AUTH_EXEMPT_PATHS = {
@@ -45,4 +46,8 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
                 status_code=401,
             )
 
-        return await call_next(request)
+        context_token = set_current_auth_principal(token)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_auth_principal(context_token)

@@ -1,5 +1,8 @@
 """Security-focused tests for auth and OAuth flows."""
 
+import json
+
+import pytest
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
@@ -8,7 +11,10 @@ from starlette.testclient import TestClient
 
 import obsidian_vault_mcp.auth as auth
 import obsidian_vault_mcp.oauth as oauth
+import obsidian_vault_mcp.server as server
+from obsidian_vault_mcp import config
 from obsidian_vault_mcp.auth import BearerAuthMiddleware
+from obsidian_vault_mcp.rate_limit import reset_rate_limits, reset_current_auth_principal, set_current_auth_principal
 
 
 async def _protected(_request):
@@ -17,6 +23,7 @@ async def _protected(_request):
 
 def test_bearer_auth_accepts_valid_token(monkeypatch):
     """Protected routes accept a valid bearer token."""
+    reset_rate_limits()
     monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
     app = Starlette(
         routes=[Route("/protected", _protected)],
@@ -32,6 +39,7 @@ def test_bearer_auth_accepts_valid_token(monkeypatch):
 
 def test_bearer_auth_rejects_invalid_token(monkeypatch):
     """Protected routes reject invalid bearer tokens."""
+    reset_rate_limits()
     monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
     app = Starlette(
         routes=[Route("/protected", _protected)],
@@ -47,6 +55,7 @@ def test_bearer_auth_rejects_invalid_token(monkeypatch):
 
 def test_oauth_register_returns_unique_secret(monkeypatch):
     """Dynamic registration does not leak the server's configured client secret."""
+    reset_rate_limits()
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_CLIENT_SECRET", "server-secret")
@@ -63,6 +72,7 @@ def test_oauth_register_returns_unique_secret(monkeypatch):
 
 def test_oauth_authorize_requires_login_when_configured(monkeypatch):
     """Configured authorize credentials force an interactive login step."""
+    reset_rate_limits()
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_USERNAME", "michael")
@@ -92,6 +102,7 @@ def test_oauth_authorize_requires_login_when_configured(monkeypatch):
 
 def test_oauth_authorize_login_then_issues_code(monkeypatch):
     """A successful login on /oauth/authorize proceeds to the normal code flow."""
+    reset_rate_limits()
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
     monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token")
@@ -141,6 +152,7 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
 
 def test_oauth_authorization_code_flow_validates_client_and_redirect(monkeypatch):
     """Authorization code exchange binds code to client_id and redirect_uri."""
+    reset_rate_limits()
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
     monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token")
@@ -185,6 +197,7 @@ def test_oauth_authorization_code_flow_validates_client_and_redirect(monkeypatch
 
 def test_oauth_authorize_rejects_unregistered_redirect_uri():
     """Authorization rejects redirect URIs that were not registered for the client."""
+    reset_rate_limits()
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
 
@@ -211,6 +224,7 @@ def test_oauth_authorize_rejects_unregistered_redirect_uri():
 
 def test_dynamic_clients_cannot_use_client_credentials():
     """Dynamically registered clients cannot bypass user auth via client_credentials."""
+    reset_rate_limits()
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
 
@@ -232,3 +246,64 @@ def test_dynamic_clients_cannot_use_client_credentials():
 
     assert response.status_code == 401
     assert response.json()["error"] == "unauthorized_client"
+
+
+def test_oauth_register_is_rate_limited(monkeypatch):
+    """Dynamic registration is rate limited per client IP."""
+    reset_rate_limits()
+    oauth._registered_clients.clear()
+    monkeypatch.setattr(config, "RATE_LIMIT_OAUTH_REGISTER", 1)
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        first = client.post("/oauth/register", json={"redirect_uris": ["https://claude.example/callback"]})
+        second = client.post("/oauth/register", json={"redirect_uris": ["https://claude.example/callback"]})
+
+    assert first.status_code == 201
+    assert second.status_code == 429
+    assert second.json()["error"] == "rate_limited"
+
+
+def test_oauth_register_evicts_oldest_clients(monkeypatch):
+    """Dynamic client registrations are capped to avoid unbounded growth."""
+    reset_rate_limits()
+    oauth._registered_clients.clear()
+    monkeypatch.setattr(config, "MAX_REGISTERED_CLIENTS", 2)
+    monkeypatch.setattr(config, "REGISTERED_CLIENT_TTL_SECONDS", 3600)
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        a = client.post("/oauth/register", json={"redirect_uris": ["https://a.example/callback"]}).json()
+        b = client.post("/oauth/register", json={"redirect_uris": ["https://b.example/callback"]}).json()
+        c = client.post("/oauth/register", json={"redirect_uris": ["https://c.example/callback"]}).json()
+
+    assert a["client_id"] not in oauth._registered_clients
+    assert b["client_id"] in oauth._registered_clients
+    assert c["client_id"] in oauth._registered_clients
+    assert len(oauth._registered_clients) == 2
+
+
+def test_tool_reads_are_rate_limited_per_token(vault_dir, monkeypatch):
+    """Read tools honor the configured per-token rate limit."""
+    reset_rate_limits()
+    monkeypatch.setattr(config, "RATE_LIMIT_READ", 1)
+
+    token = set_current_auth_principal("read-token")
+    try:
+        first = json.loads(server.vault_read("test-note.md"))
+        second = json.loads(server.vault_read("test-note.md"))
+    finally:
+        reset_current_auth_principal(token)
+
+    assert "error" not in first
+    assert second["error"].startswith("Rate limit exceeded")
+
+
+def test_main_fails_closed_when_authenticated_app_cannot_build(vault_dir, monkeypatch):
+    """Startup aborts instead of falling back to an unauthenticated server."""
+    reset_rate_limits()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with pytest.raises(SystemExit, match="1"):
+        server.main()
