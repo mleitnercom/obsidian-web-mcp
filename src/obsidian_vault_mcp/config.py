@@ -21,6 +21,21 @@ VAULT_OAUTH_AUTH_USERNAME = os.environ.get("VAULT_OAUTH_AUTH_USERNAME", "")
 VAULT_OAUTH_AUTH_PASSWORD = os.environ.get("VAULT_OAUTH_AUTH_PASSWORD", "")
 VAULT_OAUTH_SESSION_SECRET = os.environ.get("VAULT_OAUTH_SESSION_SECRET", "")
 
+# Optional semantic search
+SEMANTIC_SEARCH_ENABLED = os.environ.get("VAULT_SEMANTIC_SEARCH_ENABLED", "").lower() in {
+    "1", "true", "yes", "on",
+}
+SEMANTIC_EMBED_MODEL = os.environ.get("VAULT_SEMANTIC_EMBED_MODEL", "BAAI/bge-small-en-v1.5")
+SEMANTIC_CACHE_PATH = Path(
+    os.environ.get(
+        "VAULT_SEMANTIC_CACHE_PATH",
+        str(VAULT_PATH / ".obsidian-vault-mcp"),
+    )
+)
+SEMANTIC_CHUNK_SIZE = _env_int("VAULT_SEMANTIC_CHUNK_SIZE", 900)
+SEMANTIC_CHUNK_OVERLAP = _env_int("VAULT_SEMANTIC_CHUNK_OVERLAP", 150)
+SEMANTIC_MAX_RESULTS = _env_int("VAULT_SEMANTIC_MAX_RESULTS", 20)
+
 # Safety limits
 MAX_CONTENT_SIZE = _env_int("VAULT_MAX_CONTENT_SIZE", 1_000_000)
 MAX_BATCH_SIZE = _env_int("VAULT_MAX_BATCH_SIZE", 20)
@@ -31,7 +46,7 @@ MAX_TREE_DEPTH = _env_int("VAULT_MAX_TREE_DEPTH", 10)
 CONTEXT_LINES = _env_int("VAULT_CONTEXT_LINES", 2)
 
 # Directories to never expose or modify
-EXCLUDED_DIRS = {".obsidian", ".trash", ".git", ".DS_Store"}
+EXCLUDED_DIRS = {".obsidian", ".trash", ".git", ".DS_Store", ".obsidian-vault-mcp"}
 
 # Frontmatter index refresh interval (seconds)
 FRONTMATTER_INDEX_DEBOUNCE = 5.0

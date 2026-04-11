@@ -11,6 +11,7 @@ from .config import (
     MAX_CONTENT_SIZE,
     MAX_LIST_DEPTH,
     MAX_SEARCH_RESULTS,
+    SEMANTIC_MAX_RESULTS,
     MAX_TREE_DEPTH,
 )
 
@@ -208,6 +209,41 @@ class VaultSearchFrontmatterInput(BaseModel):
         ge=1,
         le=MAX_SEARCH_RESULTS,
         description="Maximum number of matching files to return",
+    )
+
+
+class VaultSemanticSearchInput(BaseModel):
+    """Semantic or hybrid retrieval across vault markdown content."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    query: str = Field(
+        ...,
+        description="Natural-language search query",
+        min_length=1,
+        max_length=300,
+    )
+    path_prefix: str | None = Field(
+        default=None,
+        description="Optional folder prefix to restrict semantic results",
+        max_length=500,
+    )
+    max_results: int = Field(
+        default=10,
+        ge=1,
+        le=SEMANTIC_MAX_RESULTS,
+        description="Maximum number of semantic matches to return",
+    )
+
+
+class VaultReindexInput(BaseModel):
+    """Rebuild the semantic search index from the current vault contents."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    full: bool = Field(
+        default=True,
+        description="Rebuild the semantic index from scratch",
     )
 
 

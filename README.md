@@ -2,7 +2,7 @@
 
 A secure, remote-accessible MCP server that gives LLMs read/write access to your Obsidian vault from anywhere -- your desktop, your phone, a hotel Wi-Fi network. Unlike local-only Obsidian MCP servers, this one runs over HTTPS with real authentication, so Claude (or any MCP client) can reach your vault whether you're at your desk or not.
 
-It reads and writes markdown files on disk, parses YAML frontmatter, serializes YAML date/datetime values safely into JSON responses, maintains an in-memory frontmatter index for fast queries, and handles full-text search -- all behind OAuth 2.0 authentication and a Cloudflare Tunnel that never exposes your machine directly to the internet.
+It reads and writes markdown files on disk, parses YAML frontmatter, serializes YAML date/datetime values safely into JSON responses, maintains an in-memory frontmatter index for fast queries, and handles full-text plus optional semantic search -- all behind OAuth 2.0 authentication and a Cloudflare Tunnel that never exposes your machine directly to the internet.
 
 ## Release
 
@@ -68,9 +68,11 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content |
 | `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
+| `vault_semantic_search` | Optional hybrid semantic plus keyword search backed by a persistent FAISS index |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
 | `vault_list` | List directory contents with recursion depth, glob filtering, and file/dir toggles |
 | `vault_tree` | Return a compact nested JSON tree of folders and files for quick orientation |
+| `vault_reindex` | Rebuild the optional semantic-search cache from the current vault contents |
 | `vault_move` | Move or rename a file or directory within the vault |
 | `vault_delete` | Soft-delete a file by moving it to `.trash/` (requires explicit confirmation) |
 
@@ -109,6 +111,13 @@ python -m pip install -e .
 vault-mcp
 ```
 
+To enable optional semantic search:
+
+```bash
+python -m pip install -e .[semantic]
+export VAULT_SEMANTIC_SEARCH_ENABLED=1
+```
+
 The server starts on port 8420 by default. It serves MCP over Streamable HTTP at `/mcp/`.
 
 ## Configuration
@@ -125,6 +134,12 @@ All configuration is via environment variables:
 | `VAULT_OAUTH_AUTH_USERNAME` | No | (none) | Optional username required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
+| `VAULT_SEMANTIC_SEARCH_ENABLED` | No | `false` | Enable optional FAISS-based semantic search |
+| `VAULT_SEMANTIC_EMBED_MODEL` | No | `BAAI/bge-small-en-v1.5` | `fastembed` model used for semantic embeddings |
+| `VAULT_SEMANTIC_CACHE_PATH` | No | `VAULT_PATH/.obsidian-vault-mcp` | Cache directory for FAISS index and semantic metadata |
+| `VAULT_SEMANTIC_CHUNK_SIZE` | No | `900` | Target character length for semantic chunks |
+| `VAULT_SEMANTIC_CHUNK_OVERLAP` | No | `150` | Character overlap between adjacent semantic chunks |
+| `VAULT_SEMANTIC_MAX_RESULTS` | No | `20` | Hard upper bound for semantic search results |
 | `VAULT_MAX_CONTENT_SIZE` | No | `1000000` | Maximum bytes allowed per write operation |
 | `VAULT_MAX_BATCH_SIZE` | No | `20` | Maximum files allowed in a batch read/frontmatter update |
 | `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard upper bound for search results |
@@ -152,7 +167,7 @@ The Claude desktop and mobile apps can connect to remote MCP servers via OAuth.
 4. Enter the OAuth client ID and client secret you configured
 5. Claude will discover the OAuth endpoints automatically and open a browser window
 6. If authorize-login credentials are configured, sign in in the browser window; otherwise the server auto-approves the authorization
-7. Claude now has access to all ten vault tools -- on desktop and mobile
+7. Claude now has access to all twelve vault tools -- on desktop and mobile
 
 For local-only use (no tunnel), point Claude at `http://localhost:8420`.
 
@@ -234,6 +249,16 @@ The server coexists with Obsidian Sync (or any file-based sync mechanism) withou
 - If Sync and the MCP server write to the same file simultaneously, the last write wins (standard filesystem semantics) but neither write is corrupted
 - The frontmatter index watches for filesystem changes via `watchdog` and updates automatically when Sync brings in new files
 
+## Semantic Search
+
+Semantic search is optional and disabled by default. The current implementation is CPU-first and uses:
+
+- `fastembed` for embeddings
+- `faiss-cpu` for vector similarity search
+- `rank-bm25` for keyword scoring
+
+Queries are answered with a hybrid score that blends semantic similarity with keyword relevance. The semantic index is persisted on disk so normal searches stay fast after restart, and `vault_reindex` rebuilds the cache when you want to refresh it.
+
 ## Development
 
 ### Running tests
@@ -259,16 +284,20 @@ src/obsidian_vault_mcp/
     frontmatter_index.py    # In-memory YAML frontmatter index with filesystem watcher
     models.py               # Pydantic input validation models
     oauth.py                # OAuth 2.0 authorization code flow with PKCE
+    retrieval/              # Optional FAISS-based semantic retrieval engine
     server.py               # FastMCP server setup, tool registration, entry point
     vault.py                # Core filesystem operations (path security, atomic writes)
     tools/
         manage.py           # list, move, delete tools
         read.py             # read, batch_read tools
         search.py           # full-text search, frontmatter search tools
+        semantic_search.py  # optional semantic search + reindex tools
         write.py            # write, batch_frontmatter_update tools
 tests/
+    test_chunker.py         # Semantic chunking tests
     conftest.py             # Shared fixtures (temp vault with sample files)
     test_frontmatter.py     # Frontmatter index and query tests
+    test_semantic_search.py # Semantic search tool tests
     test_tools.py           # Integration tests for tool functions
     test_vault.py           # Path resolution and file operation tests
 scripts/

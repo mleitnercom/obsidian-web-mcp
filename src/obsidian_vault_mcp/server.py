@@ -18,12 +18,14 @@ from . import config
 from .config import VAULT_MCP_PORT, VAULT_MCP_TOKEN, VAULT_PATH
 from .frontmatter_index import FrontmatterIndex
 from .rate_limit import check_rate_limit, current_auth_principal
+from .retrieval import SemanticSearchEngine
 from .vault import vault_json_dumps
 
 logger = logging.getLogger(__name__)
 
 # Global frontmatter index instance
 frontmatter_index = FrontmatterIndex()
+semantic_engine = SemanticSearchEngine()
 
 
 def _enforce_tool_rate_limit(scope: str, limit: int) -> None:
@@ -52,6 +54,8 @@ async def lifespan(server):
     torn down at the end of each cycle.
     """
     frontmatter_index.start()
+    if config.SEMANTIC_SEARCH_ENABLED:
+        semantic_engine.initialize()
     yield {"frontmatter_index": frontmatter_index}
 
 
@@ -80,6 +84,11 @@ from .tools.read import vault_read as _vault_read, vault_batch_read as _vault_ba
 from .tools.write import vault_write as _vault_write, vault_batch_frontmatter_update as _vault_batch_frontmatter_update
 from .tools.search import vault_search as _vault_search, vault_search_frontmatter as _vault_search_frontmatter
 from .tools.manage import vault_list as _vault_list, vault_move as _vault_move, vault_delete as _vault_delete, vault_tree as _vault_tree
+from .tools.semantic_search import (
+    set_engine as _set_semantic_engine,
+    vault_semantic_search as _vault_semantic_search,
+    vault_reindex as _vault_reindex,
+)
 from .models import (
     VaultReadInput,
     VaultWriteInput,
@@ -87,11 +96,15 @@ from .models import (
     VaultBatchFrontmatterUpdateInput,
     VaultSearchInput,
     VaultSearchFrontmatterInput,
+    VaultSemanticSearchInput,
     VaultListInput,
     VaultMoveInput,
+    VaultReindexInput,
     VaultTreeInput,
     VaultDeleteInput,
 )
+
+_set_semantic_engine(semantic_engine)
 
 
 @mcp.tool(
@@ -191,6 +204,20 @@ def vault_search_frontmatter(
 
 
 @mcp.tool(
+    name="vault_semantic_search",
+    description="Run hybrid semantic plus keyword search over markdown note content using an optional FAISS index.",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_semantic_search(query: str, path_prefix: str | None = None, max_results: int = 10) -> str:
+    """Search note content semantically when the optional retrieval engine is enabled."""
+    inp = VaultSemanticSearchInput(query=query, path_prefix=path_prefix, max_results=max_results)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _vault_semantic_search(inp.query, inp.path_prefix, inp.max_results)
+
+
+@mcp.tool(
     name="vault_list",
     description="List directory contents in the vault. Supports recursion depth, file/dir filtering, and glob patterns. Excludes .obsidian, .trash, .git directories.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -222,6 +249,20 @@ def vault_tree(path: str = "", depth: int = 3) -> str:
     if limited is not None:
         return limited
     return _vault_tree(inp.path, inp.depth)
+
+
+@mcp.tool(
+    name="vault_reindex",
+    description="Rebuild the optional semantic-search cache from the current vault state.",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_reindex(full: bool = True) -> str:
+    """Rebuild the semantic-search cache."""
+    inp = VaultReindexInput(full=full)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _vault_reindex(inp.full)
 
 
 @mcp.tool(

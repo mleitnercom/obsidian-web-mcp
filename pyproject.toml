@@ -16,6 +16,12 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
+semantic = [
+    "faiss-cpu>=1.8.0",
+    "fastembed>=0.4.0",
+    "numpy>=1.26.0",
+    "rank-bm25>=0.2.2",
+]
 
 [project.scripts]
 vault-mcp = "obsidian_vault_mcp.server:main"
