@@ -4,6 +4,10 @@ A secure, remote-accessible MCP server that gives LLMs read/write access to your
 
 It reads and writes markdown files on disk, parses YAML frontmatter, serializes YAML date/datetime values safely into JSON responses, maintains an in-memory frontmatter index for fast queries, and handles full-text search -- all behind OAuth 2.0 authentication and a Cloudflare Tunnel that never exposes your machine directly to the internet.
 
+## Release
+
+Latest: [v0.2.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.2.0) (2026-04-12).
+
 ## Why This Exists
 
 There are many Obsidian MCP servers. Most are local stdio servers -- they work when Claude Code is running on the same machine as your vault. That's useful, but it means:
