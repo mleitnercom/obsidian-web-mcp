@@ -9,7 +9,7 @@ from pathlib import Path
 import frontmatter
 
 from .. import config
-from ..vault import resolve_vault_path
+from ..vault import resolve_vault_path, vault_json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ def _search_ripgrep(
     file_pattern: str,
     max_results: int,
     context_lines: int,
-) -> list[dict]:
+) -> list[dict] | None:
     """Search using ripgrep for performance."""
     cmd = [
         "rg",
@@ -38,8 +38,11 @@ def _search_ripgrep(
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return []
+    except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError):
+        return None
+
+    if result.returncode not in (0, 1):
+        return None
 
     matches = []
     current_match = None
@@ -54,7 +57,7 @@ def _search_ripgrep(
             match_data = data["data"]
             file_path = match_data["path"]["text"]
             try:
-                rel_path = str(Path(file_path).relative_to(config.VAULT_PATH))
+                rel_path = Path(file_path).relative_to(config.VAULT_PATH).as_posix()
             except ValueError:
                 continue
 
@@ -109,7 +112,7 @@ def _search_python(
                 context = "\n".join(lines[start:end])
 
                 try:
-                    rel_path = str(file_path.relative_to(config.VAULT_PATH))
+                    rel_path = file_path.relative_to(config.VAULT_PATH).as_posix()
                 except ValueError:
                     continue
 
@@ -153,11 +156,14 @@ def vault_search(
             search_path = config.VAULT_PATH
 
         if not search_path.is_dir():
-            return json.dumps({"error": f"Search path is not a directory: {path_prefix}"})
+            return vault_json_dumps({"error": f"Search path is not a directory: {path_prefix}"})
 
         if shutil.which("rg"):
             matches = _search_ripgrep(query, search_path, file_pattern, max_results, context_lines)
         else:
+            matches = None
+
+        if matches is None:
             matches = _search_python(query, search_path, file_pattern, max_results, context_lines)
 
         for match in matches:
@@ -166,16 +172,16 @@ def vault_search(
 
         truncated = len(matches) >= max_results
 
-        return json.dumps({
+        return vault_json_dumps({
             "results": matches,
             "total_matches": len(matches),
             "truncated": truncated,
         })
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return vault_json_dumps({"error": str(e)})
     except Exception as e:
         logger.error(f"vault_search error: {e}")
-        return json.dumps({"error": str(e)})
+        return vault_json_dumps({"error": str(e)})
 
 
 def vault_search_frontmatter(
@@ -209,11 +215,11 @@ def vault_search_frontmatter(
 
         truncated = len(results) > max_results
 
-        return json.dumps({
+        return vault_json_dumps({
             "results": formatted,
             "total": len(formatted),
             "truncated": truncated,
         })
     except Exception as e:
         logger.error(f"vault_search_frontmatter error: {e}")
-        return json.dumps({"error": str(e)})
+        return vault_json_dumps({"error": str(e)})

@@ -1,13 +1,33 @@
 """Core filesystem operations for the Obsidian vault."""
 
 import fnmatch
+import json
 import os
 import shutil
 import tempfile
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from . import config
+
+
+class _DateAwareEncoder(json.JSONEncoder):
+    """JSON encoder that serialises date/datetime objects to ISO 8601 strings.
+
+    PyYAML's safe_load converts bare YAML dates (e.g. ``created: 2026-04-05``)
+    into ``datetime.date`` objects.  The stdlib ``json`` module cannot handle
+    these, so we provide a thin wrapper that converts them on the fly.
+    """
+
+    def default(self, obj: object) -> str:
+        if isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        return super().default(obj)
+
+
+def vault_json_dumps(obj: object, **kwargs) -> str:
+    """``json.dumps`` replacement that handles ``datetime.date`` values."""
+    return json.dumps(obj, cls=_DateAwareEncoder, **kwargs)
 
 
 def resolve_vault_path(relative_path: str) -> Path:

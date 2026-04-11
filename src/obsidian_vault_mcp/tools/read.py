@@ -1,11 +1,10 @@
 """Read tools for the Obsidian vault MCP server."""
 
-import json
 import logging
 
 import frontmatter
 
-from ..vault import resolve_vault_path, read_file
+from ..vault import resolve_vault_path, read_file, vault_json_dumps as json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -24,19 +23,19 @@ def vault_read(path: str) -> str:
         except Exception:
             pass
 
-        return json.dumps({
+        return json_dumps({
             "path": path,
             "content": content,
             "metadata": metadata,
             "frontmatter": fm_data,
         })
     except ValueError as e:
-        return json.dumps({"error": str(e), "path": path})
+        return json_dumps({"error": str(e), "path": path})
     except FileNotFoundError:
-        return json.dumps({"error": f"File not found: {path}", "path": path})
+        return json_dumps({"error": f"File not found: {path}", "path": path})
     except Exception as e:
         logger.error(f"vault_read error for {path}: {e}")
-        return json.dumps({"error": str(e), "path": path})
+        return json_dumps({"error": str(e), "path": path})
 
 
 def vault_batch_read(paths: list[str], include_content: bool = True) -> str:
@@ -74,4 +73,4 @@ def vault_batch_read(paths: list[str], include_content: bool = True) -> str:
             results.append({"path": path, "error": str(e)})
             missing += 1
 
-    return json.dumps({"files": results, "found": found, "missing": missing})
+    return json_dumps({"files": results, "found": found, "missing": missing})

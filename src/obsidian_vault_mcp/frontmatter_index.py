@@ -32,7 +32,7 @@ class FrontmatterIndex:
         for md_path in config.VAULT_PATH.rglob("*.md"):
             if self._is_excluded(md_path):
                 continue
-            rel = str(md_path.relative_to(config.VAULT_PATH))
+            rel = md_path.relative_to(config.VAULT_PATH).as_posix()
             fm = self._parse_frontmatter(md_path)
             if fm is not None:
                 self._index[rel] = fm
@@ -132,7 +132,7 @@ class FrontmatterIndex:
 
         for abs_path_str in paths:
             abs_path = Path(abs_path_str)
-            rel = str(abs_path.relative_to(config.VAULT_PATH))
+            rel = abs_path.relative_to(config.VAULT_PATH).as_posix()
             if abs_path.exists():
                 fm = self._parse_frontmatter(abs_path)
                 with self._lock:
