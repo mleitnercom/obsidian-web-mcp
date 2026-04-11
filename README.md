@@ -39,6 +39,8 @@ This is a server that provides network access to your personal notes. Security i
 
 **Authentication is enforced on every request.** The server implements OAuth 2.0 authorization code flow with PKCE for initial client authentication (what Claude uses when you connect the integration), plus bearer token validation on every subsequent MCP tool call. No request reaches a tool function without a valid token.
 
+**OAuth authorization can require an explicit login step.** If you set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD`, `/oauth/authorize` shows a browser login form before issuing an authorization code. If you leave them unset, the server falls back to single-user auto-approve mode for compatibility. For an internet-exposed deployment, the login-gated mode is strongly recommended.
+
 **Your vault is never exposed directly to the internet.** The recommended deployment uses a Cloudflare Tunnel -- an outbound-only encrypted connection. Your machine opens no inbound ports. You can layer Cloudflare Access on top for additional authentication (SSO, device posture checks, IP restrictions) if you want defense in depth.
 
 **Path traversal is blocked at the filesystem layer.** Every file operation resolves paths against the vault root directory and rejects any attempt to escape it -- `..` traversal, symlink following, null byte injection, and dotfile access (`.obsidian`, `.git`, `.trash`) are all caught before they reach the filesystem. The server will never read or write outside your vault directory.
@@ -109,6 +111,9 @@ All configuration is via environment variables:
 | `VAULT_MCP_PORT` | No | `8420` | Port the HTTP server listens on |
 | `VAULT_OAUTH_CLIENT_ID` | No | `vault-mcp-client` | OAuth 2.0 client ID for Claude integration |
 | `VAULT_OAUTH_CLIENT_SECRET` | Yes | (none) | OAuth 2.0 client secret for Claude integration |
+| `VAULT_OAUTH_AUTH_USERNAME` | No | (none) | Optional username required at `/oauth/authorize` before issuing an auth code |
+| `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
+| `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
 
 Generate tokens with: `python -c "import secrets; print(secrets.token_hex(32))"`
 
@@ -121,7 +126,7 @@ The Claude desktop and mobile apps can connect to remote MCP servers via OAuth.
 3. Enter your server URL (e.g. `https://vault-mcp.yourdomain.com`)
 4. Enter the OAuth client ID and client secret you configured
 5. Claude will discover the OAuth endpoints automatically and open a browser window
-6. The server auto-approves the authorization (single-user model) and redirects back
+6. If authorize-login credentials are configured, sign in in the browser window; otherwise the server auto-approves the authorization
 7. Claude now has access to all nine vault tools -- on desktop and mobile
 
 For local-only use (no tunnel), point Claude at `http://localhost:8420`.
@@ -140,6 +145,8 @@ export VAULT_MCP_HOSTNAME="vault-mcp.yourdomain.com"
 ```
 
 The script authenticates with Cloudflare, creates a tunnel, writes the config, and sets up the DNS record. You will need a domain managed by Cloudflare.
+
+For a publicly reachable deployment, set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD` so the browser-based OAuth step requires an explicit login before Claude receives an authorization code.
 
 After setup, add your tunnel hostname to the `allowed_hosts` list in `server.py` so the MCP library's DNS rebinding protection accepts requests from your domain:
 
