@@ -9,6 +9,9 @@ VAULT_MCP_PORT = int(os.environ.get("VAULT_MCP_PORT", "8420"))
 # OAuth 2.0 client credentials (for Claude app integration)
 VAULT_OAUTH_CLIENT_ID = os.environ.get("VAULT_OAUTH_CLIENT_ID", "vault-mcp-client")
 VAULT_OAUTH_CLIENT_SECRET = os.environ.get("VAULT_OAUTH_CLIENT_SECRET", "")
+VAULT_OAUTH_AUTH_USERNAME = os.environ.get("VAULT_OAUTH_AUTH_USERNAME", "")
+VAULT_OAUTH_AUTH_PASSWORD = os.environ.get("VAULT_OAUTH_AUTH_PASSWORD", "")
+VAULT_OAUTH_SESSION_SECRET = os.environ.get("VAULT_OAUTH_SESSION_SECRET", "")
 
 # Safety limits
 MAX_CONTENT_SIZE = 1_000_000  # 1MB max write size

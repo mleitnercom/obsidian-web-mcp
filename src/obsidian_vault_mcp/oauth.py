@@ -8,11 +8,12 @@ Claude's MCP connector uses the full OAuth authorization code flow:
 5. Claude exchanges the code at /oauth/token for a bearer token
 6. Claude uses the bearer token on all MCP requests
 
-Since this is a single-user personal server, the authorization page auto-approves
-immediately -- no login screen, no consent page. The security boundary is the
-client credentials + PKCE + the bearer token on every MCP request.
+The authorization step can optionally require a simple single-user login
+before issuing an auth code. When no auth username/password are configured,
+the server falls back to auto-approve mode for compatibility.
 """
 
+import html
 import hashlib
 import hmac
 import logging
@@ -21,7 +22,7 @@ import time
 from urllib.parse import urlencode
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.routing import Route
 
 from . import config
@@ -35,6 +36,8 @@ _auth_codes: dict[str, dict] = {}
 # In-memory dynamic client registrations
 # Maps client_id -> {client_secret, redirect_uris}
 _registered_clients: dict[str, dict] = {}
+_SESSION_COOKIE_NAME = "vault_mcp_oauth_session"
+_SESSION_TTL_SECONDS = 3600
 
 # Clean up expired codes periodically
 def _cleanup_codes():
@@ -42,6 +45,108 @@ def _cleanup_codes():
     expired = [k for k, v in _auth_codes.items() if v["expires_at"] < now]
     for k in expired:
         del _auth_codes[k]
+
+
+def _oauth_login_enabled() -> bool:
+    """Return whether interactive login is required for /oauth/authorize."""
+    return bool(config.VAULT_OAUTH_AUTH_USERNAME and config.VAULT_OAUTH_AUTH_PASSWORD)
+
+
+def _session_secret() -> str:
+    """Return the secret used to sign authorize-session cookies."""
+    return config.VAULT_OAUTH_SESSION_SECRET or config.VAULT_OAUTH_CLIENT_SECRET
+
+
+def _issue_auth_session() -> str:
+    """Create a signed session cookie for the single-user authorize flow."""
+    timestamp = str(int(time.time()))
+    signature = hmac.new(
+        _session_secret().encode("utf-8"),
+        timestamp.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{timestamp}.{signature}"
+
+
+def _has_valid_auth_session(request: Request) -> bool:
+    """Validate the signed authorize-session cookie."""
+    cookie = request.cookies.get(_SESSION_COOKIE_NAME, "")
+    if not cookie or "." not in cookie or not _session_secret():
+        return False
+
+    timestamp, signature = cookie.split(".", 1)
+    if not timestamp.isdigit():
+        return False
+
+    expected = hmac.new(
+        _session_secret().encode("utf-8"),
+        timestamp.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return False
+
+    issued_at = int(timestamp)
+    return (time.time() - issued_at) <= _SESSION_TTL_SECONDS
+
+
+def _authorize_params_from_request(request: Request, form: dict | None = None) -> dict[str, str]:
+    """Collect authorize parameters from either query params or form data."""
+    source = form if form is not None else request.query_params
+    return {
+        "response_type": source.get("response_type", ""),
+        "client_id": source.get("client_id", ""),
+        "redirect_uri": source.get("redirect_uri", ""),
+        "state": source.get("state", ""),
+        "code_challenge": source.get("code_challenge", ""),
+        "code_challenge_method": source.get("code_challenge_method", "S256"),
+    }
+
+
+def _render_login_form(params: dict[str, str], error: str = "") -> HTMLResponse:
+    """Render a minimal single-user login form for /oauth/authorize."""
+    hidden_inputs = "\n".join(
+        f'<input type="hidden" name="{html.escape(key)}" value="{html.escape(value)}">'
+        for key, value in params.items()
+    )
+    error_block = (
+        f'<p style="color:#b91c1c;margin-bottom:1rem;">{html.escape(error)}</p>'
+        if error
+        else ""
+    )
+    page = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Vault MCP Login</title>
+  </head>
+  <body style="font-family:system-ui,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1rem;">
+    <h1 style="margin-bottom:0.5rem;">Vault MCP Login</h1>
+    <p style="margin-bottom:1.5rem;">Sign in to approve access to this vault connector.</p>
+    {error_block}
+    <form method="post" action="/oauth/authorize">
+      {hidden_inputs}
+      <label style="display:block;margin-bottom:0.75rem;">
+        Username
+        <input type="text" name="username" autocomplete="username" required
+               style="display:block;width:100%;margin-top:0.25rem;padding:0.5rem;">
+      </label>
+      <label style="display:block;margin-bottom:1rem;">
+        Password
+        <input type="password" name="password" autocomplete="current-password" required
+               style="display:block;width:100%;margin-top:0.25rem;padding:0.5rem;">
+      </label>
+      <button type="submit" style="padding:0.6rem 1rem;">Continue</button>
+    </form>
+  </body>
+</html>"""
+    return HTMLResponse(page, status_code=200)
+
+
+def _authorize_redirect_url(params: dict[str, str]) -> str:
+    """Rebuild the GET /oauth/authorize URL from preserved request params."""
+    return f"/oauth/authorize?{urlencode(params)}"
 
 
 def _get_registered_client(client_id: str) -> dict | None:
@@ -81,12 +186,41 @@ async def oauth_authorize(request: Request):
     personal server, we auto-approve: generate an auth code and redirect
     back to Claude immediately.
     """
-    response_type = request.query_params.get("response_type", "")
-    client_id = request.query_params.get("client_id", "")
-    redirect_uri = request.query_params.get("redirect_uri", "")
-    state = request.query_params.get("state", "")
-    code_challenge = request.query_params.get("code_challenge", "")
-    code_challenge_method = request.query_params.get("code_challenge_method", "S256")
+    if request.method == "POST":
+        try:
+            form = await request.form()
+        except Exception:
+            return JSONResponse({"error": "invalid_request"}, status_code=400)
+
+        params = _authorize_params_from_request(request, form)
+        if not _oauth_login_enabled():
+            return RedirectResponse(url=_authorize_redirect_url(params), status_code=303)
+
+        username = form.get("username", "")
+        password = form.get("password", "")
+        user_ok = hmac.compare_digest(username, config.VAULT_OAUTH_AUTH_USERNAME)
+        password_ok = hmac.compare_digest(password, config.VAULT_OAUTH_AUTH_PASSWORD)
+        if not (user_ok and password_ok):
+            return _render_login_form(params, error="Invalid username or password.")
+
+        response = RedirectResponse(url=_authorize_redirect_url(params), status_code=303)
+        response.set_cookie(
+            _SESSION_COOKIE_NAME,
+            _issue_auth_session(),
+            max_age=_SESSION_TTL_SECONDS,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+        )
+        return response
+
+    params = _authorize_params_from_request(request)
+    response_type = params["response_type"]
+    client_id = params["client_id"]
+    redirect_uri = params["redirect_uri"]
+    state = params["state"]
+    code_challenge = params["code_challenge"]
+    code_challenge_method = params["code_challenge_method"]
 
     if response_type != "code":
         return JSONResponse({"error": "unsupported_response_type"}, status_code=400)
@@ -101,6 +235,9 @@ async def oauth_authorize(request: Request):
     allowed_redirect_uris = client["redirect_uris"]
     if allowed_redirect_uris is not None and redirect_uri not in allowed_redirect_uris:
         return JSONResponse({"error": "invalid_request", "error_description": "redirect_uri not registered"}, status_code=400)
+
+    if _oauth_login_enabled() and not _has_valid_auth_session(request):
+        return _render_login_form(params)
 
     # Generate authorization code
     _cleanup_codes()
@@ -269,7 +406,7 @@ async def oauth_register(request: Request) -> JSONResponse:
 # Starlette routes to mount on the app
 oauth_routes = [
     Route("/.well-known/oauth-authorization-server", oauth_metadata, methods=["GET"]),
-    Route("/oauth/authorize", oauth_authorize, methods=["GET"]),
+    Route("/oauth/authorize", oauth_authorize, methods=["GET", "POST"]),
     Route("/oauth/token", oauth_token, methods=["POST"]),
     Route("/oauth/register", oauth_register, methods=["POST"]),
 ]

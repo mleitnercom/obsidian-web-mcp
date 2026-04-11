@@ -61,6 +61,84 @@ def test_oauth_register_returns_unique_secret(monkeypatch):
     assert body["client_id"] in oauth._registered_clients
 
 
+def test_oauth_authorize_requires_login_when_configured(monkeypatch):
+    """Configured authorize credentials force an interactive login step."""
+    oauth._auth_codes.clear()
+    oauth._registered_clients.clear()
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_USERNAME", "michael")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "correct horse battery staple")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_SESSION_SECRET", "session-secret")
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        registration = client.post(
+            "/oauth/register",
+            json={"redirect_uris": ["https://claude.example/callback"]},
+        ).json()
+
+        response = client.get(
+            "/oauth/authorize",
+            params={
+                "response_type": "code",
+                "client_id": registration["client_id"],
+                "redirect_uri": "https://claude.example/callback",
+            },
+        )
+
+    assert response.status_code == 200
+    assert "Vault MCP Login" in response.text
+    assert 'method="post"' in response.text
+
+
+def test_oauth_authorize_login_then_issues_code(monkeypatch):
+    """A successful login on /oauth/authorize proceeds to the normal code flow."""
+    oauth._auth_codes.clear()
+    oauth._registered_clients.clear()
+    monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_USERNAME", "michael")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "correct horse battery staple")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_SESSION_SECRET", "session-secret")
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        registration = client.post(
+            "/oauth/register",
+            json={"redirect_uris": ["https://claude.example/callback"]},
+        ).json()
+
+        login = client.post(
+            "/oauth/authorize",
+            data={
+                "response_type": "code",
+                "client_id": registration["client_id"],
+                "redirect_uri": "https://claude.example/callback",
+                "username": "michael",
+                "password": "correct horse battery staple",
+            },
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        assert "vault_mcp_oauth_session" in login.headers.get("set-cookie", "")
+
+        authorize = client.get(login.headers["location"], follow_redirects=False)
+        assert authorize.status_code == 302
+        code = authorize.headers["location"].split("code=", 1)[1]
+
+        token = client.post(
+            "/oauth/token",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": registration["client_id"],
+                "client_secret": registration["client_secret"],
+                "code": code,
+                "redirect_uri": "https://claude.example/callback",
+            },
+        )
+
+    assert token.status_code == 200
+    assert token.json()["access_token"] == "vault-token"
+
+
 def test_oauth_authorization_code_flow_validates_client_and_redirect(monkeypatch):
     """Authorization code exchange binds code to client_id and redirect_uri."""
     oauth._auth_codes.clear()
