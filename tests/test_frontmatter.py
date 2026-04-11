@@ -72,3 +72,13 @@ def test_frontmatter_merge(vault_dir):
     assert post2.metadata["status"] == "active"  # preserved
     assert post2.metadata["new_field"] == "new_value"  # added
     assert original_body.strip() in post2.content  # body preserved
+
+
+def test_index_start_is_idempotent(index):
+    """Calling start() again does not replace the running observer."""
+    observer = index._observer
+    assert observer is not None
+
+    index.start()
+
+    assert index._observer is observer

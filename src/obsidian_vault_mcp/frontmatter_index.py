@@ -25,7 +25,15 @@ class FrontmatterIndex:
         self._pending_paths: set[str] = set()
 
     def start(self) -> None:
-        """Walk all .md files, parse frontmatter, and start watching for changes."""
+        """Walk all .md files, parse frontmatter, and start watching for changes.
+
+        Idempotent: if the observer is already running, this is a no-op.
+        This prevents repeated rescans and duplicate watchdog observers when
+        FastMCP's stateless HTTP lifespan runs per request.
+        """
+        if self._observer is not None:
+            return
+
         t0 = time.monotonic()
         count = 0
 

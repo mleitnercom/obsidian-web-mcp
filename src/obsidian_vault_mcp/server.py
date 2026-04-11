@@ -23,13 +23,14 @@ frontmatter_index = FrontmatterIndex()
 
 @asynccontextmanager
 async def lifespan(server):
-    """Start frontmatter index on server startup, stop on shutdown."""
-    logger.info(f"Starting vault MCP server. Vault: {VAULT_PATH}")
+    """Initialize the frontmatter index once per process.
+
+    In FastMCP stateless_http mode this lifespan can run per request, so
+    frontmatter_index.start() must be idempotent and the observer must not be
+    torn down at the end of each cycle.
+    """
     frontmatter_index.start()
-    logger.info(f"Frontmatter index built: {frontmatter_index.file_count} files indexed")
     yield {"frontmatter_index": frontmatter_index}
-    frontmatter_index.stop()
-    logger.info("Vault MCP server shut down.")
 
 
 # Create the MCP server
