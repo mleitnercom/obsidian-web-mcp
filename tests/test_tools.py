@@ -1,8 +1,10 @@
 """Integration tests for tool functions."""
 
 import json
+from datetime import date, datetime
 
 import pytest
+import frontmatter
 
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
 from obsidian_vault_mcp.tools.write import vault_write, vault_batch_frontmatter_update
@@ -17,6 +19,33 @@ def test_vault_read_returns_frontmatter(vault_dir):
     assert result["frontmatter"]["status"] == "active"
     assert result["frontmatter"]["type"] == "note"
     assert "test note" in result["content"]
+
+
+def test_vault_read_serializes_yaml_date_frontmatter(vault_dir):
+    """vault_read returns YAML date frontmatter as ISO strings."""
+    (vault_dir / "dated-note.md").write_text(
+        "---\ncreated: 2026-04-05\n---\n\nDated content.\n",
+        encoding="utf-8",
+    )
+
+    result = json.loads(vault_read("dated-note.md"))
+    assert "error" not in result
+    assert result["frontmatter"]["created"] == "2026-04-05"
+
+
+def test_vault_search_frontmatter_excerpt_serializes_datetime(vault_dir):
+    """vault_search serializes datetime values found in frontmatter excerpts."""
+    post = frontmatter.Post("Searchable content.\n")
+    post.metadata["scheduled"] = datetime(2026, 4, 5, 13, 45, 0)
+    post.metadata["created"] = date(2026, 4, 5)
+    (vault_dir / "search-dated-note.md").write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    result = json.loads(vault_search("Searchable"))
+    assert "error" not in result
+    matching = next(item for item in result["results"] if item["path"] == "search-dated-note.md")
+    excerpt = matching["frontmatter_excerpt"]
+    assert excerpt["created"] == "2026-04-05"
+    assert excerpt["scheduled"] == "2026-04-05T13:45:00"
 
 
 def test_vault_write_creates_file(vault_dir):
