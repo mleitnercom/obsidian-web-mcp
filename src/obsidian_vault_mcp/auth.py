@@ -12,10 +12,16 @@ from .rate_limit import reset_current_auth_principal, set_current_auth_principal
 # Paths that don't require bearer auth (OAuth flow + health)
 _AUTH_EXEMPT_PATHS = {
     "/health",
+    "/authorize",
     "/.well-known/oauth-authorization-server",
     "/oauth/authorize",
     "/oauth/token",
     "/oauth/register",
+}
+
+_AUTH_EXEMPT_METHOD_PATHS = {
+    ("GET", "/"),
+    ("HEAD", "/"),
 }
 
 
@@ -24,6 +30,9 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path in _AUTH_EXEMPT_PATHS:
+            return await call_next(request)
+
+        if (request.method, request.url.path) in _AUTH_EXEMPT_METHOD_PATHS:
             return await call_next(request)
 
         if not VAULT_MCP_TOKEN:

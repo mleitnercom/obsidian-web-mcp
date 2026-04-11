@@ -53,6 +53,26 @@ def test_bearer_auth_rejects_invalid_token(monkeypatch):
     assert response.json()["error"] == "Invalid token"
 
 
+def test_bearer_auth_allows_root_probe_without_token(monkeypatch):
+    """GET / is exempt so MCP root probing works without bearer auth."""
+    reset_rate_limits()
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+
+    async def _root(_request):
+        return JSONResponse({"ok": True})
+
+    app = Starlette(
+        routes=[Route("/", _root, methods=["GET"])],
+        middleware=[Middleware(BearerAuthMiddleware)],
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
 def test_oauth_register_returns_unique_secret(monkeypatch):
     """Dynamic registration does not leak the server's configured client secret."""
     reset_rate_limits()
@@ -98,6 +118,34 @@ def test_oauth_authorize_requires_login_when_configured(monkeypatch):
     assert response.status_code == 200
     assert "Vault MCP Login" in response.text
     assert 'method="post"' in response.text
+
+
+def test_oauth_authorize_alias_works(monkeypatch):
+    """Legacy /authorize alias mirrors /oauth/authorize."""
+    reset_rate_limits()
+    oauth._auth_codes.clear()
+    oauth._registered_clients.clear()
+    monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token")
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        registration = client.post(
+            "/oauth/register",
+            json={"redirect_uris": ["https://claude.example/callback"]},
+        ).json()
+
+        response = client.get(
+            "/authorize",
+            params={
+                "response_type": "code",
+                "client_id": registration["client_id"],
+                "redirect_uri": "https://claude.example/callback",
+            },
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    assert "code=" in response.headers["location"]
 
 
 def test_oauth_authorize_login_then_issues_code(monkeypatch):
@@ -307,3 +355,17 @@ def test_main_fails_closed_when_authenticated_app_cannot_build(vault_dir, monkey
 
     with pytest.raises(SystemExit, match="1"):
         server.main()
+
+
+def test_build_app_exposes_mcp_root_probe(vault_dir, monkeypatch):
+    """GET / returns the MCP protocol probe header without auth."""
+    reset_rate_limits()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["MCP-Protocol-Version"] == "2025-06-18"

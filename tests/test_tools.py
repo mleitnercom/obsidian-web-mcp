@@ -9,7 +9,7 @@ import frontmatter
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
 from obsidian_vault_mcp.tools.write import vault_write, vault_batch_frontmatter_update
 from obsidian_vault_mcp.tools.search import vault_search
-from obsidian_vault_mcp.tools.manage import vault_list, vault_delete
+from obsidian_vault_mcp.tools.manage import vault_list, vault_tree, vault_delete
 
 
 def test_vault_read_returns_frontmatter(vault_dir):
@@ -95,6 +95,16 @@ def test_vault_list_returns_items(vault_dir):
     names = [item["name"] for item in result["items"]]
     assert "test-note.md" in names
     assert ".obsidian" not in names
+
+
+def test_vault_tree_returns_nested_structure(vault_dir):
+    """vault_tree returns a compact nested JSON tree."""
+    result = json.loads(vault_tree("", depth=2))
+    assert result["path"] == "/"
+    assert result["name"] == "test-vault"
+    assert "test-note.md" in result["files"]
+    subfolder = next(item for item in result["dirs"] if item["name"] == "subfolder")
+    assert "nested-note.md" in subfolder["files"]
 
 
 def test_vault_delete_requires_confirm(vault_dir):

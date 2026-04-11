@@ -11,6 +11,7 @@ from .config import (
     MAX_CONTENT_SIZE,
     MAX_LIST_DEPTH,
     MAX_SEARCH_RESULTS,
+    MAX_TREE_DEPTH,
 )
 
 
@@ -104,6 +105,24 @@ class VaultMoveInput(BaseModel):
     create_dirs: bool = Field(
         default=True,
         description="Create destination parent directories if they don't exist",
+    )
+
+
+class VaultTreeInput(BaseModel):
+    """Return a compact nested directory tree for a vault path."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(
+        default="",
+        description="Relative directory path from vault root; empty string for root",
+        max_length=500,
+    )
+    depth: int = Field(
+        default=3,
+        ge=1,
+        le=MAX_TREE_DEPTH,
+        description="How many directory levels deep to include in the tree",
     )
 
 

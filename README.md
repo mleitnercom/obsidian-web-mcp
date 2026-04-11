@@ -57,6 +57,8 @@ This is a server that provides network access to your personal notes. Security i
 
 **Authentication fails closed.** If the authenticated Starlette app cannot be constructed at startup, the process exits instead of falling back to an unauthenticated MCP server.
 
+**MCP transport compatibility is preserved.** The server answers `GET /` and `HEAD /` with an MCP protocol probe response for newer clients, while keeping normal tool access behind the authenticated HTTP app.
+
 ## Tools
 
 | Tool | Description |
@@ -68,6 +70,7 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
 | `vault_list` | List directory contents with recursion depth, glob filtering, and file/dir toggles |
+| `vault_tree` | Return a compact nested JSON tree of folders and files for quick orientation |
 | `vault_move` | Move or rename a file or directory within the vault |
 | `vault_delete` | Soft-delete a file by moving it to `.trash/` (requires explicit confirmation) |
 
@@ -127,6 +130,7 @@ All configuration is via environment variables:
 | `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard upper bound for search results |
 | `VAULT_DEFAULT_SEARCH_RESULTS` | No | `20` | Default search result count when the client does not specify one |
 | `VAULT_MAX_LIST_DEPTH` | No | `5` | Maximum recursion depth for `vault_list` |
+| `VAULT_MAX_TREE_DEPTH` | No | `10` | Maximum recursion depth for `vault_tree` |
 | `VAULT_CONTEXT_LINES` | No | `2` | Default context lines returned around search hits |
 | `VAULT_RATE_LIMIT_READ` | No | `100` | Per-token read requests per minute |
 | `VAULT_RATE_LIMIT_WRITE` | No | `30` | Per-token write requests per minute |
@@ -148,7 +152,7 @@ The Claude desktop and mobile apps can connect to remote MCP servers via OAuth.
 4. Enter the OAuth client ID and client secret you configured
 5. Claude will discover the OAuth endpoints automatically and open a browser window
 6. If authorize-login credentials are configured, sign in in the browser window; otherwise the server auto-approves the authorization
-7. Claude now has access to all nine vault tools -- on desktop and mobile
+7. Claude now has access to all ten vault tools -- on desktop and mobile
 
 For local-only use (no tunnel), point Claude at `http://localhost:8420`.
 

@@ -11,6 +11,8 @@ from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.responses import Response
+from starlette.routing import Route
 
 from . import config
 from .config import VAULT_MCP_PORT, VAULT_MCP_TOKEN, VAULT_PATH
@@ -77,7 +79,7 @@ mcp = FastMCP(
 from .tools.read import vault_read as _vault_read, vault_batch_read as _vault_batch_read
 from .tools.write import vault_write as _vault_write, vault_batch_frontmatter_update as _vault_batch_frontmatter_update
 from .tools.search import vault_search as _vault_search, vault_search_frontmatter as _vault_search_frontmatter
-from .tools.manage import vault_list as _vault_list, vault_move as _vault_move, vault_delete as _vault_delete
+from .tools.manage import vault_list as _vault_list, vault_move as _vault_move, vault_delete as _vault_delete, vault_tree as _vault_tree
 from .models import (
     VaultReadInput,
     VaultWriteInput,
@@ -87,6 +89,7 @@ from .models import (
     VaultSearchFrontmatterInput,
     VaultListInput,
     VaultMoveInput,
+    VaultTreeInput,
     VaultDeleteInput,
 )
 
@@ -208,6 +211,20 @@ def vault_list(
 
 
 @mcp.tool(
+    name="vault_tree",
+    description="Return a compact nested JSON tree of the vault directory structure for quick orientation.",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_tree(path: str = "", depth: int = 3) -> str:
+    """Return a nested JSON tree for a directory within the vault."""
+    inp = VaultTreeInput(path=path, depth=depth)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _vault_tree(inp.path, inp.depth)
+
+
+@mcp.tool(
     name="vault_move",
     description="Move a file or directory within the vault. Validates both source and destination paths.",
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
@@ -250,18 +267,8 @@ def main():
     if not VAULT_MCP_TOKEN:
         logger.warning("VAULT_MCP_TOKEN is not set -- auth will reject all requests")
 
-    # Build the Starlette app with auth middleware and OAuth endpoints
     try:
-        from .auth import BearerAuthMiddleware
-        from .oauth import oauth_routes
-
-        app = mcp.streamable_http_app()
-
-        # Mount OAuth routes (these are excluded from bearer auth via the middleware)
-        for route in oauth_routes:
-            app.routes.insert(0, route)
-
-        app.add_middleware(BearerAuthMiddleware)
+        app = build_app()
         logger.info(f"Starting server on port {VAULT_MCP_PORT} with bearer auth + OAuth")
 
         import uvicorn
@@ -273,9 +280,31 @@ def main():
             proxy_headers=True,
             forwarded_allow_ips="*",
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Could not build authenticated app; refusing to start")
         sys.exit(1)
+
+
+def build_app():
+    """Build the authenticated Starlette app."""
+    from .auth import BearerAuthMiddleware
+    from .oauth import oauth_routes
+
+    app = mcp.streamable_http_app()
+
+    async def mcp_root_probe(_request):
+        return Response(
+            status_code=200,
+            headers={"MCP-Protocol-Version": "2025-06-18"},
+        )
+
+    app.routes.insert(0, Route("/", mcp_root_probe, methods=["GET", "HEAD"]))
+
+    for route in oauth_routes:
+        app.routes.insert(0, route)
+
+    app.add_middleware(BearerAuthMiddleware)
+    return app
 
 
 if __name__ == "__main__":

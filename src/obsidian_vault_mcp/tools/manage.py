@@ -2,6 +2,7 @@
 
 import logging
 
+from .. import config
 from ..vault import list_directory, move_path, delete_path, resolve_vault_path, vault_json_dumps
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,62 @@ def vault_move(source: str, destination: str, create_dirs: bool = True) -> str:
     except Exception as e:
         logger.error(f"vault_move error: {e}")
         return vault_json_dumps({"error": str(e), "source": source, "destination": destination})
+
+
+def vault_tree(path: str = "", depth: int = 3) -> str:
+    """Return a nested JSON tree of the vault directory structure."""
+    try:
+        vault_root = config.VAULT_PATH.resolve()
+        start = resolve_vault_path(path) if path else vault_root
+        if not start.is_dir():
+            return vault_json_dumps({"error": f"Not a directory: {path}"})
+
+        depth = min(depth, config.MAX_TREE_DEPTH)
+
+        def _build(dir_path, current_depth):
+            node = {"name": dir_path.name, "files": [], "dirs": []}
+            try:
+                entries = sorted(dir_path.iterdir(), key=lambda p: p.name.lower())
+            except PermissionError:
+                return node
+
+            for entry in entries:
+                if entry.name in config.EXCLUDED_DIRS:
+                    continue
+                if entry.is_file():
+                    node["files"].append(entry.name)
+                elif entry.is_dir():
+                    if current_depth < depth:
+                        node["dirs"].append(_build(entry, current_depth + 1))
+                    else:
+                        try:
+                            children = list(entry.iterdir())
+                            file_count = sum(
+                                1 for child in children
+                                if child.is_file() and child.name not in config.EXCLUDED_DIRS
+                            )
+                            dir_count = sum(
+                                1 for child in children
+                                if child.is_dir() and child.name not in config.EXCLUDED_DIRS
+                            )
+                        except PermissionError:
+                            file_count, dir_count = 0, 0
+                        node["dirs"].append({
+                            "name": entry.name,
+                            "file_count": file_count,
+                            "dir_count": dir_count,
+                        })
+
+            return node
+
+        tree = _build(start, 0)
+        tree["path"] = path or "/"
+        return vault_json_dumps(tree)
+    except ValueError as e:
+        return vault_json_dumps({"error": str(e)})
+    except Exception as e:
+        logger.error(f"vault_tree error: {e}")
+        return vault_json_dumps({"error": str(e)})
 
 
 def vault_delete(path: str, confirm: bool = False) -> str:
