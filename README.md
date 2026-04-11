@@ -41,6 +41,8 @@ This is a server that provides network access to your personal notes. Security i
 
 **OAuth authorization can require an explicit login step.** If you set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD`, `/oauth/authorize` shows a browser login form before issuing an authorization code. If you leave them unset, the server falls back to single-user auto-approve mode for compatibility. For an internet-exposed deployment, the login-gated mode is strongly recommended.
 
+**OAuth state is intentionally in-memory (non-persistent).** Authorization codes, access tokens, and temporary client registrations live in RAM and are cleared on process restart. This is a deliberate security tradeoff: it minimizes long-lived secrets on disk at the cost of requiring a reconnect after restarts. If you need persistence, consider using a reverse proxy or a private network boundary rather than storing tokens on disk.
+
 **Your vault is never exposed directly to the internet.** The recommended deployment uses a Cloudflare Tunnel -- an outbound-only encrypted connection. Your machine opens no inbound ports. You can layer Cloudflare Access on top for additional authentication (SSO, device posture checks, IP restrictions) if you want defense in depth.
 
 **Path traversal is blocked at the filesystem layer.** Every file operation resolves paths against the vault root directory and rejects any attempt to escape it -- `..` traversal, symlink following, null byte injection, and dotfile access (`.obsidian`, `.git`, `.trash`) are all caught before they reach the filesystem. The server will never read or write outside your vault directory.
