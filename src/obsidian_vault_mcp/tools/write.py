@@ -1,11 +1,10 @@
 """Write tools for the Obsidian vault MCP server."""
 
-import json
 import logging
 
 import frontmatter
 
-from ..vault import resolve_vault_path, read_file, write_file_atomic
+from ..vault import resolve_vault_path, read_file, write_file_atomic, vault_json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +32,12 @@ def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontma
 
         is_new, size = write_file_atomic(path, content, create_dirs=create_dirs)
 
-        return json.dumps({"path": path, "created": is_new, "size": size})
+        return vault_json_dumps({"path": path, "created": is_new, "size": size})
     except ValueError as e:
-        return json.dumps({"error": str(e), "path": path})
+        return vault_json_dumps({"error": str(e), "path": path})
     except Exception as e:
         logger.error(f"vault_write error for {path}: {e}")
-        return json.dumps({"error": str(e), "path": path})
+        return vault_json_dumps({"error": str(e), "path": path})
 
 
 def vault_batch_frontmatter_update(updates: list[dict]) -> str:
@@ -67,4 +66,4 @@ def vault_batch_frontmatter_update(updates: list[dict]) -> str:
         except Exception as e:
             results.append({"path": file_path, "updated": False, "error": str(e)})
 
-    return json.dumps({"results": results})
+    return vault_json_dumps({"results": results})

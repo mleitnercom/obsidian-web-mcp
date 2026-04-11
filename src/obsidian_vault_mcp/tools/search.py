@@ -20,7 +20,7 @@ def _search_ripgrep(
     file_pattern: str,
     max_results: int,
     context_lines: int,
-) -> list[dict]:
+) -> list[dict] | None:
     """Search using ripgrep for performance."""
     cmd = [
         "rg",
@@ -38,8 +38,11 @@ def _search_ripgrep(
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return []
+    except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError):
+        return None
+
+    if result.returncode not in (0, 1):
+        return None
 
     matches = []
     current_match = None
@@ -54,7 +57,7 @@ def _search_ripgrep(
             match_data = data["data"]
             file_path = match_data["path"]["text"]
             try:
-                rel_path = str(Path(file_path).relative_to(config.VAULT_PATH))
+                rel_path = Path(file_path).relative_to(config.VAULT_PATH).as_posix()
             except ValueError:
                 continue
 
@@ -109,7 +112,7 @@ def _search_python(
                 context = "\n".join(lines[start:end])
 
                 try:
-                    rel_path = str(file_path.relative_to(config.VAULT_PATH))
+                    rel_path = file_path.relative_to(config.VAULT_PATH).as_posix()
                 except ValueError:
                     continue
 
@@ -158,6 +161,9 @@ def vault_search(
         if shutil.which("rg"):
             matches = _search_ripgrep(query, search_path, file_pattern, max_results, context_lines)
         else:
+            matches = None
+
+        if matches is None:
             matches = _search_python(query, search_path, file_pattern, max_results, context_lines)
 
         for match in matches:
