@@ -108,7 +108,7 @@ This is a server that provides network access to your personal notes. Security i
 
 ```bash
 # Clone and enter the project
-git clone https://github.com/yourname/obsidian-web-mcp.git
+git clone https://github.com/mleitnercom/obsidian-web-mcp.git
 cd obsidian-web-mcp
 
 # Generate auth tokens
