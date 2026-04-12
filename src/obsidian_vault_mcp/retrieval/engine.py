@@ -384,18 +384,28 @@ class SemanticSearchEngine:
         """Embed chunks and build a FAISS inner-product index."""
         if not chunks:
             return None
-        if self._embed_backend.startswith("sentence-transformers"):
-            embeddings = self._embedder.encode(
-                [self._embedding_text(chunk) for chunk in chunks],
-                normalize_embeddings=False,
-                convert_to_numpy=True,
-            )
-        else:
-            embeddings = list(self._embedder.embed([self._embedding_text(chunk) for chunk in chunks]))
-        matrix = self._numpy.asarray(embeddings, dtype="float32")
-        self._faiss.normalize_L2(matrix)
-        index = self._faiss.IndexFlatIP(matrix.shape[1])
-        index.add(matrix)
+        batch_size = max(config.SEMANTIC_EMBED_BATCH_SIZE, 1)
+        index = None
+
+        for start in range(0, len(chunks), batch_size):
+            batch = chunks[start:start + batch_size]
+            texts = [self._embedding_text(chunk) for chunk in batch]
+            if self._embed_backend.startswith("sentence-transformers"):
+                embeddings = self._embedder.encode(
+                    texts,
+                    normalize_embeddings=False,
+                    convert_to_numpy=True,
+                )
+            else:
+                embeddings = list(self._embedder.embed(texts))
+
+            matrix = self._numpy.asarray(embeddings, dtype="float32")
+            self._faiss.normalize_L2(matrix)
+
+            if index is None:
+                index = self._faiss.IndexFlatIP(matrix.shape[1])
+            index.add(matrix)
+
         return index
 
     def _semantic_scores(
