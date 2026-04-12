@@ -241,6 +241,21 @@ async def oauth_metadata(request: Request) -> JSONResponse:
     })
 
 
+async def oauth_protected_resource_metadata(request: Request) -> JSONResponse:
+    """RFC 9728-style protected resource metadata for MCP clients."""
+    base_url = str(request.base_url).rstrip("/")
+    return JSONResponse({
+        "resource": f"{base_url}/mcp",
+        "authorization_servers": [base_url],
+        "bearer_methods_supported": ["header"],
+    })
+
+
+async def openid_configuration_alias(request: Request) -> JSONResponse:
+    """Compatibility alias for clients that probe OpenID discovery first."""
+    return await oauth_metadata(request)
+
+
 async def oauth_authorize(request: Request):
     """OAuth 2.0 authorization endpoint.
 
@@ -501,6 +516,14 @@ async def oauth_register(request: Request) -> JSONResponse:
 # Starlette routes to mount on the app
 oauth_routes = [
     Route("/.well-known/oauth-authorization-server", oauth_metadata, methods=["GET"]),
+    Route("/.well-known/oauth-authorization-server/mcp", oauth_metadata, methods=["GET"]),
+    Route("/mcp/.well-known/oauth-authorization-server", oauth_metadata, methods=["GET"]),
+    Route("/.well-known/oauth-protected-resource", oauth_protected_resource_metadata, methods=["GET"]),
+    Route("/.well-known/oauth-protected-resource/mcp", oauth_protected_resource_metadata, methods=["GET"]),
+    Route("/mcp/.well-known/oauth-protected-resource", oauth_protected_resource_metadata, methods=["GET"]),
+    Route("/.well-known/openid-configuration", openid_configuration_alias, methods=["GET"]),
+    Route("/.well-known/openid-configuration/mcp", openid_configuration_alias, methods=["GET"]),
+    Route("/mcp/.well-known/openid-configuration", openid_configuration_alias, methods=["GET"]),
     Route("/authorize", oauth_authorize, methods=["GET", "POST"]),
     Route("/oauth/authorize", oauth_authorize, methods=["GET", "POST"]),
     Route("/oauth/token", oauth_token, methods=["POST"]),

@@ -428,3 +428,23 @@ def test_build_app_exposes_mcp_root_probe(vault_dir, monkeypatch):
 
     assert response.status_code == 200
     assert response.headers["MCP-Protocol-Version"] == "2025-06-18"
+
+
+def test_build_app_exposes_oauth_discovery_aliases_without_bearer(vault_dir, monkeypatch):
+    """OAuth/OpenID well-known aliases used by MCP clients should be publicly readable."""
+    reset_rate_limits()
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+    app = Starlette(
+        routes=oauth.oauth_routes,
+        middleware=[Middleware(BearerAuthMiddleware)],
+    )
+    with TestClient(app) as client:
+        r1 = client.get("/.well-known/oauth-authorization-server")
+        r2 = client.get("/mcp/.well-known/oauth-authorization-server")
+        r3 = client.get("/.well-known/oauth-protected-resource")
+        r4 = client.get("/.well-known/openid-configuration")
+
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert r3.status_code == 200
+    assert r4.status_code == 200
