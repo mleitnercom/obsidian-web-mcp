@@ -24,6 +24,8 @@ This is a public fork maintained for real operational needs, not a broad support
 
 Changes are driven primarily by production use, stability, and connector interoperability.
 
+Some implementation and documentation work in this fork may be developed with LLM coding assistance. Changes are reviewed and tested before release.
+
 ## Why This Exists
 
 There are many Obsidian MCP servers. Most are local stdio servers -- they work when Claude Code is running on the same machine as your vault. That's useful, but it means:
