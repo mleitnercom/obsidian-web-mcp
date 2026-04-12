@@ -492,42 +492,40 @@ class SemanticSearchEngine:
         """Create an embedding backend honoring VAULT_SEMANTIC_EMBED_BACKEND."""
         preferred_backend = config.SEMANTIC_EMBED_BACKEND
 
-        if preferred_backend in {"auto", "sentence"}:
+        if preferred_backend in {"auto", "fastembed"}:
             try:
-                from sentence_transformers import SentenceTransformer
-            except ImportError:
-                SentenceTransformer = None
-
-            if SentenceTransformer is not None:
-                self._embed_backend = "sentence-transformers"
-                return SentenceTransformer(config.SEMANTIC_EMBED_MODEL, device="cpu")
-            if preferred_backend == "sentence":
-                self._available = False
-                self._unavailable_reason = (
-                    "Sentence-transformers backend was forced but is not installed. "
-                    "Install with: python -m pip install -e .[semantic]"
-                )
-                raise RuntimeError(self._unavailable_reason)
+                from fastembed import TextEmbedding
+            except ImportError as e:
+                if preferred_backend == "fastembed":
+                    self._available = False
+                    self._unavailable_reason = (
+                        "Fastembed backend was forced but is not installed. "
+                        "Install with: python -m pip install -e .[semantic]"
+                    )
+                    raise RuntimeError(self._unavailable_reason) from e
+            else:
+                self._embed_backend = "fastembed"
+                return TextEmbedding(model_name=config.SEMANTIC_EMBED_MODEL)
 
         try:
-            from fastembed import TextEmbedding
+            from sentence_transformers import SentenceTransformer
         except ImportError as e:
             self._available = False
-            if preferred_backend == "fastembed":
+            if preferred_backend == "sentence":
                 self._unavailable_reason = (
-                    "Fastembed backend was forced but is not installed. "
-                    "Install with: python -m pip install fastembed"
+                    "Sentence-transformers backend was forced but is not installed. "
+                    "Install with: python -m pip install -e .[semantic-sentence]"
                 )
             else:
                 self._unavailable_reason = (
                     "No supported embedding backend installed. "
                     "Install with: python -m pip install -e .[semantic] "
-                    "or set VAULT_SEMANTIC_EMBED_BACKEND=fastembed after installing fastembed."
+                    "or python -m pip install -e .[semantic-sentence]."
                 )
             raise RuntimeError(self._unavailable_reason) from e
 
-        self._embed_backend = "fastembed"
-        return TextEmbedding(model_name=config.SEMANTIC_EMBED_MODEL)
+        self._embed_backend = "sentence-transformers"
+        return SentenceTransformer(config.SEMANTIC_EMBED_MODEL, device="cpu")
 
     @staticmethod
     def _hash_file(path: Path) -> str | None:

@@ -484,3 +484,36 @@ def test_build_app_exposes_oauth_discovery_aliases_without_bearer(vault_dir, mon
     assert r2.status_code == 200
     assert r3.status_code == 200
     assert r4.status_code == 200
+
+
+def test_oauth_register_aliases_are_public_without_bearer(monkeypatch):
+    """OAuth registration aliases must remain reachable without bearer auth."""
+    reset_rate_limits()
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+    app = Starlette(
+        routes=oauth.oauth_routes,
+        middleware=[Middleware(BearerAuthMiddleware)],
+    )
+    payload = {"redirect_uris": ["https://chatgpt.com/connector/oauth/callback"]}
+
+    with TestClient(app) as client:
+        root_alias = client.post("/register", json=payload)
+        mcp_alias = client.post("/mcp/oauth/register", json=payload)
+
+    assert root_alias.status_code == 201
+    assert mcp_alias.status_code == 201
+
+
+def test_oauth_register_trailing_slash_redirect_not_unauthorized(monkeypatch):
+    """Trailing-slash OAuth register probes should redirect instead of 401."""
+    reset_rate_limits()
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+    app = Starlette(
+        routes=oauth.oauth_routes,
+        middleware=[Middleware(BearerAuthMiddleware)],
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/oauth/register/", json={"redirect_uris": ["https://claude.example/callback"]}, follow_redirects=False)
+
+    assert response.status_code in {307, 308}

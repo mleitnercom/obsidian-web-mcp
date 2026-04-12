@@ -23,8 +23,12 @@ _AUTH_EXEMPT_PATHS = {
     "/.well-known/openid-configuration/mcp",
     "/mcp/.well-known/openid-configuration",
     "/oauth/authorize",
+    "/mcp/oauth/authorize",
     "/oauth/token",
+    "/mcp/oauth/token",
     "/oauth/register",
+    "/register",
+    "/mcp/oauth/register",
 }
 
 _AUTH_EXEMPT_METHOD_PATHS = {
@@ -37,10 +41,13 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
     """Validates Bearer tokens on all requests except OAuth and health endpoints."""
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in _AUTH_EXEMPT_PATHS:
+        path = request.url.path
+        normalized_path = path.rstrip("/") or "/"
+
+        if normalized_path in _AUTH_EXEMPT_PATHS:
             return await call_next(request)
 
-        if (request.method, request.url.path) in _AUTH_EXEMPT_METHOD_PATHS:
+        if (request.method, normalized_path) in _AUTH_EXEMPT_METHOD_PATHS:
             return await call_next(request)
 
         if not VAULT_MCP_TOKEN:

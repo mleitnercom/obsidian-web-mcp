@@ -532,6 +532,10 @@ oauth_routes = [
     Route("/mcp/.well-known/openid-configuration", openid_configuration_alias, methods=["GET"]),
     Route("/authorize", oauth_authorize, methods=["GET", "POST"]),
     Route("/oauth/authorize", oauth_authorize, methods=["GET", "POST"]),
+    Route("/mcp/oauth/authorize", oauth_authorize, methods=["GET", "POST"]),
     Route("/oauth/token", oauth_token, methods=["POST"]),
+    Route("/mcp/oauth/token", oauth_token, methods=["POST"]),
     Route("/oauth/register", oauth_register, methods=["POST"]),
+    Route("/register", oauth_register, methods=["POST"]),
+    Route("/mcp/oauth/register", oauth_register, methods=["POST"]),
 ]

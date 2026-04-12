@@ -20,10 +20,13 @@ semantic = [
     "faiss-cpu>=1.8.0",
     "numpy>=1.26.0,<2.0.0",
     "rank-bm25>=0.2.2",
-    "sentence-transformers>=3.0.0",
+    "fastembed>=0.6.0",
 ]
 semantic-fastembed = [
     "fastembed>=0.6.0",
+]
+semantic-sentence = [
+    "sentence-transformers>=3.0.0",
 ]
 
 [project.scripts]

@@ -57,7 +57,7 @@ SEMANTIC_SEARCH_ENABLED = os.environ.get("VAULT_SEMANTIC_SEARCH_ENABLED", "").lo
 }
 SEMANTIC_EMBED_BACKEND = _env_choice(
     "VAULT_SEMANTIC_EMBED_BACKEND",
-    "auto",
+    "fastembed",
     {"auto", "sentence", "fastembed"},
 )
 SEMANTIC_EMBED_MODEL = os.environ.get("VAULT_SEMANTIC_EMBED_MODEL", "BAAI/bge-small-en-v1.5")
