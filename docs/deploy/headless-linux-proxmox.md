@@ -184,6 +184,38 @@ sudo sysctl --system
 - Rotate `VAULT_MCP_TOKEN` and `VAULT_OAUTH_CLIENT_SECRET` regularly.
 - Avoid publishing your connector URL.
 
+### Optional nightly semantic rebuild
+
+If semantic search is enabled, the normal path is still watcher-based incremental refresh.
+
+For an extra safety net, you can also schedule a nightly full rebuild with the included systemd templates in [`scripts/systemd/`](../../scripts/systemd):
+
+- `obsidian-mcp-semantic-reindex.service`
+- `obsidian-mcp-semantic-reindex.timer`
+
+Example install:
+
+```bash
+sudo cp scripts/systemd/obsidian-mcp-semantic-reindex.service /etc/systemd/system/
+sudo cp scripts/systemd/obsidian-mcp-semantic-reindex.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now obsidian-mcp-semantic-reindex.timer
+```
+
+Before enabling:
+
+- replace `<your-user>` in the service file
+- update `WorkingDirectory`, `PATH`, and `VAULT_PATH`
+- adjust the `OnCalendar=` schedule if `04:00` is not suitable
+
+The timer simply runs:
+
+```bash
+vault-semantic reindex --mode full
+```
+
+This is optional and should be treated as a maintenance fallback, not as a replacement for the live file watcher.
+
 ## Security Notes
 
 - For internet-exposed setups, configure:

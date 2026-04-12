@@ -1,0 +1,14 @@
+[Unit]
+Description=Nightly semantic full reindex for obsidian-web-mcp
+Wants=obsidian-mcp.service
+After=obsidian-mcp.service
+
+[Service]
+Type=oneshot
+User=<your-user>
+WorkingDirectory=/home/<your-user>/obsidian-web-mcp
+Environment=PATH=/home/<your-user>/obsidian-web-mcp/venv/bin:/usr/bin
+Environment=VAULT_PATH=/home/<your-user>/Vault
+Environment=VAULT_SEMANTIC_SEARCH_ENABLED=1
+ExecStart=/home/<your-user>/obsidian-web-mcp/venv/bin/vault-semantic reindex --mode full
+

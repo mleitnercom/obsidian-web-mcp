@@ -1,0 +1,11 @@
+[Unit]
+Description=Run nightly semantic full reindex for obsidian-web-mcp
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+Unit=obsidian-mcp-semantic-reindex.service
+
+[Install]
+WantedBy=timers.target
+

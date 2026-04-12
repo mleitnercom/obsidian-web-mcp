@@ -309,6 +309,15 @@ For operator workflows, the project also exposes:
 - `vault-semantic status|reindex|search|doctor`
 - `vault-semantic-benchmark "query text"`
 
+For Linux deployments, an optional nightly full rebuild can be used as a safety net. This is not meant to replace the watcher-based incremental updates; it is only a maintenance fallback for long-running installs or after larger vault churn.
+
+Example systemd templates are included in [`scripts/systemd/`](scripts/systemd):
+
+- `obsidian-mcp-semantic-reindex.service`
+- `obsidian-mcp-semantic-reindex.timer`
+
+They run `vault-semantic reindex --mode full` once per night. Adjust the placeholders and calendar time before enabling them.
+
 ## Development
 
 ### Running tests
