@@ -118,6 +118,12 @@ python -m pip install -e .[semantic]
 export VAULT_SEMANTIC_SEARCH_ENABLED=1
 ```
 
+Optional (only if you want to force the `fastembed` backend):
+
+```bash
+python -m pip install -e .[semantic-fastembed]
+```
+
 The server starts on port 8420 by default. It serves MCP over Streamable HTTP at `/mcp/`.
 
 ## Configuration
@@ -135,7 +141,8 @@ All configuration is via environment variables:
 | `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
 | `VAULT_SEMANTIC_SEARCH_ENABLED` | No | `false` | Enable optional FAISS-based semantic search |
-| `VAULT_SEMANTIC_EMBED_MODEL` | No | `BAAI/bge-small-en-v1.5` | Embedding model used by the semantic backend (sentence-transformers preferred, fastembed fallback) |
+| `VAULT_SEMANTIC_EMBED_BACKEND` | No | `auto` | Embedding backend selection: `auto`, `sentence`, or `fastembed` |
+| `VAULT_SEMANTIC_EMBED_MODEL` | No | `BAAI/bge-small-en-v1.5` | Embedding model used by the selected semantic backend |
 | `VAULT_SEMANTIC_CACHE_PATH` | No | `VAULT_PATH/.obsidian-vault-mcp` | Cache directory for FAISS index and semantic metadata |
 | `VAULT_SEMANTIC_CHUNK_SIZE` | No | `900` | Target character length for semantic chunks |
 | `VAULT_SEMANTIC_CHUNK_OVERLAP` | No | `150` | Character overlap between adjacent semantic chunks |
@@ -254,9 +261,16 @@ The server coexists with Obsidian Sync (or any file-based sync mechanism) withou
 
 Semantic search is optional and disabled by default. The current implementation is CPU-first and uses:
 
-- `sentence-transformers` for embeddings (with `fastembed` fallback if installed)
+- `sentence-transformers` for embeddings by default
+- optional `fastembed` backend if explicitly installed/enabled
 - `faiss-cpu` for vector similarity search
 - `rank-bm25` for keyword scoring
+
+Set `VAULT_SEMANTIC_EMBED_BACKEND` to control backend choice:
+
+- `auto` (default): use sentence-transformers first, then fastembed if installed
+- `sentence`: require sentence-transformers
+- `fastembed`: require fastembed
 
 Queries are answered with a hybrid score that blends semantic similarity with keyword relevance. The semantic index is persisted on disk so normal searches stay fast after restart.
 

@@ -9,6 +9,14 @@ def _env_int(name: str, default: int) -> int:
     except ValueError:
         return default
 
+
+def _env_choice(name: str, default: str, allowed: set[str]) -> str:
+    """Parse a lowercased string environment variable constrained to allowed values."""
+    value = os.environ.get(name, default).strip().lower()
+    if value in allowed:
+        return value
+    return default
+
 # Vault configuration
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", os.path.expanduser("~/Obsidian/MyVault")))
 VAULT_MCP_TOKEN = os.environ.get("VAULT_MCP_TOKEN", "")
@@ -25,6 +33,11 @@ VAULT_OAUTH_SESSION_SECRET = os.environ.get("VAULT_OAUTH_SESSION_SECRET", "")
 SEMANTIC_SEARCH_ENABLED = os.environ.get("VAULT_SEMANTIC_SEARCH_ENABLED", "").lower() in {
     "1", "true", "yes", "on",
 }
+SEMANTIC_EMBED_BACKEND = _env_choice(
+    "VAULT_SEMANTIC_EMBED_BACKEND",
+    "auto",
+    {"auto", "sentence", "fastembed"},
+)
 SEMANTIC_EMBED_MODEL = os.environ.get("VAULT_SEMANTIC_EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 SEMANTIC_CACHE_PATH = Path(
     os.environ.get(
