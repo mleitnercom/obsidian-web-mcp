@@ -66,6 +66,8 @@ def vault_tree(path: str = "", depth: int = 3) -> str:
             for entry in entries:
                 if entry.name in config.EXCLUDED_DIRS:
                     continue
+                if entry.is_symlink():
+                    continue
                 if entry.is_file():
                     node["files"].append(entry.name)
                 elif entry.is_dir():

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,6 +26,7 @@ def _search_ripgrep(
     cmd = [
         "rg",
         "--json",
+        "--no-follow",
         f"--max-count={max_results}",
         f"--glob={file_pattern}",
         "-i",
@@ -57,7 +59,8 @@ def _search_ripgrep(
             match_data = data["data"]
             file_path = match_data["path"]["text"]
             try:
-                rel_path = Path(file_path).relative_to(config.VAULT_PATH).as_posix()
+                resolved_file = Path(file_path).resolve()
+                rel_path = resolved_file.relative_to(config.VAULT_PATH.resolve()).as_posix()
             except ValueError:
                 continue
 
@@ -88,42 +91,52 @@ def _search_python(
 
     query_lower = query.lower()
     matches = []
+    vault_root = config.VAULT_PATH.resolve()
 
-    for file_path in search_path.rglob("*"):
-        if not file_path.is_file():
-            continue
+    for root, dirs, files in os.walk(search_path, topdown=True, followlinks=False):
+        root_path = Path(root)
+        dirs[:] = [
+            d for d in dirs
+            if d not in config.EXCLUDED_DIRS and not (root_path / d).is_symlink()
+        ]
 
-        if any(part in config.EXCLUDED_DIRS for part in file_path.parts):
-            continue
+        for filename in files:
+            file_path = root_path / filename
+            if file_path.is_symlink():
+                continue
 
-        if not fnmatch.fnmatch(file_path.name, file_pattern):
-            continue
+            if any(part in config.EXCLUDED_DIRS for part in file_path.parts):
+                continue
 
-        try:
-            content = file_path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, PermissionError):
-            continue
+            if not fnmatch.fnmatch(file_path.name, file_pattern):
+                continue
 
-        lines = content.splitlines()
-        for i, line in enumerate(lines):
-            if query_lower in line.lower():
-                start = max(0, i - context_lines)
-                end = min(len(lines), i + context_lines + 1)
-                context = "\n".join(lines[start:end])
+            try:
+                resolved_path = file_path.resolve()
+                rel_path = resolved_path.relative_to(vault_root).as_posix()
+            except ValueError:
+                continue
 
-                try:
-                    rel_path = file_path.relative_to(config.VAULT_PATH).as_posix()
-                except ValueError:
-                    continue
+            try:
+                content = file_path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, PermissionError, OSError):
+                continue
 
-                matches.append({
-                    "path": rel_path,
-                    "line_number": i + 1,
-                    "match_context": context,
-                })
+            lines = content.splitlines()
+            for i, line in enumerate(lines):
+                if query_lower in line.lower():
+                    start = max(0, i - context_lines)
+                    end = min(len(lines), i + context_lines + 1)
+                    context = "\n".join(lines[start:end])
 
-                if len(matches) >= max_results:
-                    return matches
+                    matches.append({
+                        "path": rel_path,
+                        "line_number": i + 1,
+                        "match_context": context,
+                    })
+
+                    if len(matches) >= max_results:
+                        return matches
 
     return matches
 
@@ -131,6 +144,8 @@ def _search_python(
 def _get_frontmatter_excerpt(file_path: Path, max_keys: int = 3) -> dict | None:
     """Read frontmatter from a file, returning first N key-value pairs."""
     try:
+        if file_path.is_symlink():
+            return None
         content = file_path.read_text(encoding="utf-8")
         post = frontmatter.loads(content)
         if not post.metadata:

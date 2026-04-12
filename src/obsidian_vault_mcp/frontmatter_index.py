@@ -22,7 +22,8 @@ class FrontmatterIndex:
         self._lock = threading.Lock()
         self._observer: Observer | None = None
         self._debounce_timer: threading.Timer | None = None
-        self._pending_paths: set[str] = set()
+        self._pending_paths: dict[str, str] = {}
+        self._change_callbacks: list = []
 
     def start(self) -> None:
         """Walk all .md files, parse frontmatter, and start watching for changes.
@@ -38,6 +39,8 @@ class FrontmatterIndex:
         count = 0
 
         for md_path in config.VAULT_PATH.rglob("*.md"):
+            if md_path.is_symlink():
+                continue
             if self._is_excluded(md_path):
                 continue
             rel = md_path.relative_to(config.VAULT_PATH).as_posix()
@@ -105,6 +108,11 @@ class FrontmatterIndex:
                         results.append({"path": rel_path, "frontmatter": fm})
         return results
 
+    def on_change(self, callback) -> None:
+        """Register callback(rel_path, action) for markdown create/modify/delete."""
+        if callback not in self._change_callbacks:
+            self._change_callbacks.append(callback)
+
     # -- Internal helpers --
 
     def _is_excluded(self, path: Path) -> bool:
@@ -120,10 +128,13 @@ class FrontmatterIndex:
             logger.warning("Failed to parse frontmatter: %s", path)
             return None
 
-    def _schedule_debounce(self, abs_path: str) -> None:
-        """Add a path to the pending set and reset the debounce timer."""
+    def _schedule_debounce(self, abs_path: str, action: str) -> None:
+        """Add a path/action to the pending set and reset the debounce timer."""
         with self._lock:
-            self._pending_paths.add(abs_path)
+            existing = self._pending_paths.get(abs_path)
+            if existing == "delete":
+                action = "delete"
+            self._pending_paths[abs_path] = action
             if self._debounce_timer is not None:
                 self._debounce_timer.cancel()
             self._debounce_timer = threading.Timer(
@@ -134,12 +145,16 @@ class FrontmatterIndex:
     def _flush_pending(self) -> None:
         """Process all pending file changes."""
         with self._lock:
-            paths = self._pending_paths.copy()
+            updates = dict(self._pending_paths)
             self._pending_paths.clear()
             self._debounce_timer = None
 
-        for abs_path_str in paths:
+        for abs_path_str, action in updates.items():
             abs_path = Path(abs_path_str)
+            if abs_path.is_symlink():
+                with self._lock:
+                    self._index.pop(abs_path.relative_to(config.VAULT_PATH).as_posix(), None)
+                continue
             rel = abs_path.relative_to(config.VAULT_PATH).as_posix()
             if abs_path.exists():
                 fm = self._parse_frontmatter(abs_path)
@@ -148,9 +163,17 @@ class FrontmatterIndex:
                         self._index[rel] = fm
                     else:
                         self._index.pop(rel, None)
+                emitted_action = "create" if action == "create" else "modify"
             else:
                 with self._lock:
                     self._index.pop(rel, None)
+                emitted_action = "delete"
+
+            for callback in self._change_callbacks:
+                try:
+                    callback(rel, emitted_action)
+                except Exception:
+                    logger.warning("Frontmatter change callback failed for %s", rel)
 
 
 class _VaultEventHandler(FileSystemEventHandler):
@@ -160,21 +183,23 @@ class _VaultEventHandler(FileSystemEventHandler):
         super().__init__()
         self._index = index
 
-    def _handle(self, event: FileSystemEvent) -> None:
+    def _handle(self, event: FileSystemEvent, action: str) -> None:
         if event.is_directory:
             return
         path = Path(event.src_path)
         if path.suffix != ".md":
             return
+        if path.is_symlink():
+            return
         if self._index._is_excluded(path):
             return
-        self._index._schedule_debounce(event.src_path)
+        self._index._schedule_debounce(event.src_path, action)
 
     def on_created(self, event: FileSystemEvent) -> None:
-        self._handle(event)
+        self._handle(event, "create")
 
     def on_modified(self, event: FileSystemEvent) -> None:
-        self._handle(event)
+        self._handle(event, "modify")
 
     def on_deleted(self, event: FileSystemEvent) -> None:
-        self._handle(event)
+        self._handle(event, "delete")

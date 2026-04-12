@@ -149,7 +149,7 @@ def test_oauth_authorize_alias_works(monkeypatch):
 
 
 def test_oauth_authorize_login_then_issues_code(monkeypatch):
-    """A successful login on /oauth/authorize proceeds to the normal code flow."""
+    """A successful login requires explicit consent before issuing a code."""
     reset_rate_limits()
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
@@ -179,9 +179,26 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
         assert login.status_code == 303
         assert "vault_mcp_oauth_session" in login.headers.get("set-cookie", "")
 
-        authorize = client.get(login.headers["location"], follow_redirects=False)
-        assert authorize.status_code == 302
-        code = authorize.headers["location"].split("code=", 1)[1]
+        authorize = client.get(login.headers["location"])
+        assert authorize.status_code == 200
+        assert "Approve Vault Access" in authorize.text
+
+        approve = client.post(
+            "/oauth/authorize",
+            data={
+                "response_type": "code",
+                "client_id": registration["client_id"],
+                "redirect_uri": "https://claude.example/callback",
+                "approve": "allow",
+            },
+            follow_redirects=False,
+        )
+        assert approve.status_code == 303
+        assert "approved=1" in approve.headers["location"]
+
+        finalize = client.get(approve.headers["location"], follow_redirects=False)
+        assert finalize.status_code == 302
+        code = finalize.headers["location"].split("code=", 1)[1]
 
         token = client.post(
             "/oauth/token",
@@ -196,6 +213,48 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
 
     assert token.status_code == 200
     assert token.json()["access_token"] == "vault-token"
+
+
+def test_oauth_authorize_with_session_without_approval_shows_consent(monkeypatch):
+    """Login session alone must not auto-issue codes without explicit approval."""
+    reset_rate_limits()
+    oauth._auth_codes.clear()
+    oauth._registered_clients.clear()
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_USERNAME", "michael")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "correct horse battery staple")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_SESSION_SECRET", "session-secret")
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        registration = client.post(
+            "/oauth/register",
+            json={"redirect_uris": ["https://claude.example/callback"]},
+        ).json()
+
+        client.post(
+            "/oauth/authorize",
+            data={
+                "response_type": "code",
+                "client_id": registration["client_id"],
+                "redirect_uri": "https://claude.example/callback",
+                "username": "michael",
+                "password": "correct horse battery staple",
+            },
+            follow_redirects=False,
+        )
+
+        response = client.get(
+            "/oauth/authorize",
+            params={
+                "response_type": "code",
+                "client_id": registration["client_id"],
+                "redirect_uri": "https://claude.example/callback",
+            },
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 200
+    assert "Approve Vault Access" in response.text
 
 
 def test_oauth_authorization_code_flow_validates_client_and_redirect(monkeypatch):

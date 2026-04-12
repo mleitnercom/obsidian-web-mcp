@@ -1,6 +1,7 @@
 """Integration tests for tool functions."""
 
 import json
+import os
 from datetime import date, datetime
 
 import pytest
@@ -113,3 +114,20 @@ def test_vault_delete_requires_confirm(vault_dir):
     result = json.loads(vault_delete("delete-me.md", confirm=False))
     assert "error" in result
     assert (vault_dir / "delete-me.md").exists()  # still there
+
+
+def test_search_and_list_ignore_symlinked_files(vault_dir):
+    """Symlinked files should not be included in list/search results."""
+    source = vault_dir / "real-note.md"
+    source.write_text("Symlink target secret text.\n", encoding="utf-8")
+    linked = vault_dir / "linked-note.md"
+    try:
+        os.symlink(source, linked)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink creation not supported in this environment")
+
+    listed = json.loads(vault_list(""))
+    assert all(item["name"] != "linked-note.md" for item in listed["items"])
+
+    searched = json.loads(vault_search("secret text"))
+    assert all(item["path"] != "linked-note.md" for item in searched["results"])

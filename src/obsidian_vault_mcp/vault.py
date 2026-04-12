@@ -205,6 +205,8 @@ def list_directory(
             # Skip excluded directories at every level
             if entry.name in config.EXCLUDED_DIRS:
                 continue
+            if entry.is_symlink():
+                continue
 
             is_dir = entry.is_dir()
 

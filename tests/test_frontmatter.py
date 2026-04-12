@@ -82,3 +82,18 @@ def test_index_start_is_idempotent(index):
     index.start()
 
     assert index._observer is observer
+
+
+def test_on_change_callback_receives_event(index):
+    """Registered callbacks are retained and callable for change notifications."""
+    events = []
+
+    def _callback(path, action):
+        events.append((path, action))
+
+    index.on_change(_callback)
+    index.on_change(_callback)
+
+    assert len(index._change_callbacks) == 1
+    index._change_callbacks[0]("test-note.md", "modify")
+    assert events == [("test-note.md", "modify")]
