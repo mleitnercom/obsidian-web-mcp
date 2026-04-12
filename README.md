@@ -6,7 +6,7 @@ It reads and writes markdown files on disk, parses YAML frontmatter, serializes 
 
 ## Release
 
-Latest: [v0.2.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.2.0) (2026-04-12).
+Latest: [v0.3.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.3.0) (2026-04-12).
 
 ## Why This Exists
 

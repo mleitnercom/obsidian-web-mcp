@@ -3,6 +3,28 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
+## [v0.3.0] - 2026-04-12
+
+### Features
+- Add optional semantic search with a persistent FAISS index and hybrid semantic+keyword scoring.
+- Add `vault_tree` for compact nested vault structure discovery.
+- Add semantic reindex tooling with full and incremental modes.
+- Add configurable embedding backend selection via `VAULT_SEMANTIC_EMBED_BACKEND` (`auto`, `sentence`, `fastembed`).
+
+### Security
+- Require explicit consent after login in OAuth authorize flow before issuing auth codes.
+- Tighten OAuth session cookie policy with `SameSite=Strict`.
+- Restrict trusted forwarded headers via `VAULT_TRUSTED_PROXY_IPS` instead of trusting all proxies.
+- Ignore symlinked files/directories in list/search/index paths to reduce indirect traversal risk.
+
+### Reliability
+- Add debounced frontmatter-change hooks to trigger incremental semantic index updates.
+- Persist semantic manifest/path metadata and improve incremental update detection.
+
+### Docs / Tests
+- Update README for semantic backend options, security model, and proxy trust configuration.
+- Expand tests for semantic tooling, OAuth consent flow, config validation, and symlink handling.
+
 ## [v0.2.0] - 2026-04-12
 
 ### Security
@@ -20,4 +42,3 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 ### Docs / CI
 - Document the optional OAuth login gate and the in-memory OAuth state design.
 - Add a pytest GitHub Actions workflow.
-
