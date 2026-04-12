@@ -190,7 +190,12 @@ All configuration is via environment variables:
 
 Generate tokens with: `python -c "import secrets; print(secrets.token_hex(32))"`
 
-## Connecting to Claude
+## Connecting Clients
+
+This section is about attaching a client to a running server.
+Deployment comes later and covers how to keep the server and tunnel running reliably.
+
+### Connecting to Claude
 
 The Claude desktop and mobile apps can connect to remote MCP servers via OAuth.
 
@@ -203,6 +208,19 @@ The Claude desktop and mobile apps can connect to remote MCP servers via OAuth.
 7. Claude now has access to all twelve vault tools -- on desktop and mobile
 
 For local-only use (no tunnel), point Claude at `http://localhost:8420`.
+
+### Connecting to ChatGPT
+
+ChatGPT can use the same deployed MCP endpoint, but connector behavior may vary a bit more by rollout and client version than Claude does.
+
+Practical recommendations:
+
+1. Start with the same base URL you would use for Claude, ideally over HTTPS with a stable public hostname.
+2. Keep OAuth discovery reachable at the public base URL and set `VAULT_PUBLIC_BASE_URL` explicitly if you are behind a tunnel or reverse proxy.
+3. If a connector flow is sensitive to extra approval clicks, try `VAULT_OAUTH_REQUIRE_APPROVAL=false` while keeping `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD` enabled.
+4. If the connector expects `/authorize` instead of `/oauth/authorize`, this fork already provides the compatibility alias.
+
+In practice, the fixes in this fork around OAuth discovery, forwarded-host handling, `/authorize` compatibility, and date serialization were added specifically to improve real client interoperability, including ChatGPT-style connector flows.
 
 ## Remote Access with Cloudflare Tunnel
 

@@ -20,6 +20,7 @@ This release turns the semantic-search work from an internal feature set into so
 
 ### Documentation
 - Update README and Linux deployment docs to document semantic operator tooling, explicit search modes, timer setup, and live monitoring commands.
+- Clarify README client-connection guidance by separating client setup from deployment and adding practical ChatGPT connector notes.
 - Record the active production timer setup and operational commands in the local deployment notes.
 
 ## [v0.3.0] - 2026-04-12
