@@ -1,10 +1,23 @@
 import os
 from pathlib import Path
 
+
+def _env_csv(name: str, default: list[str]) -> list[str]:
+    """Parse a comma-separated env var into a list of trimmed values."""
+    raw = os.environ.get(name, "")
+    if not raw.strip():
+        return default
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 # Vault configuration
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", os.path.expanduser("~/Obsidian/MyVault")))
 VAULT_MCP_TOKEN = os.environ.get("VAULT_MCP_TOKEN", "")
 VAULT_MCP_PORT = int(os.environ.get("VAULT_MCP_PORT", "8420"))
+ALLOWED_HOSTS = _env_csv(
+    "VAULT_ALLOWED_HOSTS",
+    ["127.0.0.1:*", "localhost:*", "[::1]:*"],
+)
 
 # OAuth 2.0 client credentials (for Claude app integration)
 VAULT_OAUTH_CLIENT_ID = os.environ.get("VAULT_OAUTH_CLIENT_ID", "vault-mcp-client")
