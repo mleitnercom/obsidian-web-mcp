@@ -39,6 +39,8 @@ class FrontmatterIndex:
         count = 0
 
         for md_path in config.VAULT_PATH.rglob("*.md"):
+            if md_path.is_symlink():
+                continue
             if self._is_excluded(md_path):
                 continue
             rel = md_path.relative_to(config.VAULT_PATH).as_posix()
@@ -149,6 +151,10 @@ class FrontmatterIndex:
 
         for abs_path_str, action in updates.items():
             abs_path = Path(abs_path_str)
+            if abs_path.is_symlink():
+                with self._lock:
+                    self._index.pop(abs_path.relative_to(config.VAULT_PATH).as_posix(), None)
+                continue
             rel = abs_path.relative_to(config.VAULT_PATH).as_posix()
             if abs_path.exists():
                 fm = self._parse_frontmatter(abs_path)
@@ -182,6 +188,8 @@ class _VaultEventHandler(FileSystemEventHandler):
             return
         path = Path(event.src_path)
         if path.suffix != ".md":
+            return
+        if path.is_symlink():
             return
         if self._index._is_excluded(path):
             return

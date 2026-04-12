@@ -43,13 +43,15 @@ This is a server that provides network access to your personal notes. Security i
 
 **Authentication is enforced on every request.** The server implements OAuth 2.0 authorization code flow with PKCE for initial client authentication (what Claude uses when you connect the integration), plus bearer token validation on every subsequent MCP tool call. No request reaches a tool function without a valid token.
 
-**OAuth authorization can require an explicit login step.** If you set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD`, `/oauth/authorize` shows a browser login form before issuing an authorization code. If you leave them unset, the server falls back to single-user auto-approve mode for compatibility. For an internet-exposed deployment, the login-gated mode is strongly recommended.
+**OAuth authorization can require explicit login and consent.** If you set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD`, `/oauth/authorize` shows a browser login form and a separate allow-access confirmation step before issuing an authorization code. If you leave them unset, the server falls back to single-user auto-approve mode for compatibility. For an internet-exposed deployment, the login-gated mode is strongly recommended.
 
 **OAuth state is intentionally in-memory (non-persistent).** Authorization codes, access tokens, and temporary client registrations live in RAM and are cleared on process restart. This is a deliberate security tradeoff: it minimizes long-lived secrets on disk at the cost of requiring a reconnect after restarts. If you need persistence, consider using a reverse proxy or a private network boundary rather than storing tokens on disk.
 
 **Your vault is never exposed directly to the internet.** The recommended deployment uses a Cloudflare Tunnel -- an outbound-only encrypted connection. Your machine opens no inbound ports. You can layer Cloudflare Access on top for additional authentication (SSO, device posture checks, IP restrictions) if you want defense in depth.
 
 **Path traversal is blocked at the filesystem layer.** Every file operation resolves paths against the vault root directory and rejects any attempt to escape it -- `..` traversal, symlink following, null byte injection, and dotfile access (`.obsidian`, `.git`, `.trash`) are all caught before they reach the filesystem. The server will never read or write outside your vault directory.
+
+**Reverse-proxy trust is explicit.** Forwarded headers are only trusted from IPs in `VAULT_TRUSTED_PROXY_IPS` (default `127.0.0.1,::1`) instead of trusting all upstreams.
 
 **Writes are atomic.** Every file write goes to a temporary file first, then atomically replaces the target via `os.replace()`. This guarantees that neither Obsidian nor Obsidian Sync ever sees a partially-written file -- the operation either completes fully or doesn't happen at all.
 
@@ -140,6 +142,7 @@ All configuration is via environment variables:
 | `VAULT_OAUTH_AUTH_USERNAME` | No | (none) | Optional username required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
+| `VAULT_TRUSTED_PROXY_IPS` | No | `127.0.0.1,::1` | Comma-separated proxy IPs trusted for forwarded headers (uvicorn `forwarded_allow_ips`) |
 | `VAULT_SEMANTIC_SEARCH_ENABLED` | No | `false` | Enable optional FAISS-based semantic search |
 | `VAULT_SEMANTIC_EMBED_BACKEND` | No | `auto` | Embedding backend selection: `auto`, `sentence`, or `fastembed` |
 | `VAULT_SEMANTIC_EMBED_MODEL` | No | `BAAI/bge-small-en-v1.5` | Embedding model used by the selected semantic backend |

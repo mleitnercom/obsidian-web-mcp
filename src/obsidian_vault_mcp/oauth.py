@@ -126,6 +126,7 @@ def _authorize_params_from_request(request: Request, form: dict | None = None) -
         "state": source.get("state", ""),
         "code_challenge": source.get("code_challenge", ""),
         "code_challenge_method": source.get("code_challenge_method", "S256"),
+        "approved": source.get("approved", ""),
     }
 
 
@@ -164,6 +165,39 @@ def _render_login_form(params: dict[str, str], error: str = "") -> HTMLResponse:
                style="display:block;width:100%;margin-top:0.25rem;padding:0.5rem;">
       </label>
       <button type="submit" style="padding:0.6rem 1rem;">Continue</button>
+    </form>
+  </body>
+</html>"""
+    return HTMLResponse(page, status_code=200)
+
+
+def _render_approval_form(params: dict[str, str], error: str = "") -> HTMLResponse:
+    """Render explicit consent screen after login to prevent silent approvals."""
+    hidden_inputs = "\n".join(
+        f'<input type="hidden" name="{html.escape(key)}" value="{html.escape(value)}">'
+        for key, value in params.items()
+        if key != "approved"
+    )
+    error_block = (
+        f'<p style="color:#b91c1c;margin-bottom:1rem;">{html.escape(error)}</p>'
+        if error
+        else ""
+    )
+    page = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Approve Vault Access</title>
+  </head>
+  <body style="font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;">
+    <h1 style="margin-bottom:0.5rem;">Approve Vault Access</h1>
+    <p style="margin-bottom:1rem;">Allow this OAuth client to access your Obsidian vault MCP server?</p>
+    {error_block}
+    <form method="post" action="/oauth/authorize">
+      {hidden_inputs}
+      <input type="hidden" name="approve" value="allow">
+      <button type="submit" style="padding:0.6rem 1rem;">Allow Access</button>
     </form>
   </body>
 </html>"""
@@ -231,6 +265,12 @@ async def oauth_authorize(request: Request):
         if not _oauth_login_enabled():
             return RedirectResponse(url=_authorize_redirect_url(params), status_code=303)
 
+        if _has_valid_auth_session(request):
+            if form.get("approve", "") != "allow":
+                return _render_approval_form(params, error="Please confirm access.")
+            params["approved"] = "1"
+            return RedirectResponse(url=_authorize_redirect_url(params), status_code=303)
+
         username = form.get("username", "")
         password = form.get("password", "")
         user_ok = hmac.compare_digest(username, config.VAULT_OAUTH_AUTH_USERNAME)
@@ -244,7 +284,7 @@ async def oauth_authorize(request: Request):
             _issue_auth_session(),
             max_age=_SESSION_TTL_SECONDS,
             httponly=True,
-            samesite="lax",
+            samesite="strict",
             secure=request.url.scheme == "https",
         )
         return response
@@ -271,8 +311,11 @@ async def oauth_authorize(request: Request):
     if allowed_redirect_uris is not None and redirect_uri not in allowed_redirect_uris:
         return JSONResponse({"error": "invalid_request", "error_description": "redirect_uri not registered"}, status_code=400)
 
-    if _oauth_login_enabled() and not _has_valid_auth_session(request):
-        return _render_login_form(params)
+    if _oauth_login_enabled():
+        if not _has_valid_auth_session(request):
+            return _render_login_form(params)
+        if params.get("approved") != "1":
+            return _render_approval_form(params)
 
     # Generate authorization code
     _cleanup_codes()

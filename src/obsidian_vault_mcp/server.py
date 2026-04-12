@@ -338,7 +338,7 @@ def main():
             port=VAULT_MCP_PORT,
             log_level="info",
             proxy_headers=True,
-            forwarded_allow_ips="*",
+            forwarded_allow_ips=config.TRUSTED_PROXY_IPS,
         )
     except Exception:
         logger.exception("Could not build authenticated app; refusing to start")
