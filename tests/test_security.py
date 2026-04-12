@@ -257,6 +257,42 @@ def test_oauth_authorize_with_session_without_approval_shows_consent(monkeypatch
     assert "Approve Vault Access" in response.text
 
 
+def test_oauth_authorize_with_session_can_skip_consent_when_disabled(monkeypatch):
+    """Optionally skip extra consent click after login for connector compatibility."""
+    reset_rate_limits()
+    oauth._auth_codes.clear()
+    oauth._registered_clients.clear()
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_USERNAME", "michael")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "correct horse battery staple")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_SESSION_SECRET", "session-secret")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_REQUIRE_APPROVAL", False)
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        registration = client.post(
+            "/oauth/register",
+            json={"redirect_uris": ["https://claude.example/callback"]},
+        ).json()
+
+        login = client.post(
+            "/oauth/authorize",
+            data={
+                "response_type": "code",
+                "client_id": registration["client_id"],
+                "redirect_uri": "https://claude.example/callback",
+                "username": "michael",
+                "password": "correct horse battery staple",
+            },
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+
+        authorize = client.get(login.headers["location"], follow_redirects=False)
+
+    assert authorize.status_code == 302
+    assert "code=" in authorize.headers["location"]
+
+
 def test_oauth_authorization_code_flow_validates_client_and_redirect(monkeypatch):
     """Authorization code exchange binds code to client_id and redirect_uri."""
     reset_rate_limits()

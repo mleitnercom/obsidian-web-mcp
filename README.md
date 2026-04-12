@@ -43,7 +43,7 @@ This is a server that provides network access to your personal notes. Security i
 
 **Authentication is enforced on every request.** The server implements OAuth 2.0 authorization code flow with PKCE for initial client authentication (what Claude uses when you connect the integration), plus bearer token validation on every subsequent MCP tool call. No request reaches a tool function without a valid token.
 
-**OAuth authorization can require explicit login and consent.** If you set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD`, `/oauth/authorize` shows a browser login form and a separate allow-access confirmation step before issuing an authorization code. If you leave them unset, the server falls back to single-user auto-approve mode for compatibility. For an internet-exposed deployment, the login-gated mode is strongly recommended.
+**OAuth authorization supports two secure single-user modes.** If you set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD`, `/oauth/authorize` requires browser login before issuing an authorization code. You can keep an extra explicit consent click (`VAULT_OAUTH_REQUIRE_APPROVAL=true`, default) or disable it for connector compatibility (`VAULT_OAUTH_REQUIRE_APPROVAL=false`). If you leave login credentials unset, the server falls back to single-user auto-approve mode for compatibility.
 
 **OAuth state is intentionally in-memory (non-persistent).** Authorization codes, access tokens, and temporary client registrations live in RAM and are cleared on process restart. This is a deliberate security tradeoff: it minimizes long-lived secrets on disk at the cost of requiring a reconnect after restarts. If you need persistence, consider using a reverse proxy or a private network boundary rather than storing tokens on disk.
 
@@ -141,6 +141,7 @@ All configuration is via environment variables:
 | `VAULT_OAUTH_CLIENT_SECRET` | Yes | (none) | OAuth 2.0 client secret for Claude integration |
 | `VAULT_OAUTH_AUTH_USERNAME` | No | (none) | Optional username required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
+| `VAULT_OAUTH_REQUIRE_APPROVAL` | No | `true` | Require an extra post-login consent click (`false` keeps login but skips the extra allow step) |
 | `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
 | `VAULT_TRUSTED_PROXY_IPS` | No | `127.0.0.1,::1` | Comma-separated proxy IPs trusted for forwarded headers (uvicorn `forwarded_allow_ips`) |
 | `VAULT_ALLOWED_HOSTS` | No | `127.0.0.1:*,localhost:*,[::1]:*` | Comma-separated hosts allowed by DNS rebinding protection (add your tunnel hostname here) |
@@ -178,7 +179,7 @@ The Claude desktop and mobile apps can connect to remote MCP servers via OAuth.
 3. Enter your server URL (e.g. `https://vault-mcp.yourdomain.com`)
 4. Enter the OAuth client ID and client secret you configured
 5. Claude will discover the OAuth endpoints automatically and open a browser window
-6. If authorize-login credentials are configured, sign in in the browser window; otherwise the server auto-approves the authorization
+6. If authorize-login credentials are configured, sign in in the browser window (and approve if `VAULT_OAUTH_REQUIRE_APPROVAL=true`); otherwise the server auto-approves the authorization
 7. Claude now has access to all twelve vault tools -- on desktop and mobile
 
 For local-only use (no tunnel), point Claude at `http://localhost:8420`.

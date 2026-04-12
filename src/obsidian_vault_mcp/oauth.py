@@ -4,7 +4,7 @@ Claude's MCP connector uses the full OAuth authorization code flow:
 1. Discovers metadata at /.well-known/oauth-authorization-server
 2. Dynamically registers at /oauth/register (or uses pre-configured credentials)
 3. Redirects user's browser to /oauth/authorize
-4. Server auto-approves (single-user) and redirects back with an auth code
+4. Server validates single-user auth policy and redirects back with an auth code
 5. Claude exchanges the code at /oauth/token for a bearer token
 6. Claude uses the bearer token on all MCP requests
 
@@ -76,6 +76,11 @@ def _client_ip(request: Request) -> str:
 def _oauth_login_enabled() -> bool:
     """Return whether interactive login is required for /oauth/authorize."""
     return bool(config.VAULT_OAUTH_AUTH_USERNAME and config.VAULT_OAUTH_AUTH_PASSWORD)
+
+
+def _oauth_consent_required() -> bool:
+    """Return whether an explicit post-login consent click is required."""
+    return _oauth_login_enabled() and config.VAULT_OAUTH_REQUIRE_APPROVAL
 
 
 def _session_secret() -> str:
@@ -259,9 +264,9 @@ async def openid_configuration_alias(request: Request) -> JSONResponse:
 async def oauth_authorize(request: Request):
     """OAuth 2.0 authorization endpoint.
 
-    Claude redirects the user's browser here. Since this is a single-user
-    personal server, we auto-approve: generate an auth code and redirect
-    back to Claude immediately.
+    Claude redirects the user's browser here. For single-user deployments,
+    this endpoint can enforce a lightweight login gate and optional explicit
+    consent before issuing an auth code.
     """
     from .rate_limit import check_rate_limit
 
@@ -281,9 +286,10 @@ async def oauth_authorize(request: Request):
             return RedirectResponse(url=_authorize_redirect_url(params), status_code=303)
 
         if _has_valid_auth_session(request):
-            if form.get("approve", "") != "allow":
+            if _oauth_consent_required() and form.get("approve", "") != "allow":
                 return _render_approval_form(params, error="Please confirm access.")
-            params["approved"] = "1"
+            if _oauth_consent_required():
+                params["approved"] = "1"
             return RedirectResponse(url=_authorize_redirect_url(params), status_code=303)
 
         username = form.get("username", "")
@@ -329,7 +335,7 @@ async def oauth_authorize(request: Request):
     if _oauth_login_enabled():
         if not _has_valid_auth_session(request):
             return _render_login_form(params)
-        if params.get("approved") != "1":
+        if _oauth_consent_required() and params.get("approved") != "1":
             return _render_approval_form(params)
 
     # Generate authorization code

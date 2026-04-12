@@ -18,6 +18,14 @@ def _env_choice(name: str, default: str, allowed: set[str]) -> str:
     return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Parse a boolean env var with a conservative default."""
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _env_csv(name: str, default: list[str]) -> list[str]:
     """Parse a comma-separated env var into a list of non-empty trimmed values."""
     raw = os.environ.get(name, "")
@@ -36,6 +44,7 @@ VAULT_OAUTH_CLIENT_SECRET = os.environ.get("VAULT_OAUTH_CLIENT_SECRET", "")
 VAULT_OAUTH_AUTH_USERNAME = os.environ.get("VAULT_OAUTH_AUTH_USERNAME", "")
 VAULT_OAUTH_AUTH_PASSWORD = os.environ.get("VAULT_OAUTH_AUTH_PASSWORD", "")
 VAULT_OAUTH_SESSION_SECRET = os.environ.get("VAULT_OAUTH_SESSION_SECRET", "")
+VAULT_OAUTH_REQUIRE_APPROVAL = _env_bool("VAULT_OAUTH_REQUIRE_APPROVAL", True)
 TRUSTED_PROXY_IPS = os.environ.get("VAULT_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
 ALLOWED_HOSTS = _env_csv(
     "VAULT_ALLOWED_HOSTS",
