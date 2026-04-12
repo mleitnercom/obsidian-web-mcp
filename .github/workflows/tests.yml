@@ -6,6 +6,9 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   pytest:
     name: pytest (${{ matrix.os }}, py${{ matrix.python-version }})
