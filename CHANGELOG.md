@@ -5,19 +5,22 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [v0.4.0] - 2026-04-12
 
-### Features
-- Add explicit semantic search modes via `vault_semantic_search(search_mode=hybrid|semantic|keyword)`.
-- Add `vault-semantic` operator CLI for status, search, doctor, and manual reindex workflows.
-- Add `vault-semantic-benchmark` for query timing and mode comparison.
+This release turns the semantic-search work from an internal feature set into something that is easier to operate, observe, and keep healthy over time.
 
-### Reliability
-- Add clearer semantic cache and embedding progress logs for full and incremental rebuilds.
-- Add optional systemd templates for a nightly semantic full rebuild safety net.
-- Deploy and document the nightly semantic reindex timer for the Linux production setup.
+### Semantic Search
+- Make semantic retrieval explicitly selectable via `vault_semantic_search(search_mode=hybrid|semantic|keyword)`.
+- Keep `hybrid` as the default, while allowing direct comparison against pure semantic or pure keyword ranking.
+- Add `vault-semantic-benchmark` for timing and result comparisons across query modes.
 
-### Docs / Operations
-- Update README and Linux deployment docs for hybrid search behavior, semantic operator tooling, and nightly reindex monitoring commands.
-- Record the live timer setup and operator commands in the local deployment notes.
+### Operations
+- Add `vault-semantic` for direct operator workflows: `status`, `search`, `doctor`, and manual `reindex`.
+- Add clearer progress logging for semantic cache load, full rebuilds, incremental rebuilds, and embedding batches.
+- Add optional systemd templates for a nightly semantic full rebuild as a maintenance safety net.
+- Deploy and verify the nightly timer in the Linux production setup.
+
+### Documentation
+- Update README and Linux deployment docs to document semantic operator tooling, explicit search modes, timer setup, and live monitoring commands.
+- Record the active production timer setup and operational commands in the local deployment notes.
 
 ## [v0.3.0] - 2026-04-12
 
