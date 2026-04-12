@@ -3,6 +3,22 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
+## [v0.4.0] - 2026-04-12
+
+### Features
+- Add explicit semantic search modes via `vault_semantic_search(search_mode=hybrid|semantic|keyword)`.
+- Add `vault-semantic` operator CLI for status, search, doctor, and manual reindex workflows.
+- Add `vault-semantic-benchmark` for query timing and mode comparison.
+
+### Reliability
+- Add clearer semantic cache and embedding progress logs for full and incremental rebuilds.
+- Add optional systemd templates for a nightly semantic full rebuild safety net.
+- Deploy and document the nightly semantic reindex timer for the Linux production setup.
+
+### Docs / Operations
+- Update README and Linux deployment docs for hybrid search behavior, semantic operator tooling, and nightly reindex monitoring commands.
+- Record the live timer setup and operator commands in the local deployment notes.
+
 ## [v0.3.0] - 2026-04-12
 
 ### Features

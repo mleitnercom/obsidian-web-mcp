@@ -4,7 +4,7 @@ Production-hardened fork of `obsidian-web-mcp` for MCP access to an Obsidian vau
 
 ## Release
 
-Latest: [v0.3.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.3.0) (2026-04-12).
+Latest: [v0.4.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.4.0) (2026-04-12).
 
 ## Status
 
@@ -317,6 +317,15 @@ Example systemd templates are included in [`scripts/systemd/`](scripts/systemd):
 - `obsidian-mcp-semantic-reindex.timer`
 
 They run `vault-semantic reindex --mode full` once per night. Adjust the placeholders and calendar time before enabling them.
+
+Useful operational commands:
+
+```bash
+systemctl list-timers obsidian-mcp-semantic-reindex.timer
+sudo systemctl start obsidian-mcp-semantic-reindex.service
+sudo journalctl -fu obsidian-mcp-semantic-reindex.service
+sudo journalctl -u obsidian-mcp-semantic-reindex.service -n 50 --no-pager
+```
 
 ## Development
 

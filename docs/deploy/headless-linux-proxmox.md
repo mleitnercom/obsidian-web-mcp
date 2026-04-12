@@ -216,6 +216,15 @@ vault-semantic reindex --mode full
 
 This is optional and should be treated as a maintenance fallback, not as a replacement for the live file watcher.
 
+To watch or test it manually:
+
+```bash
+systemctl list-timers obsidian-mcp-semantic-reindex.timer
+sudo systemctl start obsidian-mcp-semantic-reindex.service
+sudo journalctl -fu obsidian-mcp-semantic-reindex.service
+sudo journalctl -u obsidian-mcp-semantic-reindex.service -n 50 --no-pager
+```
+
 ## Security Notes
 
 - For internet-exposed setups, configure:
