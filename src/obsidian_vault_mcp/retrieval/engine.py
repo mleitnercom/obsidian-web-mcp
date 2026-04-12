@@ -130,6 +130,16 @@ class SemanticSearchEngine:
         min_score: float = 0.0,
     ) -> dict:
         """Run hybrid semantic + keyword retrieval for a natural-language query."""
+        started = time.monotonic()
+        logger.info(
+            "Semantic search start: mode=%s query_chars=%s path_prefix=%r filter_tags=%s max_results=%s min_score=%s",
+            search_mode,
+            len(query),
+            path_prefix,
+            len(filter_tags or []),
+            max_results,
+            min_score,
+        )
         self.initialize()
         with self._lock:
             if not self.enabled:
@@ -164,7 +174,7 @@ class SemanticSearchEngine:
                 if len(results) >= max_results:
                     break
 
-            return {
+            payload = {
                 "mode": search_mode,
                 "results": results,
                 "total": len(results),
@@ -175,6 +185,17 @@ class SemanticSearchEngine:
                     "merged": len(merged),
                 },
             }
+            duration = time.monotonic() - started
+            logger.info(
+                "Semantic search complete: mode=%s results=%s candidates=(semantic=%s keyword=%s merged=%s) in %.3fs",
+                search_mode,
+                payload["total"],
+                payload["candidate_counts"]["semantic"],
+                payload["candidate_counts"]["keyword"],
+                payload["candidate_counts"]["merged"],
+                duration,
+            )
+            return payload
 
     def _full_reindex_unlocked(self) -> dict:
         """Rebuild all semantic data from scratch."""

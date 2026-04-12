@@ -7,7 +7,9 @@ Designed to run behind Cloudflare Tunnel for secure remote access.
 import json
 import logging
 import sys
+import time
 from contextlib import asynccontextmanager
+from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -27,6 +29,40 @@ logger = logging.getLogger(__name__)
 frontmatter_index = FrontmatterIndex()
 semantic_engine = SemanticSearchEngine()
 _semantic_callback_registered = False
+
+
+def _truncate_log_value(value: Any, limit: int = 120) -> str:
+    """Render a compact one-line representation for request logging."""
+    text = repr(value)
+    text = text.replace("\r", "\\r").replace("\n", "\\n")
+    if len(text) > limit:
+        return f"{text[:limit - 3]}..."
+    return text
+
+
+def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
+    """Run one MCP tool call with consistent start/end/error logging."""
+    started = time.monotonic()
+    context_str = ", ".join(
+        f"{key}={_truncate_log_value(value)}"
+        for key, value in context.items()
+        if value is not None
+    )
+    if context_str:
+        logger.info("Tool start: %s (%s)", name, context_str)
+    else:
+        logger.info("Tool start: %s", name)
+
+    try:
+        result = func()
+    except Exception:
+        duration = time.monotonic() - started
+        logger.exception("Tool failed: %s after %.3fs", name, duration)
+        raise
+
+    duration = time.monotonic() - started
+    logger.info("Tool complete: %s in %.3fs (%s bytes)", name, duration, len(result))
+    return result
 
 
 def _enforce_tool_rate_limit(scope: str, limit: int) -> None:
@@ -117,7 +153,7 @@ def vault_read(path: str) -> str:
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
         return limited
-    return _vault_read(inp.path)
+    return _run_logged_tool("vault_read", lambda: _vault_read(inp.path), path=inp.path)
 
 
 @mcp.tool(
@@ -131,7 +167,12 @@ def vault_batch_read(paths: list[str], include_content: bool = True) -> str:
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
         return limited
-    return _vault_batch_read(inp.paths, inp.include_content)
+    return _run_logged_tool(
+        "vault_batch_read",
+        lambda: _vault_batch_read(inp.paths, inp.include_content),
+        paths=len(inp.paths),
+        include_content=inp.include_content,
+    )
 
 
 @mcp.tool(
@@ -145,7 +186,14 @@ def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontma
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
         return limited
-    return _vault_write(inp.path, inp.content, inp.create_dirs, inp.merge_frontmatter)
+    return _run_logged_tool(
+        "vault_write",
+        lambda: _vault_write(inp.path, inp.content, inp.create_dirs, inp.merge_frontmatter),
+        path=inp.path,
+        content_bytes=len(inp.content),
+        create_dirs=inp.create_dirs,
+        merge_frontmatter=inp.merge_frontmatter,
+    )
 
 
 @mcp.tool(
@@ -159,7 +207,11 @@ def vault_batch_frontmatter_update(updates: list[dict]) -> str:
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
         return limited
-    return _vault_batch_frontmatter_update(inp.updates)
+    return _run_logged_tool(
+        "vault_batch_frontmatter_update",
+        lambda: _vault_batch_frontmatter_update(inp.updates),
+        updates=len(inp.updates),
+    )
 
 
 @mcp.tool(
@@ -179,7 +231,15 @@ def vault_search(
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
         return limited
-    return _vault_search(inp.query, inp.path_prefix, inp.file_pattern, inp.max_results, inp.context_lines)
+    return _run_logged_tool(
+        "vault_search",
+        lambda: _vault_search(inp.query, inp.path_prefix, inp.file_pattern, inp.max_results, inp.context_lines),
+        query=inp.query,
+        path_prefix=inp.path_prefix,
+        file_pattern=inp.file_pattern,
+        max_results=inp.max_results,
+        context_lines=inp.context_lines,
+    )
 
 
 @mcp.tool(
@@ -199,7 +259,15 @@ def vault_search_frontmatter(
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
         return limited
-    return _vault_search_frontmatter(inp.field, inp.value, inp.match_type, inp.path_prefix, inp.max_results)
+    return _run_logged_tool(
+        "vault_search_frontmatter",
+        lambda: _vault_search_frontmatter(inp.field, inp.value, inp.match_type, inp.path_prefix, inp.max_results),
+        field=inp.field,
+        value=inp.value,
+        match_type=inp.match_type,
+        path_prefix=inp.path_prefix,
+        max_results=inp.max_results,
+    )
 
 
 @mcp.tool(
@@ -227,13 +295,22 @@ def vault_semantic_search(
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
         return limited
-    return _vault_semantic_search(
-        inp.query,
-        inp.path_prefix,
-        inp.filter_tags,
-        inp.search_mode,
-        inp.max_results,
-        inp.min_score,
+    return _run_logged_tool(
+        "vault_semantic_search",
+        lambda: _vault_semantic_search(
+            inp.query,
+            inp.path_prefix,
+            inp.filter_tags,
+            inp.search_mode,
+            inp.max_results,
+            inp.min_score,
+        ),
+        query=inp.query,
+        path_prefix=inp.path_prefix,
+        filter_tags=inp.filter_tags,
+        search_mode=inp.search_mode,
+        max_results=inp.max_results,
+        min_score=inp.min_score,
     )
 
 
@@ -254,7 +331,15 @@ def vault_list(
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
         return limited
-    return _vault_list(inp.path, inp.depth, inp.include_files, inp.include_dirs, inp.pattern)
+    return _run_logged_tool(
+        "vault_list",
+        lambda: _vault_list(inp.path, inp.depth, inp.include_files, inp.include_dirs, inp.pattern),
+        path=inp.path,
+        depth=inp.depth,
+        include_files=inp.include_files,
+        include_dirs=inp.include_dirs,
+        pattern=inp.pattern,
+    )
 
 
 @mcp.tool(
@@ -268,7 +353,7 @@ def vault_tree(path: str = "", depth: int = 3) -> str:
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
         return limited
-    return _vault_tree(inp.path, inp.depth)
+    return _run_logged_tool("vault_tree", lambda: _vault_tree(inp.path, inp.depth), path=inp.path, depth=inp.depth)
 
 
 @mcp.tool(
@@ -282,7 +367,7 @@ def vault_reindex(full: bool = True) -> str:
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
         return limited
-    return _vault_reindex(inp.full)
+    return _run_logged_tool("vault_reindex", lambda: _vault_reindex(inp.full), full=inp.full)
 
 
 @mcp.tool(
@@ -296,7 +381,13 @@ def vault_move(source: str, destination: str, create_dirs: bool = True) -> str:
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
         return limited
-    return _vault_move(inp.source, inp.destination, inp.create_dirs)
+    return _run_logged_tool(
+        "vault_move",
+        lambda: _vault_move(inp.source, inp.destination, inp.create_dirs),
+        source=inp.source,
+        destination=inp.destination,
+        create_dirs=inp.create_dirs,
+    )
 
 
 @mcp.tool(
@@ -310,7 +401,7 @@ def vault_delete(path: str, confirm: bool = False) -> str:
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
         return limited
-    return _vault_delete(inp.path, inp.confirm)
+    return _run_logged_tool("vault_delete", lambda: _vault_delete(inp.path, inp.confirm), path=inp.path, confirm=inp.confirm)
 
 
 def main():
