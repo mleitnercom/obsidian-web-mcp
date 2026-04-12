@@ -143,6 +143,7 @@ All configuration is via environment variables:
 | `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_REQUIRE_APPROVAL` | No | `true` | Require an extra post-login consent click (`false` keeps login but skips the extra allow step) |
 | `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
+| `VAULT_PUBLIC_BASE_URL` | No | (auto-detected) | Public HTTPS base URL for OAuth metadata (recommended behind reverse proxies/tunnels) |
 | `VAULT_TRUSTED_PROXY_IPS` | No | `127.0.0.1,::1` | Comma-separated proxy IPs trusted for forwarded headers (uvicorn `forwarded_allow_ips`) |
 | `VAULT_ALLOWED_HOSTS` | No | `127.0.0.1:*,localhost:*,[::1]:*` | Comma-separated hosts allowed by DNS rebinding protection (add your tunnel hostname here) |
 | `VAULT_SEMANTIC_SEARCH_ENABLED` | No | `false` | Enable optional FAISS-based semantic search |

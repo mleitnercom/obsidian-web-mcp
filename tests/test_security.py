@@ -517,3 +517,38 @@ def test_oauth_register_trailing_slash_redirect_not_unauthorized(monkeypatch):
         response = client.post("/oauth/register/", json={"redirect_uris": ["https://claude.example/callback"]}, follow_redirects=False)
 
     assert response.status_code in {307, 308}
+
+
+def test_oauth_metadata_uses_configured_public_base_url(monkeypatch):
+    """Metadata should use configured public base URL when provided."""
+    reset_rate_limits()
+    monkeypatch.setattr(oauth.config, "VAULT_PUBLIC_BASE_URL", "https://vault.example.com")
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        response = client.get("/.well-known/oauth-authorization-server")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["issuer"] == "https://vault.example.com"
+    assert body["authorization_endpoint"].startswith("https://vault.example.com/")
+
+
+def test_oauth_metadata_prefers_cf_visitor_scheme(monkeypatch):
+    """Cloudflare CF-Visitor should produce https metadata URLs."""
+    reset_rate_limits()
+    monkeypatch.setattr(oauth.config, "VAULT_PUBLIC_BASE_URL", "")
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        response = client.get(
+            "/.well-known/oauth-authorization-server",
+            headers={
+                "Host": "obsidian-mcp.example.com",
+                "CF-Visitor": '{"scheme":"https"}',
+            },
+        )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["issuer"] == "https://obsidian-mcp.example.com"

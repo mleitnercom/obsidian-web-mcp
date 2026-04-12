@@ -16,6 +16,7 @@ the server falls back to auto-approve mode for compatibility.
 import html
 import hashlib
 import hmac
+import json
 import logging
 import secrets
 import time
@@ -231,9 +232,37 @@ def _get_registered_client(client_id: str) -> dict | None:
     return None
 
 
+def _public_base_url(request: Request) -> str:
+    """Return externally reachable base URL for OAuth metadata documents."""
+    if config.VAULT_PUBLIC_BASE_URL:
+        return config.VAULT_PUBLIC_BASE_URL
+
+    host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
+    if not host:
+        host = request.headers.get("host", "").strip()
+
+    proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    if proto and host:
+        return f"{proto}://{host}"
+
+    cf_visitor = request.headers.get("cf-visitor", "")
+    if cf_visitor and host:
+        try:
+            scheme = json.loads(cf_visitor).get("scheme", "").strip()
+        except json.JSONDecodeError:
+            scheme = ""
+        if scheme:
+            return f"{scheme}://{host}"
+
+    base_url = str(request.base_url).rstrip("/")
+    if base_url.startswith("http://") and host and host not in {"127.0.0.1", "localhost", "[::1]"}:
+        return f"https://{host}"
+    return base_url
+
+
 async def oauth_metadata(request: Request) -> JSONResponse:
     """RFC 8414 OAuth authorization server metadata."""
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _public_base_url(request)
     return JSONResponse({
         "issuer": base_url,
         "authorization_endpoint": f"{base_url}/oauth/authorize",
@@ -248,7 +277,7 @@ async def oauth_metadata(request: Request) -> JSONResponse:
 
 async def oauth_protected_resource_metadata(request: Request) -> JSONResponse:
     """RFC 9728-style protected resource metadata for MCP clients."""
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _public_base_url(request)
     return JSONResponse({
         "resource": f"{base_url}/mcp",
         "authorization_servers": [base_url],
