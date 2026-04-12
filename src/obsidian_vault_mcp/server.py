@@ -68,13 +68,7 @@ mcp = FastMCP(
     lifespan=lifespan,
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
-        allowed_hosts=[
-            "127.0.0.1:*",
-            "localhost:*",
-            "[::1]:*",
-            # Add your tunnel hostname here, e.g.:
-            # "vault-mcp.example.com",
-        ],
+        allowed_hosts=config.ALLOWED_HOSTS,
     ),
 )
 

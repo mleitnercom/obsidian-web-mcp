@@ -17,6 +17,14 @@ def _env_choice(name: str, default: str, allowed: set[str]) -> str:
         return value
     return default
 
+
+def _env_csv(name: str, default: list[str]) -> list[str]:
+    """Parse a comma-separated env var into a list of non-empty trimmed values."""
+    raw = os.environ.get(name, "")
+    if not raw.strip():
+        return default
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
 # Vault configuration
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", os.path.expanduser("~/Obsidian/MyVault")))
 VAULT_MCP_TOKEN = os.environ.get("VAULT_MCP_TOKEN", "")
@@ -29,6 +37,10 @@ VAULT_OAUTH_AUTH_USERNAME = os.environ.get("VAULT_OAUTH_AUTH_USERNAME", "")
 VAULT_OAUTH_AUTH_PASSWORD = os.environ.get("VAULT_OAUTH_AUTH_PASSWORD", "")
 VAULT_OAUTH_SESSION_SECRET = os.environ.get("VAULT_OAUTH_SESSION_SECRET", "")
 TRUSTED_PROXY_IPS = os.environ.get("VAULT_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
+ALLOWED_HOSTS = _env_csv(
+    "VAULT_ALLOWED_HOSTS",
+    ["127.0.0.1:*", "localhost:*", "[::1]:*"],
+)
 
 # Optional semantic search
 SEMANTIC_SEARCH_ENABLED = os.environ.get("VAULT_SEMANTIC_SEARCH_ENABLED", "").lower() in {

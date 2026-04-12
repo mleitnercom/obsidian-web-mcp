@@ -143,6 +143,7 @@ All configuration is via environment variables:
 | `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
 | `VAULT_TRUSTED_PROXY_IPS` | No | `127.0.0.1,::1` | Comma-separated proxy IPs trusted for forwarded headers (uvicorn `forwarded_allow_ips`) |
+| `VAULT_ALLOWED_HOSTS` | No | `127.0.0.1:*,localhost:*,[::1]:*` | Comma-separated hosts allowed by DNS rebinding protection (add your tunnel hostname here) |
 | `VAULT_SEMANTIC_SEARCH_ENABLED` | No | `false` | Enable optional FAISS-based semantic search |
 | `VAULT_SEMANTIC_EMBED_BACKEND` | No | `auto` | Embedding backend selection: `auto`, `sentence`, or `fastembed` |
 | `VAULT_SEMANTIC_EMBED_MODEL` | No | `BAAI/bge-small-en-v1.5` | Embedding model used by the selected semantic backend |
@@ -199,15 +200,10 @@ The script authenticates with Cloudflare, creates a tunnel, writes the config, a
 
 For a publicly reachable deployment, set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD` so the browser-based OAuth step requires an explicit login before Claude receives an authorization code.
 
-After setup, add your tunnel hostname to the `allowed_hosts` list in `server.py` so the MCP library's DNS rebinding protection accepts requests from your domain:
+After setup, set `VAULT_ALLOWED_HOSTS` to include your tunnel hostname so DNS rebinding protection accepts requests from your domain, for example:
 
-```python
-allowed_hosts=[
-    "127.0.0.1:*",
-    "localhost:*",
-    "[::1]:*",
-    "vault-mcp.yourdomain.com",  # add your hostname here
-],
+```bash
+export VAULT_ALLOWED_HOSTS="127.0.0.1:*,localhost:*,[::1]:*,vault-mcp.yourdomain.com"
 ```
 
 ## Production Deployment (macOS)
