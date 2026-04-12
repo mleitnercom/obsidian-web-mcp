@@ -68,11 +68,11 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content |
 | `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
-| `vault_semantic_search` | Optional hybrid semantic plus keyword search backed by a persistent FAISS index |
+| `vault_semantic_search` | Optional hybrid semantic plus keyword search backed by a persistent FAISS index (supports `path_prefix`, `filter_tags`, `min_score`) |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
 | `vault_list` | List directory contents with recursion depth, glob filtering, and file/dir toggles |
 | `vault_tree` | Return a compact nested JSON tree of folders and files for quick orientation |
-| `vault_reindex` | Rebuild the optional semantic-search cache from the current vault contents |
+| `vault_reindex` | Rebuild semantic cache (`full=true`) or run incremental refresh (`full=false`) |
 | `vault_move` | Move or rename a file or directory within the vault |
 | `vault_delete` | Soft-delete a file by moving it to `.trash/` (requires explicit confirmation) |
 
@@ -135,11 +135,12 @@ All configuration is via environment variables:
 | `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
 | `VAULT_SEMANTIC_SEARCH_ENABLED` | No | `false` | Enable optional FAISS-based semantic search |
-| `VAULT_SEMANTIC_EMBED_MODEL` | No | `BAAI/bge-small-en-v1.5` | `fastembed` model used for semantic embeddings |
+| `VAULT_SEMANTIC_EMBED_MODEL` | No | `BAAI/bge-small-en-v1.5` | Embedding model used by the semantic backend (sentence-transformers preferred, fastembed fallback) |
 | `VAULT_SEMANTIC_CACHE_PATH` | No | `VAULT_PATH/.obsidian-vault-mcp` | Cache directory for FAISS index and semantic metadata |
 | `VAULT_SEMANTIC_CHUNK_SIZE` | No | `900` | Target character length for semantic chunks |
 | `VAULT_SEMANTIC_CHUNK_OVERLAP` | No | `150` | Character overlap between adjacent semantic chunks |
 | `VAULT_SEMANTIC_MAX_RESULTS` | No | `20` | Hard upper bound for semantic search results |
+| `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | No | `4` | Debounce window for automatic incremental semantic updates |
 | `VAULT_MAX_CONTENT_SIZE` | No | `1000000` | Maximum bytes allowed per write operation |
 | `VAULT_MAX_BATCH_SIZE` | No | `20` | Maximum files allowed in a batch read/frontmatter update |
 | `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard upper bound for search results |
@@ -253,11 +254,15 @@ The server coexists with Obsidian Sync (or any file-based sync mechanism) withou
 
 Semantic search is optional and disabled by default. The current implementation is CPU-first and uses:
 
-- `fastembed` for embeddings
+- `sentence-transformers` for embeddings (with `fastembed` fallback if installed)
 - `faiss-cpu` for vector similarity search
 - `rank-bm25` for keyword scoring
 
-Queries are answered with a hybrid score that blends semantic similarity with keyword relevance. The semantic index is persisted on disk so normal searches stay fast after restart, and `vault_reindex` rebuilds the cache when you want to refresh it.
+Queries are answered with a hybrid score that blends semantic similarity with keyword relevance. The semantic index is persisted on disk so normal searches stay fast after restart.
+
+`vault_reindex(full=true)` performs a full rebuild. `vault_reindex(full=false)` performs an incremental refresh based on changed/deleted files.
+
+When semantic search is enabled, filesystem changes are picked up via debounced callbacks from the frontmatter watcher, and the semantic index is incrementally refreshed in the background.
 
 ## Development
 

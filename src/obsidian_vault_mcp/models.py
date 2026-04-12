@@ -228,11 +228,22 @@ class VaultSemanticSearchInput(BaseModel):
         description="Optional folder prefix to restrict semantic results",
         max_length=500,
     )
+    filter_tags: list[str] | None = Field(
+        default=None,
+        description="Optional tag filter; all tags must be present in a chunk",
+        max_length=20,
+    )
     max_results: int = Field(
         default=10,
         ge=1,
         le=SEMANTIC_MAX_RESULTS,
         description="Maximum number of semantic matches to return",
+    )
+    min_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum hybrid score required for returned results",
     )
 
 

@@ -56,6 +56,7 @@ async def lifespan(server):
     frontmatter_index.start()
     if config.SEMANTIC_SEARCH_ENABLED:
         semantic_engine.initialize()
+        frontmatter_index.on_change(semantic_engine.handle_vault_change)
     yield {"frontmatter_index": frontmatter_index}
 
 
@@ -205,16 +206,34 @@ def vault_search_frontmatter(
 
 @mcp.tool(
     name="vault_semantic_search",
-    description="Run hybrid semantic plus keyword search over markdown note content using an optional FAISS index.",
+    description="Run hybrid semantic plus keyword search over markdown note content using an optional FAISS index, with optional path/tag filtering.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
-def vault_semantic_search(query: str, path_prefix: str | None = None, max_results: int = 10) -> str:
+def vault_semantic_search(
+    query: str,
+    path_prefix: str | None = None,
+    filter_tags: list[str] | None = None,
+    max_results: int = 10,
+    min_score: float = 0.0,
+) -> str:
     """Search note content semantically when the optional retrieval engine is enabled."""
-    inp = VaultSemanticSearchInput(query=query, path_prefix=path_prefix, max_results=max_results)
+    inp = VaultSemanticSearchInput(
+        query=query,
+        path_prefix=path_prefix,
+        filter_tags=filter_tags,
+        max_results=max_results,
+        min_score=min_score,
+    )
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
         return limited
-    return _vault_semantic_search(inp.query, inp.path_prefix, inp.max_results)
+    return _vault_semantic_search(
+        inp.query,
+        inp.path_prefix,
+        inp.filter_tags,
+        inp.max_results,
+        inp.min_score,
+    )
 
 
 @mcp.tool(

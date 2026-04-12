@@ -10,15 +10,25 @@ class _FakeEngine:
     def __init__(self):
         self.calls = []
 
-    def search(self, query: str, path_prefix: str | None = None, max_results: int = 10) -> dict:
-        self.calls.append(("search", query, path_prefix, max_results))
+    def search(
+        self,
+        query: str,
+        path_prefix: str | None = None,
+        filter_tags: list[str] | None = None,
+        max_results: int = 10,
+        min_score: float = 0.0,
+    ) -> dict:
+        self.calls.append(("search", query, path_prefix, filter_tags, max_results, min_score))
         return {
             "results": [
                 {
                     "path": "test-note.md",
                     "title": "Test Note",
                     "section": "",
+                    "tags": ["note"],
                     "score": 0.91,
+                    "semantic_score": 0.88,
+                    "keyword_score": 0.33,
                     "excerpt": "Semantic result",
                 }
             ],
@@ -26,9 +36,9 @@ class _FakeEngine:
             "truncated": False,
         }
 
-    def reindex(self) -> dict:
-        self.calls.append(("reindex",))
-        return {"indexed_files": 2, "indexed_chunks": 3, "cache_path": "cache"}
+    def reindex(self, full: bool = True) -> dict:
+        self.calls.append(("reindex", full))
+        return {"mode": "full" if full else "incremental", "indexed_files": 2, "indexed_chunks": 3, "cache_path": "cache"}
 
 
 def test_vault_semantic_search_reports_disabled(monkeypatch):
@@ -47,10 +57,10 @@ def test_vault_semantic_search_uses_injected_engine():
     engine = _FakeEngine()
     set_engine(engine)
 
-    result = json.loads(vault_semantic_search("cloudflare", "subfolder", 5))
+    result = json.loads(vault_semantic_search("cloudflare", "subfolder", ["note"], 5, 0.2))
     assert result["total"] == 1
     assert result["results"][0]["path"] == "test-note.md"
-    assert engine.calls == [("search", "cloudflare", "subfolder", 5)]
+    assert engine.calls == [("search", "cloudflare", "subfolder", ["note"], 5, 0.2)]
 
 
 def test_vault_reindex_uses_injected_engine():
@@ -60,14 +70,14 @@ def test_vault_reindex_uses_injected_engine():
 
     result = json.loads(vault_reindex(True))
     assert result["indexed_files"] == 2
-    assert engine.calls == [("reindex",)]
+    assert engine.calls == [("reindex", True)]
 
 
-def test_vault_reindex_rejects_incremental_without_support():
-    """Incremental reindex currently returns a clear not-implemented error."""
+def test_vault_reindex_supports_incremental():
+    """Incremental reindex is passed through to the engine."""
     engine = _FakeEngine()
     set_engine(engine)
 
     result = json.loads(vault_reindex(False))
-    assert "not implemented" in result["error"].lower()
-
+    assert result["mode"] == "incremental"
+    assert engine.calls == [("reindex", False)]

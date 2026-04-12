@@ -1,5 +1,6 @@
 """Chunk markdown notes into retrieval-friendly text fragments."""
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -48,9 +49,17 @@ def chunk_markdown_file(path: Path) -> list[Chunk]:
     """Read and chunk a markdown file into semantic retrieval units."""
     rel_path = path.relative_to(config.VAULT_PATH).as_posix()
     content = path.read_text(encoding="utf-8")
+    source_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     post = frontmatter.loads(content)
 
     title = str(post.metadata.get("title", path.stem))
+    raw_tags = post.metadata.get("tags", [])
+    if isinstance(raw_tags, str):
+        tags = [raw_tags]
+    elif isinstance(raw_tags, list):
+        tags = [str(tag) for tag in raw_tags]
+    else:
+        tags = []
     body = post.content
     sections = re.split(r"(?m)^#\s+", body)
 
@@ -84,11 +93,12 @@ def chunk_markdown_file(path: Path) -> list[Chunk]:
                     path=rel_path,
                     title=title,
                     section=section_title,
+                    tags=tags,
                     text=text,
-                    tokens=_tokenize(f"{title}\n{section_title}\n{text}"),
+                    tokens=_tokenize(f"{title}\n{section_title}\n{' '.join(tags)}\n{text}"),
+                    source_hash=source_hash,
                 )
             )
             chunk_index += 1
 
     return chunks
-

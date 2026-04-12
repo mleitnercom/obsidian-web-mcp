@@ -11,8 +11,10 @@ class Chunk:
     path: str
     title: str
     section: str
+    tags: list[str]
     text: str
     tokens: list[str]
+    source_hash: str
 
     def to_dict(self) -> dict:
         """Serialize chunk metadata for cache persistence."""
@@ -26,7 +28,8 @@ class Chunk:
             path=data["path"],
             title=data.get("title", ""),
             section=data.get("section", ""),
+            tags=list(data.get("tags", [])),
             text=data["text"],
             tokens=list(data.get("tokens", [])),
+            source_hash=data.get("source_hash", ""),
         )
-
