@@ -233,6 +233,10 @@ class VaultSemanticSearchInput(BaseModel):
         description="Optional tag filter; all tags must be present in a chunk",
         max_length=20,
     )
+    search_mode: Literal["hybrid", "semantic", "keyword"] = Field(
+        default="hybrid",
+        description="Ranking mode: blend semantic and keyword scores, or use only one signal",
+    )
     max_results: int = Field(
         default=10,
         ge=1,

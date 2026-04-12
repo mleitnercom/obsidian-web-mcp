@@ -15,11 +15,13 @@ class _FakeEngine:
         query: str,
         path_prefix: str | None = None,
         filter_tags: list[str] | None = None,
+        search_mode: str = "hybrid",
         max_results: int = 10,
         min_score: float = 0.0,
     ) -> dict:
-        self.calls.append(("search", query, path_prefix, filter_tags, max_results, min_score))
+        self.calls.append(("search", query, path_prefix, filter_tags, search_mode, max_results, min_score))
         return {
+            "mode": search_mode,
             "results": [
                 {
                     "path": "test-note.md",
@@ -57,10 +59,11 @@ def test_vault_semantic_search_uses_injected_engine():
     engine = _FakeEngine()
     set_engine(engine)
 
-    result = json.loads(vault_semantic_search("cloudflare", "subfolder", ["note"], 5, 0.2))
+    result = json.loads(vault_semantic_search("cloudflare", "subfolder", ["note"], "keyword", 5, 0.2))
     assert result["total"] == 1
+    assert result["mode"] == "keyword"
     assert result["results"][0]["path"] == "test-note.md"
-    assert engine.calls == [("search", "cloudflare", "subfolder", ["note"], 5, 0.2)]
+    assert engine.calls == [("search", "cloudflare", "subfolder", ["note"], "keyword", 5, 0.2)]
 
 
 def test_vault_reindex_uses_injected_engine():

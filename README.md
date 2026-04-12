@@ -1,12 +1,28 @@
 # obsidian-web-mcp
 
-A secure, remote-accessible MCP server that gives LLMs read/write access to your Obsidian vault from anywhere -- your desktop, your phone, a hotel Wi-Fi network. Unlike local-only Obsidian MCP servers, this one runs over HTTPS with real authentication, so Claude (or any MCP client) can reach your vault whether you're at your desk or not.
-
-It reads and writes markdown files on disk, parses YAML frontmatter, serializes YAML date/datetime values safely into JSON responses, maintains an in-memory frontmatter index for fast queries, and handles full-text plus optional semantic search -- all behind OAuth 2.0 authentication and a Cloudflare Tunnel that never exposes your machine directly to the internet.
+Production-hardened fork of `obsidian-web-mcp` for MCP access to an Obsidian vault over HTTP(S), with practical fixes for real deployments behind reverse proxies and tunnels.
 
 ## Release
 
 Latest: [v0.3.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.3.0) (2026-04-12).
+
+## Status
+
+This fork exists because the upstream project appears inactive and did not include several fixes needed for stable production use.
+
+The current fork includes pragmatic fixes and compatibility work in areas such as frontmatter date serialization, OAuth/discovery behavior, reverse proxy or tunnel deployments, and Claude/ChatGPT connector usage.
+
+## Upstream
+
+An issue report and a PR were already submitted upstream, with related issue threads cross-referenced there.
+
+This fork should be understood as a practical maintained fork unless and until the upstream project becomes active again and incorporates the relevant fixes.
+
+## Scope Of Maintenance
+
+This is a public fork maintained for real operational needs, not a broad support project.
+
+Changes are driven primarily by production use, stability, and connector interoperability.
 
 ## Why This Exists
 
@@ -70,7 +86,7 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content |
 | `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
-| `vault_semantic_search` | Optional hybrid semantic plus keyword search backed by a persistent FAISS index (supports `path_prefix`, `filter_tags`, `min_score`) |
+| `vault_semantic_search` | Optional semantic, keyword, or hybrid search backed by a persistent FAISS index (supports `path_prefix`, `filter_tags`, `search_mode`, `min_score`) |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
 | `vault_list` | List directory contents with recursion depth, glob filtering, and file/dir toggles |
 | `vault_tree` | Return a compact nested JSON tree of folders and files for quick orientation |
@@ -285,6 +301,13 @@ Semantic initialization is lazy: the index builds on first semantic-tool use, no
 `vault_reindex(full=true)` performs a full rebuild. `vault_reindex(full=false)` performs an incremental refresh based on changed/deleted files.
 
 When semantic search is enabled, filesystem changes are picked up via debounced callbacks from the frontmatter watcher, and the semantic index is incrementally refreshed in the background.
+
+`vault_semantic_search` accepts `search_mode=hybrid` (default), `semantic`, or `keyword`.
+
+For operator workflows, the project also exposes:
+
+- `vault-semantic status|reindex|search|doctor`
+- `vault-semantic-benchmark "query text"`
 
 ## Development
 

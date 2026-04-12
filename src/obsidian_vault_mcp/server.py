@@ -211,6 +211,7 @@ def vault_semantic_search(
     query: str,
     path_prefix: str | None = None,
     filter_tags: list[str] | None = None,
+    search_mode: str = "hybrid",
     max_results: int = 10,
     min_score: float = 0.0,
 ) -> str:
@@ -219,6 +220,7 @@ def vault_semantic_search(
         query=query,
         path_prefix=path_prefix,
         filter_tags=filter_tags,
+        search_mode=search_mode,
         max_results=max_results,
         min_score=min_score,
     )
@@ -229,6 +231,7 @@ def vault_semantic_search(
         inp.query,
         inp.path_prefix,
         inp.filter_tags,
+        inp.search_mode,
         inp.max_results,
         inp.min_score,
     )

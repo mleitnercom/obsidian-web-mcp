@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 
 from .. import config
@@ -79,8 +80,10 @@ class SemanticSearchEngine:
                 and self._manifest_path.exists()
                 and self._path_index_path.exists()
             ):
+                logger.info("Loading semantic cache from %s", self._cache_dir)
                 self._load_unlocked()
             else:
+                logger.info("Semantic cache missing; building a fresh full index")
                 self._full_reindex_unlocked()
 
             self._initialized = True
@@ -122,6 +125,7 @@ class SemanticSearchEngine:
         query: str,
         path_prefix: str | None = None,
         filter_tags: list[str] | None = None,
+        search_mode: str = "hybrid",
         max_results: int = 10,
         min_score: float = 0.0,
     ) -> dict:
@@ -133,12 +137,12 @@ class SemanticSearchEngine:
             if not self._available or self._index is None or self._embedder is None:
                 return {"error": self._unavailable_reason or "Semantic search is unavailable"}
             if not self._chunks:
-                return {"results": [], "total": 0, "truncated": False}
+                return {"mode": search_mode, "results": [], "total": 0, "truncated": False}
 
             max_results = min(max_results, config.SEMANTIC_MAX_RESULTS)
             semantic_scores = self._semantic_scores(query, path_prefix, filter_tags, max_results * 4)
             keyword_scores = self._keyword_scores(query, path_prefix, filter_tags)
-            merged = self._merge_scores(semantic_scores, keyword_scores)
+            merged = self._merge_scores(semantic_scores, keyword_scores, search_mode)
 
             results = []
             for chunk_id, score, sem_score, kw_score in merged:
@@ -161,16 +165,24 @@ class SemanticSearchEngine:
                     break
 
             return {
+                "mode": search_mode,
                 "results": results,
                 "total": len(results),
                 "truncated": len(merged) > len(results),
+                "candidate_counts": {
+                    "semantic": len(semantic_scores),
+                    "keyword": len(keyword_scores),
+                    "merged": len(merged),
+                },
             }
 
     def _full_reindex_unlocked(self) -> dict:
         """Rebuild all semantic data from scratch."""
+        started = time.monotonic()
         chunks: list[Chunk] = []
         path_index: dict[str, list[str]] = {}
         manifest: dict[str, str] = {}
+        indexed_files = 0
 
         for md_path in config.VAULT_PATH.rglob("*.md"):
             rel_path = md_path.relative_to(config.VAULT_PATH).as_posix()
@@ -186,6 +198,13 @@ class SemanticSearchEngine:
             path_index[rel_path] = [chunk.id for chunk in file_chunks]
             if file_chunks:
                 manifest[rel_path] = file_chunks[0].source_hash
+                indexed_files += 1
+                if indexed_files % 250 == 0:
+                    logger.info(
+                        "Semantic full reindex progress: %s files, %s chunks",
+                        indexed_files,
+                        len(chunks),
+                    )
 
         self._chunks = chunks
         self._manifest = manifest
@@ -195,15 +214,24 @@ class SemanticSearchEngine:
         self._persist_unlocked()
         self._available = True
         self._unavailable_reason = ""
+        duration = round(time.monotonic() - started, 3)
+        logger.info(
+            "Semantic full reindex complete: %s files, %s chunks in %.3fs",
+            len(path_index),
+            len(chunks),
+            duration,
+        )
         return {
             "mode": "full",
             "indexed_files": len(path_index),
             "indexed_chunks": len(chunks),
             "cache_path": str(self._cache_dir),
+            "duration_seconds": duration,
         }
 
     def _incremental_reindex_unlocked(self, updates: dict[str, str]) -> dict:
         """Apply file-level updates and rebuild in-memory retrieval structures."""
+        started = time.monotonic()
         if not updates:
             return {
                 "mode": "incremental",
@@ -212,10 +240,12 @@ class SemanticSearchEngine:
                 "indexed_files": len(self._path_index),
                 "indexed_chunks": len(self._chunks),
                 "cache_path": str(self._cache_dir),
+                "duration_seconds": 0.0,
             }
 
         updated_files = 0
         removed_files = 0
+        logger.info("Semantic incremental reindex queued for %s paths", len(updates))
 
         for rel_path, action in updates.items():
             self._remove_file_chunks_unlocked(rel_path)
@@ -249,6 +279,14 @@ class SemanticSearchEngine:
         self._persist_unlocked()
         self._available = True
         self._unavailable_reason = ""
+        duration = round(time.monotonic() - started, 3)
+        logger.info(
+            "Semantic incremental reindex complete: %s updated, %s removed, %s total chunks in %.3fs",
+            updated_files,
+            removed_files,
+            len(self._chunks),
+            duration,
+        )
         return {
             "mode": "incremental",
             "updated_files": updated_files,
@@ -256,6 +294,7 @@ class SemanticSearchEngine:
             "indexed_files": len(self._path_index),
             "indexed_chunks": len(self._chunks),
             "cache_path": str(self._cache_dir),
+            "duration_seconds": duration,
         }
 
     def _flush_pending_updates(self) -> None:
@@ -266,6 +305,7 @@ class SemanticSearchEngine:
             self._update_timer = None
             if not updates:
                 return
+        logger.info("Flushing %s pending semantic update(s)", len(updates))
 
         try:
             self.reindex(full=False, paths=list(updates.keys()))
@@ -352,6 +392,12 @@ class SemanticSearchEngine:
             self._bm25 = self._build_bm25(self._chunks)
             self._available = True
             self._unavailable_reason = ""
+            logger.info(
+                "Loaded semantic cache: %s files, %s chunks from %s",
+                len(self._path_index),
+                len(self._chunks),
+                self._cache_dir,
+            )
         except Exception as e:
             logger.warning("Semantic cache load failed; rebuilding: %s", e)
             self._full_reindex_unlocked()
@@ -386,6 +432,13 @@ class SemanticSearchEngine:
             return None
         batch_size = max(config.SEMANTIC_EMBED_BATCH_SIZE, 1)
         index = None
+        total_batches = (len(chunks) + batch_size - 1) // batch_size
+        logger.info(
+            "Building semantic vector index: %s chunks in %s batch(es) using %s",
+            len(chunks),
+            total_batches,
+            self._embed_backend or config.SEMANTIC_EMBED_BACKEND,
+        )
 
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start:start + batch_size]
@@ -405,6 +458,15 @@ class SemanticSearchEngine:
             if index is None:
                 index = self._faiss.IndexFlatIP(matrix.shape[1])
             index.add(matrix)
+            batch_number = (start // batch_size) + 1
+            if batch_number == 1 or batch_number == total_batches or batch_number % 10 == 0:
+                logger.info(
+                    "Semantic embedding progress: batch %s/%s (%s/%s chunks)",
+                    batch_number,
+                    total_batches,
+                    min(start + len(batch), len(chunks)),
+                    len(chunks),
+                )
 
         return index
 
@@ -475,8 +537,25 @@ class SemanticSearchEngine:
         self,
         semantic_scores: dict[str, float],
         keyword_scores: dict[str, float],
+        search_mode: str,
     ) -> list[tuple[str, float, float, float]]:
         """Merge semantic and keyword signals into a hybrid ranking."""
+        if search_mode == "semantic":
+            merged = [
+                (chunk_id, sem_score, sem_score, keyword_scores.get(chunk_id, 0.0))
+                for chunk_id, sem_score in semantic_scores.items()
+            ]
+            merged.sort(key=lambda item: item[1], reverse=True)
+            return merged
+
+        if search_mode == "keyword":
+            merged = [
+                (chunk_id, kw_score, semantic_scores.get(chunk_id, 0.0), kw_score)
+                for chunk_id, kw_score in keyword_scores.items()
+            ]
+            merged.sort(key=lambda item: item[1], reverse=True)
+            return merged
+
         combined_ids = set(semantic_scores) | set(keyword_scores)
         merged: list[tuple[str, float, float, float]] = []
         for chunk_id in combined_ids:
