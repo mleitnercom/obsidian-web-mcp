@@ -279,6 +279,7 @@ Set `VAULT_SEMANTIC_EMBED_BACKEND` to control backend choice:
 - `sentence`: require sentence-transformers
 
 Queries are answered with a hybrid score that blends semantic similarity with keyword relevance. The semantic index is persisted on disk so normal searches stay fast after restart.
+Semantic initialization is lazy: the index builds on first semantic-tool use, not during normal OAuth/tool discovery.
 
 `vault_reindex(full=true)` performs a full rebuild. `vault_reindex(full=false)` performs an incremental refresh based on changed/deleted files.
 

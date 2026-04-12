@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Global frontmatter index instance
 frontmatter_index = FrontmatterIndex()
 semantic_engine = SemanticSearchEngine()
+_semantic_callback_registered = False
 
 
 def _enforce_tool_rate_limit(scope: str, limit: int) -> None:
@@ -53,10 +54,13 @@ async def lifespan(server):
     frontmatter_index.start() must be idempotent and the observer must not be
     torn down at the end of each cycle.
     """
+    global _semantic_callback_registered
     frontmatter_index.start()
-    if config.SEMANTIC_SEARCH_ENABLED:
-        semantic_engine.initialize()
+    if config.SEMANTIC_SEARCH_ENABLED and not _semantic_callback_registered:
+        # Register once per process; semantic index initialization is lazy and only
+        # happens when semantic tools are actually used.
         frontmatter_index.on_change(semantic_engine.handle_vault_change)
+        _semantic_callback_registered = True
     yield {"frontmatter_index": frontmatter_index}
 
 
