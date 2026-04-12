@@ -252,6 +252,11 @@ curl -s http://localhost:8420/.well-known/oauth-authorization-server
 tail -f ~/Library/Logs/vault-mcp-error.log
 ```
 
+## Deployment Examples
+
+- Headless Linux VM on Proxmox (Obsidian + Xvfb + systemd + tunnel):
+  [`docs/deploy/headless-linux-proxmox.md`](docs/deploy/headless-linux-proxmox.md)
+
 ## Obsidian Sync Compatibility
 
 The server coexists with Obsidian Sync (or any file-based sync mechanism) without conflict. All writes use atomic file replacement (`write-to-temp-then-rename`), which means:
