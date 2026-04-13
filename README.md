@@ -63,7 +63,7 @@ This is a server that provides network access to your personal notes. Security i
 
 **OAuth authorization supports two secure single-user modes.** If you set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD`, `/oauth/authorize` requires browser login before issuing an authorization code. You can keep an extra explicit consent click (`VAULT_OAUTH_REQUIRE_APPROVAL=true`, default) or disable it for connector compatibility (`VAULT_OAUTH_REQUIRE_APPROVAL=false`). If you leave login credentials unset, the server falls back to single-user auto-approve mode for compatibility.
 
-**OAuth state is intentionally in-memory (non-persistent).** Authorization codes, access tokens, and temporary client registrations live in RAM and are cleared on process restart. This is a deliberate security tradeoff: it minimizes long-lived secrets on disk at the cost of requiring a reconnect after restarts. If you need persistence, consider using a reverse proxy or a private network boundary rather than storing tokens on disk.
+**OAuth state is split between persistent registrations and short-lived in-memory grants.** Dynamic OAuth client registrations are persisted by default so connectors can survive service restarts. Authorization codes and browser login sessions remain in memory and are still cleared on restart.
 
 **Your vault is never exposed directly to the internet.** The recommended deployment uses a Cloudflare Tunnel -- an outbound-only encrypted connection. Your machine opens no inbound ports. You can layer Cloudflare Access on top for additional authentication (SSO, device posture checks, IP restrictions) if you want defense in depth.
 
@@ -161,6 +161,8 @@ All configuration is via environment variables:
 | `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
 | `VAULT_OAUTH_REQUIRE_APPROVAL` | No | `true` | Require an extra post-login consent click (`false` keeps login but skips the extra allow step) |
 | `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
+| `VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS` | No | `true` | Persist dynamic OAuth client registrations across service restarts |
+| `VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH` | No | `VAULT_SEMANTIC_CACHE_PATH/oauth_registered_clients.json` | JSON file used to store dynamic OAuth client registrations |
 | `VAULT_PUBLIC_BASE_URL` | No | (auto-detected) | Public HTTPS base URL for OAuth metadata (recommended behind reverse proxies/tunnels) |
 | `VAULT_TRUSTED_PROXY_IPS` | No | `127.0.0.1,::1` | Comma-separated proxy IPs trusted for forwarded headers (uvicorn `forwarded_allow_ips`) |
 | `VAULT_ALLOWED_HOSTS` | No | `127.0.0.1:*,localhost:*,[::1]:*` | Comma-separated hosts allowed by DNS rebinding protection (add your tunnel hostname here) |

@@ -90,6 +90,64 @@ def test_oauth_register_returns_unique_secret(monkeypatch):
     assert body["client_id"] in oauth._registered_clients
 
 
+def test_oauth_registered_clients_persist_to_disk(monkeypatch, tmp_path):
+    """Dynamic client registrations survive process restarts when persistence is enabled."""
+    reset_rate_limits()
+    oauth._auth_codes.clear()
+    oauth._reset_registered_client_store_for_tests()
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS", True)
+    monkeypatch.setattr(
+        oauth.config,
+        "VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH",
+        tmp_path / "oauth_registered_clients.json",
+    )
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        registration = client.post(
+            "/oauth/register",
+            json={"redirect_uris": ["https://claude.example/callback"]},
+        ).json()
+
+    store_path = oauth.config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH
+    assert store_path.exists()
+
+    oauth._reset_registered_client_store_for_tests()
+    loaded = oauth._get_registered_client(registration["client_id"])
+
+    assert loaded is not None
+    assert loaded["client_secret"] == registration["client_secret"]
+    assert "https://claude.example/callback" in loaded["redirect_uris"]
+
+
+def test_oauth_registered_clients_cleanup_persists(monkeypatch, tmp_path):
+    """TTL cleanup should also update the persisted client-registration store."""
+    reset_rate_limits()
+    oauth._auth_codes.clear()
+    oauth._reset_registered_client_store_for_tests()
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS", True)
+    monkeypatch.setattr(
+        oauth.config,
+        "VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH",
+        tmp_path / "oauth_registered_clients.json",
+    )
+    monkeypatch.setattr(config, "REGISTERED_CLIENT_TTL_SECONDS", 1)
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        registration = client.post(
+            "/oauth/register",
+            json={"redirect_uris": ["https://claude.example/callback"]},
+        ).json()
+
+    oauth._registered_clients[registration["client_id"]]["created_at"] = 0.0
+    oauth._cleanup_registered_clients()
+    payload = json.loads(oauth.config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH.read_text(encoding="utf-8"))
+
+    assert registration["client_id"] not in oauth._registered_clients
+    assert registration["client_id"] not in payload
+
+
 def test_oauth_authorize_requires_login_when_configured(monkeypatch):
     """Configured authorize credentials force an interactive login step."""
     reset_rate_limits()

@@ -19,6 +19,7 @@ import hmac
 import json
 import logging
 import secrets
+import threading
 import time
 from urllib.parse import urlencode
 
@@ -37,6 +38,8 @@ _auth_codes: dict[str, dict] = {}
 # In-memory dynamic client registrations
 # Maps client_id -> {client_secret, redirect_uris, created_at}
 _registered_clients: dict[str, dict] = {}
+_registered_clients_loaded = False
+_registered_clients_lock = threading.Lock()
 _SESSION_COOKIE_NAME = "vault_mcp_oauth_session"
 _SESSION_TTL_SECONDS = 3600
 
@@ -50,6 +53,7 @@ def _cleanup_codes():
 
 def _cleanup_registered_clients() -> None:
     """Expire old dynamic client registrations and cap total retained clients."""
+    changed = False
     now = time.time()
     expired = [
         client_id
@@ -58,6 +62,7 @@ def _cleanup_registered_clients() -> None:
     ]
     for client_id in expired:
         del _registered_clients[client_id]
+        changed = True
 
     while len(_registered_clients) >= config.MAX_REGISTERED_CLIENTS and _registered_clients:
         oldest_client_id = min(
@@ -65,6 +70,101 @@ def _cleanup_registered_clients() -> None:
             key=lambda client_id: _registered_clients[client_id].get("created_at", 0.0),
         )
         del _registered_clients[oldest_client_id]
+        changed = True
+
+    if changed:
+        _persist_registered_clients()
+
+
+def _serialize_registered_clients() -> dict[str, dict]:
+    """Convert in-memory client registrations to JSON-safe payloads."""
+    return {
+        client_id: {
+            "client_secret": data["client_secret"],
+            "redirect_uris": sorted(data.get("redirect_uris", [])),
+            "allow_client_credentials": bool(data.get("allow_client_credentials", False)),
+            "created_at": float(data.get("created_at", time.time())),
+        }
+        for client_id, data in _registered_clients.items()
+    }
+
+
+def _persist_registered_clients() -> None:
+    """Persist dynamic OAuth client registrations to disk when enabled."""
+    if not config.VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS:
+        return
+
+    store_path = config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _serialize_registered_clients()
+    temp_path = store_path.with_suffix(f"{store_path.suffix}.tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+    temp_path.replace(store_path)
+    try:
+        store_path.chmod(0o600)
+    except OSError:
+        logger.warning("Could not set restrictive permissions on %s", store_path)
+
+
+def _load_registered_clients() -> None:
+    """Load persisted dynamic OAuth client registrations once per process."""
+    global _registered_clients_loaded
+    if _registered_clients_loaded:
+        return
+
+    with _registered_clients_lock:
+        if _registered_clients_loaded:
+            return
+        _registered_clients_loaded = True
+
+        if not config.VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS:
+            return
+
+        store_path = config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH
+        if not store_path.exists():
+            return
+
+        try:
+            payload = json.loads(store_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("Failed to load persisted OAuth client registrations: %s", e)
+            return
+
+        if not isinstance(payload, dict):
+            logger.warning("Ignoring invalid OAuth client store payload at %s", store_path)
+            return
+
+        loaded: dict[str, dict] = {}
+        for client_id, data in payload.items():
+            if not isinstance(client_id, str) or not isinstance(data, dict):
+                continue
+            client_secret = data.get("client_secret")
+            redirect_uris = data.get("redirect_uris", [])
+            created_at = data.get("created_at", time.time())
+            if (
+                not isinstance(client_secret, str)
+                or not isinstance(redirect_uris, list)
+                or not all(isinstance(uri, str) and uri for uri in redirect_uris)
+            ):
+                continue
+            loaded[client_id] = {
+                "client_secret": client_secret,
+                "redirect_uris": set(redirect_uris),
+                "allow_client_credentials": bool(data.get("allow_client_credentials", False)),
+                "created_at": float(created_at),
+            }
+
+        _registered_clients.clear()
+        _registered_clients.update(loaded)
+        _cleanup_registered_clients()
+        _persist_registered_clients()
+
+
+def _reset_registered_client_store_for_tests() -> None:
+    """Test helper to force a fresh persisted-client load in a new scenario."""
+    global _registered_clients_loaded
+    _registered_clients.clear()
+    _registered_clients_loaded = False
 
 
 def _client_ip(request: Request) -> str:
@@ -217,6 +317,7 @@ def _authorize_redirect_url(params: dict[str, str]) -> str:
 
 def _get_registered_client(client_id: str) -> dict | None:
     """Return dynamic or pre-configured client metadata for a client_id."""
+    _load_registered_clients()
     _cleanup_registered_clients()
 
     if client_id in _registered_clients:
@@ -536,6 +637,7 @@ async def oauth_register(request: Request) -> JSONResponse:
         "allow_client_credentials": False,
         "created_at": time.time(),
     }
+    _persist_registered_clients()
 
     return JSONResponse({
         "client_id": client_id,

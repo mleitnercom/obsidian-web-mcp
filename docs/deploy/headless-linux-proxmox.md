@@ -237,5 +237,6 @@ sudo journalctl -u obsidian-mcp-semantic-reindex.service -n 50 --no-pager
 - For internet-exposed setups, configure:
   - `VAULT_OAUTH_AUTH_USERNAME`
   - `VAULT_OAUTH_AUTH_PASSWORD`
-- OAuth state is intentionally in-memory by default in this fork.
+- Dynamic OAuth client registrations are persisted by default so ChatGPT/Claude connectors survive service restarts.
+- Authorization codes and temporary browser login sessions remain in-memory and are still cleared on restart.
 - Requests are authenticated and rate-limited; path traversal and symlink traversal are blocked.
