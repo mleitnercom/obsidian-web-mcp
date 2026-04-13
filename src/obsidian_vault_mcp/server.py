@@ -92,7 +92,11 @@ async def lifespan(server):
     """
     global _semantic_callback_registered
     frontmatter_index.start()
-    if config.SEMANTIC_SEARCH_ENABLED and not _semantic_callback_registered:
+    if (
+        config.SEMANTIC_SEARCH_ENABLED
+        and config.SEMANTIC_AUTO_REINDEX
+        and not _semantic_callback_registered
+    ):
         # Register once per process; semantic index initialization is lazy and only
         # happens when semantic tools are actually used.
         frontmatter_index.on_change(semantic_engine.handle_vault_change)

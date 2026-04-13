@@ -214,7 +214,14 @@ The timer simply runs:
 vault-semantic reindex --mode full
 ```
 
-This is optional and should be treated as a maintenance fallback, not as a replacement for the live file watcher.
+For stability-sensitive deployments, prefer this timer/manual path and keep live semantic auto-refresh disabled in the MCP service:
+
+```ini
+Environment=VAULT_SEMANTIC_AUTO_REINDEX=0
+Environment=VAULT_SEMANTIC_BUILD_ON_DEMAND=0
+```
+
+In that mode, the running MCP service only loads an existing semantic cache and answers semantic queries from that cache. It does not start a multi-hour rebuild inside normal request handling.
 
 To watch or test it manually:
 

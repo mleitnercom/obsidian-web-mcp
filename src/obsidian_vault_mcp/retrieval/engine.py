@@ -41,6 +41,15 @@ class SemanticSearchEngine:
         self._pending_updates: dict[str, str] = {}
         self._update_timer: threading.Timer | None = None
 
+    def _cache_files_exist(self) -> bool:
+        """Return whether all persisted semantic cache files are present."""
+        return (
+            self._index_path.exists()
+            and self._chunk_path.exists()
+            and self._manifest_path.exists()
+            and self._path_index_path.exists()
+        )
+
     @property
     def enabled(self) -> bool:
         """Return whether semantic search is enabled via configuration."""
@@ -74,17 +83,22 @@ class SemanticSearchEngine:
             self._ensure_dependencies()
             self._cache_dir.mkdir(parents=True, exist_ok=True)
 
-            if (
-                self._index_path.exists()
-                and self._chunk_path.exists()
-                and self._manifest_path.exists()
-                and self._path_index_path.exists()
-            ):
+            if self._cache_files_exist():
                 logger.info("Loading semantic cache from %s", self._cache_dir)
                 self._load_unlocked()
-            else:
+            elif config.SEMANTIC_BUILD_ON_DEMAND:
                 logger.info("Semantic cache missing; building a fresh full index")
                 self._full_reindex_unlocked()
+            else:
+                self._available = False
+                self._unavailable_reason = (
+                    "Semantic cache is not initialized. Run vault_reindex(full=true) "
+                    "or the nightly semantic rebuild job."
+                )
+                logger.info(
+                    "Semantic cache missing; skipping on-demand build because "
+                    "VAULT_SEMANTIC_BUILD_ON_DEMAND is disabled"
+                )
 
             self._initialized = True
 
@@ -93,11 +107,18 @@ class SemanticSearchEngine:
         with self._lock:
             self._ensure_dependencies()
             self._cache_dir.mkdir(parents=True, exist_ok=True)
-            if full or not self._chunks:
+            if full:
                 result = self._full_reindex_unlocked()
             else:
+                if not self._chunks and self._cache_files_exist():
+                    logger.info("Loading semantic cache before incremental refresh")
+                    self._load_unlocked()
                 updates = self._updates_from_paths_unlocked(paths) if paths else self._detect_updates_unlocked()
-                result = self._incremental_reindex_unlocked(updates)
+                if not self._chunks and not self._cache_files_exist():
+                    logger.info("Semantic cache missing during incremental refresh; promoting to full rebuild")
+                    result = self._full_reindex_unlocked()
+                else:
+                    result = self._incremental_reindex_unlocked(updates)
             self._initialized = True
             return result
 

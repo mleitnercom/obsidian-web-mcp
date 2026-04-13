@@ -172,7 +172,9 @@ All configuration is via environment variables:
 | `VAULT_SEMANTIC_CHUNK_OVERLAP` | No | `150` | Character overlap between adjacent semantic chunks |
 | `VAULT_SEMANTIC_EMBED_BATCH_SIZE` | No | `64` | Embedding batch size during index builds (lower values reduce RAM peaks) |
 | `VAULT_SEMANTIC_MAX_RESULTS` | No | `20` | Hard upper bound for semantic search results |
-| `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | No | `4` | Debounce window for automatic incremental semantic updates |
+| `VAULT_SEMANTIC_AUTO_REINDEX` | No | `false` | Allow watcher-driven semantic refreshes in the live MCP service |
+| `VAULT_SEMANTIC_BUILD_ON_DEMAND` | No | `false` | Allow the live MCP service to build a missing semantic cache on first semantic query |
+| `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | No | `4` | Debounce window for automatic incremental semantic updates when auto-reindex is enabled |
 | `VAULT_MAX_CONTENT_SIZE` | No | `1000000` | Maximum bytes allowed per write operation |
 | `VAULT_MAX_BATCH_SIZE` | No | `20` | Maximum files allowed in a batch read/frontmatter update |
 | `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard upper bound for search results |
@@ -320,7 +322,19 @@ Semantic initialization is lazy: the index builds on first semantic-tool use, no
 
 `vault_reindex(full=true)` performs a full rebuild. `vault_reindex(full=false)` performs an incremental refresh based on changed/deleted files.
 
-When semantic search is enabled, filesystem changes are picked up via debounced callbacks from the frontmatter watcher, and the semantic index is incrementally refreshed in the background.
+For production stability, this fork now defaults to a conservative semantic lifecycle:
+
+- the live MCP service loads an existing semantic cache if present
+- the live MCP service does not auto-build a missing cache during normal tool requests
+- watcher-driven semantic auto-refresh is disabled by default
+- full rebuilds are expected to run manually or via the optional nightly timer
+
+If you explicitly want the older live-update behavior, enable it with:
+
+```bash
+export VAULT_SEMANTIC_AUTO_REINDEX=1
+export VAULT_SEMANTIC_BUILD_ON_DEMAND=1
+```
 
 `vault_semantic_search` accepts `search_mode=hybrid` (default), `semantic`, or `keyword`.
 
@@ -329,7 +343,7 @@ For operator workflows, the project also exposes:
 - `vault-semantic status|reindex|search|doctor`
 - `vault-semantic-benchmark "query text"`
 
-For Linux deployments, an optional nightly full rebuild can be used as a safety net. This is not meant to replace the watcher-based incremental updates; it is only a maintenance fallback for long-running installs or after larger vault churn.
+For Linux deployments, an optional nightly full rebuild can be used as the recommended maintenance path for semantic cache refreshes on larger or more stability-sensitive systems.
 
 Example systemd templates are included in [`scripts/systemd/`](scripts/systemd):
 
