@@ -1,5 +1,7 @@
 """Focused tests for semantic engine stability behavior."""
 
+import json
+
 from obsidian_vault_mcp import config
 from obsidian_vault_mcp.retrieval.engine import SemanticSearchEngine
 import obsidian_vault_mcp.server as server
@@ -79,3 +81,45 @@ def test_lifespan_registers_semantic_callback_only_when_enabled(monkeypatch):
     monkeypatch.setattr(server, "_semantic_callback_registered", False)
     asyncio.run(_run())
     assert callback_calls == [server.semantic_engine.handle_vault_change]
+
+
+def test_mcp_tool_blocks_full_reindex_by_default(monkeypatch):
+    """Full semantic rebuilds should not be triggerable by normal MCP clients by default."""
+    monkeypatch.setattr(server.config, "RATE_LIMIT_WRITE", 999)
+    monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_FULL_REINDEX", False)
+    monkeypatch.setattr(server, "current_auth_principal", lambda: "test-token")
+
+    calls = []
+    monkeypatch.setattr(server, "_vault_reindex", lambda full: calls.append(full) or "{\"ok\": true}")
+
+    result = json.loads(server.vault_reindex(True))
+
+    assert "disabled" in result["error"].lower()
+    assert calls == []
+
+
+def test_mcp_tool_allows_incremental_reindex(monkeypatch):
+    """Incremental semantic refreshes remain available through MCP."""
+    monkeypatch.setattr(server.config, "RATE_LIMIT_WRITE", 999)
+    monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_FULL_REINDEX", False)
+    monkeypatch.setattr(server, "current_auth_principal", lambda: "test-token")
+    monkeypatch.setattr(server, "_vault_reindex", lambda full: "{\"mode\": \"incremental\"}")
+
+    result = json.loads(server.vault_reindex(False))
+
+    assert result["mode"] == "incremental"
+
+
+def test_mcp_tool_can_opt_in_to_full_reindex(monkeypatch):
+    """Operators can explicitly re-enable MCP full rebuilds via config."""
+    monkeypatch.setattr(server.config, "RATE_LIMIT_WRITE", 999)
+    monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_FULL_REINDEX", True)
+    monkeypatch.setattr(server, "current_auth_principal", lambda: "test-token")
+
+    calls = []
+    monkeypatch.setattr(server, "_vault_reindex", lambda full: calls.append(full) or "{\"mode\": \"full\"}")
+
+    result = json.loads(server.vault_reindex(True))
+
+    assert result["mode"] == "full"
+    assert calls == [True]

@@ -219,6 +219,7 @@ For stability-sensitive deployments, prefer this timer/manual path and keep live
 ```ini
 Environment=VAULT_SEMANTIC_AUTO_REINDEX=0
 Environment=VAULT_SEMANTIC_BUILD_ON_DEMAND=0
+Environment=VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX=0
 ```
 
 In that mode, the running MCP service only loads an existing semantic cache and answers semantic queries from that cache. It does not start a multi-hour rebuild inside normal request handling.

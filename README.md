@@ -92,7 +92,7 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
 | `vault_list` | List directory contents with recursion depth, glob filtering, and file/dir toggles |
 | `vault_tree` | Return a compact nested JSON tree of folders and files for quick orientation |
-| `vault_reindex` | Rebuild semantic cache (`full=true`) or run incremental refresh (`full=false`) |
+| `vault_reindex` | Run incremental semantic refreshes; full rebuilds are blocked by default in live MCP operation unless explicitly re-enabled |
 | `vault_move` | Move or rename a file or directory within the vault |
 | `vault_delete` | Soft-delete a file by moving it to `.trash/` (requires explicit confirmation) |
 
@@ -176,6 +176,7 @@ All configuration is via environment variables:
 | `VAULT_SEMANTIC_MAX_RESULTS` | No | `20` | Hard upper bound for semantic search results |
 | `VAULT_SEMANTIC_AUTO_REINDEX` | No | `false` | Allow watcher-driven semantic refreshes in the live MCP service |
 | `VAULT_SEMANTIC_BUILD_ON_DEMAND` | No | `false` | Allow the live MCP service to build a missing semantic cache on first semantic query |
+| `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX` | No | `false` | Allow `vault_reindex(full=true)` from MCP clients; keep this off for normal live operation |
 | `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | No | `4` | Debounce window for automatic incremental semantic updates when auto-reindex is enabled |
 | `VAULT_MAX_CONTENT_SIZE` | No | `1000000` | Maximum bytes allowed per write operation |
 | `VAULT_MAX_BATCH_SIZE` | No | `20` | Maximum files allowed in a batch read/frontmatter update |

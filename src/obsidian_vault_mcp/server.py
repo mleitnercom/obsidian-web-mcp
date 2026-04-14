@@ -371,6 +371,17 @@ def vault_reindex(full: bool = True) -> str:
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
         return limited
+    if inp.full and not config.SEMANTIC_ALLOW_MCP_FULL_REINDEX:
+        logger.warning("Blocked MCP-triggered full semantic reindex")
+        return vault_json_dumps(
+            {
+                "error": (
+                    "Full semantic reindex via MCP tool is disabled in live operation. "
+                    "Use vault-semantic reindex --mode full or the nightly rebuild job, "
+                    "or set VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX=true to opt in."
+                )
+            }
+        )
     return _run_logged_tool("vault_reindex", lambda: _vault_reindex(inp.full), full=inp.full)
 
 
