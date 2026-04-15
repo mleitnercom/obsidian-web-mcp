@@ -1,6 +1,7 @@
 """Security-focused tests for auth and OAuth flows."""
 
 import json
+import time
 
 import pytest
 from starlette.applications import Starlette
@@ -111,12 +112,17 @@ def test_oauth_registered_clients_persist_to_disk(monkeypatch, tmp_path):
 
     store_path = oauth.config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH
     assert store_path.exists()
+    payload = json.loads(store_path.read_text(encoding="utf-8"))
+    stored = payload[registration["client_id"]]
+    assert "client_secret" not in stored
+    assert "client_secret_hash" in stored
+    assert stored["client_secret_hash"] != registration["client_secret"]
 
     oauth._reset_registered_client_store_for_tests()
     loaded = oauth._get_registered_client(registration["client_id"])
 
     assert loaded is not None
-    assert loaded["client_secret"] == registration["client_secret"]
+    assert oauth._client_secret_matches(registration["client_secret"], loaded)
     assert "https://claude.example/callback" in loaded["redirect_uris"]
 
 
@@ -146,6 +152,42 @@ def test_oauth_registered_clients_cleanup_persists(monkeypatch, tmp_path):
 
     assert registration["client_id"] not in oauth._registered_clients
     assert registration["client_id"] not in payload
+
+
+def test_oauth_registered_clients_migrate_legacy_plaintext_store(monkeypatch, tmp_path):
+    """Legacy persisted stores with plaintext client_secret are migrated on load."""
+    reset_rate_limits()
+    oauth._auth_codes.clear()
+    oauth._reset_registered_client_store_for_tests()
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS", True)
+    monkeypatch.setattr(
+        oauth.config,
+        "VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH",
+        tmp_path / "oauth_registered_clients.json",
+    )
+
+    legacy_secret = "legacy-secret"
+    oauth.config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH.write_text(
+        json.dumps(
+            {
+                "legacy-client": {
+                    "client_secret": legacy_secret,
+                    "redirect_uris": ["https://claude.example/callback"],
+                    "allow_client_credentials": False,
+                    "created_at": time.time(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = oauth._get_registered_client("legacy-client")
+    payload = json.loads(oauth.config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH.read_text(encoding="utf-8"))
+
+    assert loaded is not None
+    assert oauth._client_secret_matches(legacy_secret, loaded)
+    assert "client_secret" not in payload["legacy-client"]
+    assert "client_secret_hash" in payload["legacy-client"]
 
 
 def test_oauth_authorize_requires_login_when_configured(monkeypatch):

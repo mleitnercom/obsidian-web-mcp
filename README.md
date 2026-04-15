@@ -63,7 +63,7 @@ This is a server that provides network access to your personal notes. Security i
 
 **OAuth authorization supports two secure single-user modes.** If you set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD`, `/oauth/authorize` requires browser login before issuing an authorization code. You can keep an extra explicit consent click (`VAULT_OAUTH_REQUIRE_APPROVAL=true`, default) or disable it for connector compatibility (`VAULT_OAUTH_REQUIRE_APPROVAL=false`). If you leave login credentials unset, the server falls back to single-user auto-approve mode for compatibility.
 
-**OAuth state is split between persistent registrations and short-lived in-memory grants.** Dynamic OAuth client registrations are persisted by default so connectors can survive service restarts. Authorization codes and browser login sessions remain in memory and are still cleared on restart.
+**OAuth state is split between persistent registrations and short-lived in-memory grants.** Dynamic OAuth client registrations are persisted by default so connectors can survive service restarts, but their generated client secrets are stored hashed at rest rather than in clear text. Authorization codes and browser login sessions remain in memory and are still cleared on restart.
 
 **Your vault is never exposed directly to the internet.** The recommended deployment uses a Cloudflare Tunnel -- an outbound-only encrypted connection. Your machine opens no inbound ports. You can layer Cloudflare Access on top for additional authentication (SSO, device posture checks, IP restrictions) if you want defense in depth.
 
@@ -95,6 +95,7 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_reindex` | Run incremental semantic refreshes; full rebuilds are blocked by default in live MCP operation unless explicitly re-enabled |
 | `vault_move` | Move or rename a file or directory within the vault |
 | `vault_delete` | Soft-delete a file by moving it to `.trash/` (requires explicit confirmation) |
+| `vault_delete_directory` | Soft-delete an empty directory by moving it to `.trash/` (requires explicit confirmation) |
 
 ## Prerequisites
 
@@ -145,6 +146,12 @@ python -m pip install -e .[semantic-sentence]
 ```
 
 The server starts on port 8420 by default. It serves MCP over Streamable HTTP at `/mcp/`.
+
+For semantic troubleshooting, the maintenance CLI can also scan the vault for non-UTF-8 markdown files:
+
+```bash
+vault-semantic doctor --scan-utf8
+```
 
 ## Configuration
 
@@ -210,7 +217,7 @@ The Claude desktop and mobile apps can connect to remote MCP servers via OAuth.
 4. Enter the OAuth client ID and client secret you configured
 5. Claude will discover the OAuth endpoints automatically and open a browser window
 6. If authorize-login credentials are configured, sign in in the browser window (and approve if `VAULT_OAUTH_REQUIRE_APPROVAL=true`); otherwise the server auto-approves the authorization
-7. Claude now has access to all twelve vault tools -- on desktop and mobile
+7. Claude now has access to all thirteen vault tools -- on desktop and mobile
 
 For local-only use (no tunnel), point Claude at `http://localhost:8420`.
 

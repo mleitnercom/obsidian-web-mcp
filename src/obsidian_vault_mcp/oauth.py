@@ -43,6 +43,23 @@ _registered_clients_lock = threading.Lock()
 _SESSION_COOKIE_NAME = "vault_mcp_oauth_session"
 _SESSION_TTL_SECONDS = 3600
 
+
+def _hash_client_secret(secret: str) -> str:
+    """Derive a stable hash for persisted dynamic client secrets."""
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def _client_secret_matches(candidate: str, client: dict) -> bool:
+    """Check a presented client secret against a registered client record."""
+    stored_secret = client.get("client_secret")
+    stored_hash = client.get("client_secret_hash")
+
+    if isinstance(stored_secret, str):
+        return hmac.compare_digest(candidate, stored_secret)
+    if isinstance(stored_hash, str):
+        return hmac.compare_digest(_hash_client_secret(candidate), stored_hash)
+    return False
+
 # Clean up expired codes periodically
 def _cleanup_codes():
     now = time.time()
@@ -80,7 +97,7 @@ def _serialize_registered_clients() -> dict[str, dict]:
     """Convert in-memory client registrations to JSON-safe payloads."""
     return {
         client_id: {
-            "client_secret": data["client_secret"],
+            "client_secret_hash": data["client_secret_hash"],
             "redirect_uris": sorted(data.get("redirect_uris", [])),
             "allow_client_credentials": bool(data.get("allow_client_credentials", False)),
             "created_at": float(data.get("created_at", time.time())),
@@ -135,20 +152,34 @@ def _load_registered_clients() -> None:
             return
 
         loaded: dict[str, dict] = {}
+        migrated_plaintext = False
         for client_id, data in payload.items():
             if not isinstance(client_id, str) or not isinstance(data, dict):
                 continue
-            client_secret = data.get("client_secret")
+            client_secret_hash = data.get("client_secret_hash")
+            legacy_client_secret = data.get("client_secret")
             redirect_uris = data.get("redirect_uris", [])
             created_at = data.get("created_at", time.time())
             if (
-                not isinstance(client_secret, str)
+                not isinstance(redirect_uris, list)
+                or not all(isinstance(uri, str) and uri for uri in redirect_uris)
+            ):
+                continue
+            if isinstance(client_secret_hash, str):
+                secret_hash = client_secret_hash
+            elif isinstance(legacy_client_secret, str):
+                secret_hash = _hash_client_secret(legacy_client_secret)
+                migrated_plaintext = True
+            else:
+                continue
+            if (
+                not isinstance(secret_hash, str)
                 or not isinstance(redirect_uris, list)
                 or not all(isinstance(uri, str) and uri for uri in redirect_uris)
             ):
                 continue
             loaded[client_id] = {
-                "client_secret": client_secret,
+                "client_secret_hash": secret_hash,
                 "redirect_uris": set(redirect_uris),
                 "allow_client_credentials": bool(data.get("allow_client_credentials", False)),
                 "created_at": float(created_at),
@@ -157,7 +188,8 @@ def _load_registered_clients() -> None:
         _registered_clients.clear()
         _registered_clients.update(loaded)
         _cleanup_registered_clients()
-        _persist_registered_clients()
+        if migrated_plaintext:
+            _persist_registered_clients()
 
 
 def _reset_registered_client_store_for_tests() -> None:
@@ -546,7 +578,7 @@ async def _handle_authorization_code(form, client_id: str, client_secret: str) -
     if not client_secret:
         return JSONResponse({"error": "invalid_client", "error_description": "client_secret required"}, status_code=401)
 
-    if not hmac.compare_digest(client_secret, client["client_secret"]):
+    if not _client_secret_matches(client_secret, client):
         return JSONResponse({"error": "invalid_client"}, status_code=401)
 
     # Verify redirect_uri matches
@@ -587,7 +619,7 @@ async def _handle_client_credentials(client_id: str, client_secret: str) -> JSON
     if not client.get("allow_client_credentials", False):
         return JSONResponse({"error": "unauthorized_client"}, status_code=401)
 
-    secret_match = hmac.compare_digest(client_secret, client["client_secret"])
+    secret_match = _client_secret_matches(client_secret, client)
 
     if not secret_match:
         logger.warning(f"OAuth client_credentials failed (client_id={client_id!r})")
@@ -632,7 +664,7 @@ async def oauth_register(request: Request) -> JSONResponse:
     client_id = f"vault-mcp-{secrets.token_hex(8)}"
     client_secret = secrets.token_urlsafe(32)
     _registered_clients[client_id] = {
-        "client_secret": client_secret,
+        "client_secret_hash": _hash_client_secret(client_secret),
         "redirect_uris": set(redirect_uris),
         "allow_client_credentials": False,
         "created_at": time.time(),

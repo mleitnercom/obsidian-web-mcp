@@ -10,7 +10,7 @@ import frontmatter
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
 from obsidian_vault_mcp.tools.write import vault_write, vault_batch_frontmatter_update
 from obsidian_vault_mcp.tools.search import vault_search
-from obsidian_vault_mcp.tools.manage import vault_list, vault_tree, vault_delete
+from obsidian_vault_mcp.tools.manage import vault_delete, vault_delete_directory, vault_list, vault_tree
 
 
 def test_vault_read_returns_frontmatter(vault_dir):
@@ -114,6 +114,23 @@ def test_vault_delete_requires_confirm(vault_dir):
     result = json.loads(vault_delete("delete-me.md", confirm=False))
     assert "error" in result
     assert (vault_dir / "delete-me.md").exists()  # still there
+
+
+def test_vault_delete_directory_requires_confirm(vault_dir):
+    """vault_delete_directory without confirm=true returns error."""
+    (vault_dir / "empty-dir").mkdir()
+    result = json.loads(vault_delete_directory("empty-dir", confirm=False))
+    assert "error" in result
+    assert (vault_dir / "empty-dir").exists()
+
+
+def test_vault_delete_directory_moves_empty_dir_to_trash(vault_dir):
+    """vault_delete_directory moves an empty directory to .trash/."""
+    (vault_dir / "empty-dir").mkdir()
+    result = json.loads(vault_delete_directory("empty-dir", confirm=True))
+    assert result["deleted"] is True
+    assert not (vault_dir / "empty-dir").exists()
+    assert (vault_dir / ".trash" / "empty-dir").exists()
 
 
 def test_search_and_list_ignore_symlinked_files(vault_dir):

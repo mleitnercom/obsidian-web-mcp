@@ -4,12 +4,14 @@ import pytest
 from pathlib import Path
 
 from obsidian_vault_mcp.vault import (
-    resolve_vault_path,
-    read_file,
-    write_file_atomic,
     delete_path,
+    delete_directory_path,
     move_path,
     list_directory,
+    read_file,
+    resolve_vault_path,
+    scan_markdown_encoding_issues,
+    write_file_atomic,
 )
 
 
@@ -113,3 +115,35 @@ def test_move_file(vault_dir):
     assert not (vault_dir / "source.md").exists()
     assert (vault_dir / "destination.md").exists()
     assert (vault_dir / "destination.md").read_text() == "Move me."
+
+
+def test_delete_empty_directory_moves_to_trash(vault_dir):
+    """Empty directories can be soft-deleted into .trash/."""
+    target = vault_dir / "empty-dir"
+    target.mkdir()
+
+    deleted = delete_directory_path("empty-dir")
+
+    assert deleted is True
+    assert not target.exists()
+    assert (vault_dir / ".trash" / "empty-dir").exists()
+
+
+def test_delete_directory_rejects_non_empty_by_default(vault_dir):
+    """Non-empty directories require an explicit opt-out of the empty-only guard."""
+    target = vault_dir / "non-empty-dir"
+    target.mkdir()
+    (target / "note.md").write_text("hello", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="non-empty"):
+        delete_directory_path("non-empty-dir")
+
+
+def test_scan_markdown_encoding_issues_reports_bad_files(vault_dir):
+    """UTF-8 scan finds markdown files with invalid encoding."""
+    bad_file = vault_dir / "latin1-note.md"
+    bad_file.write_bytes("Datei\xe4nderungen\n".encode("latin-1"))
+
+    issues = scan_markdown_encoding_issues()
+
+    assert any(issue["path"] == "latin1-note.md" for issue in issues)

@@ -239,5 +239,6 @@ sudo journalctl -u obsidian-mcp-semantic-reindex.service -n 50 --no-pager
   - `VAULT_OAUTH_AUTH_USERNAME`
   - `VAULT_OAUTH_AUTH_PASSWORD`
 - Dynamic OAuth client registrations are persisted by default so ChatGPT/Claude connectors survive service restarts.
+- Persisted dynamic OAuth client secrets are stored hashed at rest; only short-lived authorization codes and browser login sessions remain purely in memory.
 - Authorization codes and temporary browser login sessions remain in-memory and are still cleared on restart.
 - Requests are authenticated and rate-limited; path traversal and symlink traversal are blocked.

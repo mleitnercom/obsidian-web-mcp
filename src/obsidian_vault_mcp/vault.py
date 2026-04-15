@@ -244,3 +244,59 @@ def list_directory(
 
     _walk(root, 1)
     return results
+
+
+def scan_markdown_encoding_issues(
+    relative_path: str = "",
+    max_results: int = 100,
+) -> list[dict]:
+    """Return markdown files under the vault that are not valid UTF-8."""
+    root = resolve_vault_path(relative_path) if relative_path else config.VAULT_PATH.resolve()
+    if not root.is_dir():
+        raise NotADirectoryError(f"Not a directory: {relative_path}")
+
+    vault_root = config.VAULT_PATH.resolve()
+    issues: list[dict] = []
+
+    for path in root.rglob("*.md"):
+        if any(part in config.EXCLUDED_DIRS for part in path.parts):
+            continue
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as e:
+            issues.append(
+                {
+                    "path": str(path.relative_to(vault_root)),
+                    "position": e.start,
+                    "reason": e.reason,
+                }
+            )
+            if len(issues) >= max_results:
+                break
+
+    return issues
+
+
+def delete_directory_path(relative_path: str, only_if_empty: bool = True) -> bool:
+    """Soft-delete a directory by moving it into .trash/ at the vault root."""
+    path = resolve_vault_path(relative_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"Path does not exist: {relative_path}")
+    if not path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {relative_path}")
+    if only_if_empty and any(path.iterdir()):
+        raise ValueError(f"Refusing to delete non-empty directory: {relative_path}")
+
+    trash_dir = config.VAULT_PATH.resolve() / ".trash"
+    trash_dir.mkdir(exist_ok=True)
+
+    dest = trash_dir / path.name
+    if dest.exists():
+        ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
+        dest = trash_dir / f"{path.name}_{ts}"
+
+    shutil.move(str(path), str(dest))
+    return True

@@ -122,7 +122,13 @@ mcp = FastMCP(
 from .tools.read import vault_read as _vault_read, vault_batch_read as _vault_batch_read
 from .tools.write import vault_write as _vault_write, vault_batch_frontmatter_update as _vault_batch_frontmatter_update
 from .tools.search import vault_search as _vault_search, vault_search_frontmatter as _vault_search_frontmatter
-from .tools.manage import vault_list as _vault_list, vault_move as _vault_move, vault_delete as _vault_delete, vault_tree as _vault_tree
+from .tools.manage import (
+    vault_delete as _vault_delete,
+    vault_delete_directory as _vault_delete_directory,
+    vault_list as _vault_list,
+    vault_move as _vault_move,
+    vault_tree as _vault_tree,
+)
 from .tools.semantic_search import (
     set_engine as _set_semantic_engine,
     vault_semantic_search as _vault_semantic_search,
@@ -141,6 +147,7 @@ from .models import (
     VaultReindexInput,
     VaultTreeInput,
     VaultDeleteInput,
+    VaultDeleteDirectoryInput,
 )
 
 _set_semantic_engine(semantic_engine)
@@ -417,6 +424,26 @@ def vault_delete(path: str, confirm: bool = False) -> str:
     if limited is not None:
         return limited
     return _run_logged_tool("vault_delete", lambda: _vault_delete(inp.path, inp.confirm), path=inp.path, confirm=inp.confirm)
+
+
+@mcp.tool(
+    name="vault_delete_directory",
+    description="Delete an empty directory by moving it to .trash/ in the vault root. Requires confirm=true as a safety gate.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_delete_directory(path: str, confirm: bool = False, only_if_empty: bool = True) -> str:
+    """Delete a directory (move to .trash/)."""
+    inp = VaultDeleteDirectoryInput(path=path, confirm=confirm, only_if_empty=only_if_empty)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_delete_directory",
+        lambda: _vault_delete_directory(inp.path, inp.confirm, inp.only_if_empty),
+        path=inp.path,
+        confirm=inp.confirm,
+        only_if_empty=inp.only_if_empty,
+    )
 
 
 def main():

@@ -70,3 +70,24 @@ def test_semantic_benchmark_runs_selected_mode(monkeypatch, capsys):
 
     output = json.loads(capsys.readouterr().out)
     assert output["results"][0]["mode"] == "keyword"
+
+
+def test_semantic_cli_doctor_can_scan_utf8(monkeypatch, capsys):
+    """Doctor mode can include a UTF-8 hygiene scan."""
+    monkeypatch.setattr(semantic_cli, "SemanticSearchEngine", _FakeCliEngine)
+    monkeypatch.setattr(
+        semantic_cli,
+        "scan_markdown_encoding_issues",
+        lambda relative_path="", max_results=50: [{"path": "latin1-note.md", "position": 5, "reason": "invalid start byte"}],
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["vault-semantic", "doctor", "--scan-utf8", "--path-prefix", "notes", "--max-issues", "10"],
+    )
+
+    semantic_cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["utf8_scan"]["path_prefix"] == "notes"
+    assert output["utf8_scan"]["issue_count"] == 1
+    assert output["utf8_scan"]["issues"][0]["path"] == "latin1-note.md"

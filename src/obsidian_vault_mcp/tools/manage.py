@@ -3,7 +3,14 @@
 import logging
 
 from .. import config
-from ..vault import list_directory, move_path, delete_path, resolve_vault_path, vault_json_dumps
+from ..vault import (
+    delete_directory_path,
+    delete_path,
+    list_directory,
+    move_path,
+    resolve_vault_path,
+    vault_json_dumps,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,3 +127,21 @@ def vault_delete(path: str, confirm: bool = False) -> str:
     except Exception as e:
         logger.error(f"vault_delete error: {e}")
         return vault_json_dumps({"error": str(e), "path": path})
+
+
+def vault_delete_directory(path: str, confirm: bool = False, only_if_empty: bool = True) -> str:
+    """Delete a directory by moving it to .trash/ in the vault."""
+    if not confirm:
+        return vault_json_dumps({
+            "error": "Set confirm=true to execute deletion. Directories are moved to .trash/, not hard deleted.",
+            "path": path,
+        })
+
+    try:
+        deleted = delete_directory_path(path, only_if_empty=only_if_empty)
+        return vault_json_dumps({"path": path, "deleted": deleted, "only_if_empty": only_if_empty})
+    except (ValueError, NotADirectoryError) as e:
+        return vault_json_dumps({"error": str(e), "path": path, "only_if_empty": only_if_empty})
+    except Exception as e:
+        logger.error(f"vault_delete_directory error: {e}")
+        return vault_json_dumps({"error": str(e), "path": path, "only_if_empty": only_if_empty})

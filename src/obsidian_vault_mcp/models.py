@@ -144,6 +144,27 @@ class VaultDeleteInput(BaseModel):
     )
 
 
+class VaultDeleteDirectoryInput(BaseModel):
+    """Delete a directory from the vault."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(
+        ...,
+        description="Relative path of the directory to delete",
+        min_length=1,
+        max_length=500,
+    )
+    confirm: bool = Field(
+        ...,
+        description="Must be true to execute deletion -- safety gate to prevent accidental deletes",
+    )
+    only_if_empty: bool = Field(
+        default=True,
+        description="Require the directory to be empty before moving it to .trash/",
+    )
+
+
 class VaultSearchInput(BaseModel):
     """Full-text search across vault files."""
 

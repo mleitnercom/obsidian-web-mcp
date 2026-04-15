@@ -6,6 +6,7 @@ import logging
 import sys
 
 from .retrieval import SemanticSearchEngine
+from .vault import scan_markdown_encoding_issues
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -41,6 +42,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", help="Run basic semantic diagnostics.")
     doctor.add_argument("--init", action="store_true", help="Initialize the engine before running checks.")
+    doctor.add_argument(
+        "--scan-utf8",
+        action="store_true",
+        help="Scan markdown files for non-UTF-8 content that can break semantic indexing.",
+    )
+    doctor.add_argument("--path-prefix", default="", help="Optional subdirectory to restrict UTF-8 scanning.")
+    doctor.add_argument("--max-issues", type=int, default=50, help="Maximum UTF-8 issues to report.")
 
     return parser
 
@@ -104,6 +112,17 @@ def main() -> None:
             except Exception as exc:  # pragma: no cover - defensive CLI path
                 payload["initialize_error"] = str(exc)
             payload["status_after_init"] = _status_payload(engine)
+        if args.scan_utf8:
+            issues = scan_markdown_encoding_issues(
+                relative_path=args.path_prefix,
+                max_results=args.max_issues,
+            )
+            payload["utf8_scan"] = {
+                "path_prefix": args.path_prefix,
+                "issue_count": len(issues),
+                "issues": issues,
+                "truncated": len(issues) >= args.max_issues,
+            }
         print(json.dumps(payload, indent=2))
         return
 
