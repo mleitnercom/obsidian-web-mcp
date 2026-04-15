@@ -3,6 +3,23 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
+## [v0.4.1] - 2026-04-15
+
+Small maintenance and security release focused on safer OAuth persistence, better vault hygiene diagnostics, and one practical filesystem tool.
+
+### Security
+- Stop persisting dynamic OAuth client secrets in clear text on disk; store hashes instead.
+- Keep backward-compatible loading so existing persisted client registrations continue to work and are migrated on read.
+
+### Maintenance
+- Add `vault_delete_directory` for empty-directory cleanup via `.trash/`, guarded by `confirm=true`.
+- Add `vault-semantic doctor --scan-utf8` to report markdown files that are not valid UTF-8 and can break semantic indexing.
+- Make UTF-8 doctor reporting resilient even when semantic search itself is disabled or not initialized.
+
+### Documentation
+- Update README and Linux deployment docs for the new directory-delete tool, UTF-8 scan workflow, and hashed-at-rest OAuth registration storage.
+- Refresh the README tool count and current release reference.
+
 ## [v0.4.0] - 2026-04-12
 
 This release turns the semantic-search work from an internal feature set into something that is easier to operate, observe, and keep healthy over time.
