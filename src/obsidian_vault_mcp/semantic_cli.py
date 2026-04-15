@@ -113,16 +113,22 @@ def main() -> None:
                 payload["initialize_error"] = str(exc)
             payload["status_after_init"] = _status_payload(engine)
         if args.scan_utf8:
-            issues = scan_markdown_encoding_issues(
-                relative_path=args.path_prefix,
-                max_results=args.max_issues,
-            )
-            payload["utf8_scan"] = {
-                "path_prefix": args.path_prefix,
-                "issue_count": len(issues),
-                "issues": issues,
-                "truncated": len(issues) >= args.max_issues,
-            }
+            try:
+                issues = scan_markdown_encoding_issues(
+                    relative_path=args.path_prefix,
+                    max_results=args.max_issues,
+                )
+                payload["utf8_scan"] = {
+                    "path_prefix": args.path_prefix,
+                    "issue_count": len(issues),
+                    "issues": issues,
+                    "truncated": len(issues) >= args.max_issues,
+                }
+            except Exception as exc:  # pragma: no cover - defensive CLI path
+                payload["utf8_scan"] = {
+                    "path_prefix": args.path_prefix,
+                    "error": str(exc),
+                }
         print(json.dumps(payload, indent=2))
         return
 
