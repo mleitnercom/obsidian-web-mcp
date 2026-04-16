@@ -52,6 +52,44 @@ def test_bearer_auth_rejects_invalid_token(monkeypatch):
 
     assert response.status_code == 401
     assert response.json()["error"] == "Invalid token"
+    assert response.headers["WWW-Authenticate"].startswith('Bearer realm="mcp"')
+    assert 'error="invalid_token"' in response.headers["WWW-Authenticate"]
+    assert '/.well-known/oauth-protected-resource' in response.headers["WWW-Authenticate"]
+
+
+def test_bearer_auth_rejects_missing_header_with_discovery_hint(monkeypatch):
+    """Missing auth headers should advertise OAuth discovery metadata."""
+    reset_rate_limits()
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+    app = Starlette(
+        routes=[Route("/protected", _protected)],
+        middleware=[Middleware(BearerAuthMiddleware)],
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/protected")
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "Missing or malformed Authorization header"
+    assert response.headers["WWW-Authenticate"].startswith('Bearer realm="mcp"')
+    assert 'error="invalid_request"' in response.headers["WWW-Authenticate"]
+    assert '/.well-known/oauth-protected-resource' in response.headers["WWW-Authenticate"]
+
+
+def test_bearer_auth_uses_mcp_resource_metadata_for_mcp_path(monkeypatch):
+    """Protected /mcp requests should point clients at the MCP resource metadata URL."""
+    reset_rate_limits()
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+    app = Starlette(
+        routes=[Route("/mcp", _protected, methods=["POST"])],
+        middleware=[Middleware(BearerAuthMiddleware)],
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/mcp")
+
+    assert response.status_code == 401
+    assert '/.well-known/oauth-protected-resource/mcp' in response.headers["WWW-Authenticate"]
 
 
 def test_bearer_auth_allows_root_probe_without_token(monkeypatch):
