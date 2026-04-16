@@ -566,6 +566,47 @@ def test_build_app_exposes_mcp_root_probe(vault_dir, monkeypatch):
     assert response.headers["MCP-Protocol-Version"] == "2025-06-18"
 
 
+def test_build_app_exposes_health_without_bearer(vault_dir, monkeypatch):
+    """GET /health returns compact operational status without bearer auth."""
+    reset_rate_limits()
+    base_app = Starlette()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["status"] == "ok"
+    assert body["vault"]["exists"] is True
+    assert body["frontmatter_index"]["active"] is False
+    assert "heartbeat" in body
+    assert "uptime_seconds" in body
+
+
+def test_health_reflects_heartbeat_configuration(vault_dir, monkeypatch):
+    """Health payload includes configured push-heartbeat settings."""
+    reset_rate_limits()
+    base_app = Starlette()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+    monkeypatch.setattr(server.config, "VAULT_MCP_HEARTBEAT_URL", "https://hc.example/ping")
+    monkeypatch.setattr(server.config, "VAULT_MCP_HEARTBEAT_INTERVAL", 90)
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    body = response.json()
+    assert body["heartbeat"]["enabled"] is True
+    assert body["heartbeat"]["url"] == "https://hc.example/ping"
+    assert body["heartbeat"]["interval_seconds"] == 90
+
+
 def test_build_app_exposes_oauth_discovery_aliases_without_bearer(vault_dir, monkeypatch):
     """OAuth/OpenID well-known aliases used by MCP clients should be publicly readable."""
     reset_rate_limits()

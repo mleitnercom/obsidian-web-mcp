@@ -120,6 +120,42 @@ def write_file_atomic(
     return is_new, len(encoded)
 
 
+def write_bytes_atomic(
+    relative_path: str,
+    content: bytes,
+    create_dirs: bool = True,
+    overwrite: bool = True,
+) -> tuple[bool, int]:
+    """Write raw bytes to a file atomically."""
+    if len(content) > config.MAX_BINARY_SIZE:
+        raise ValueError(
+            f"Content size {len(content)} bytes exceeds limit of {config.MAX_BINARY_SIZE} bytes"
+        )
+
+    path = resolve_vault_path(relative_path)
+    is_new = not path.exists()
+
+    if not overwrite and not is_new:
+        raise FileExistsError(f"File already exists: {relative_path}")
+
+    if create_dirs:
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+    return is_new, len(content)
+
+
 def move_path(
     source: str, destination: str, create_dirs: bool = True
 ) -> bool:
@@ -277,6 +313,73 @@ def scan_markdown_encoding_issues(
                 break
 
     return issues
+
+
+def repair_markdown_encoding_issues(
+    relative_path: str = "",
+    max_files: int = 50,
+    source_encoding: str = "cp1252",
+    dry_run: bool = False,
+) -> dict:
+    """Repair markdown files that are not valid UTF-8 using a chosen source encoding."""
+    root = resolve_vault_path(relative_path) if relative_path else config.VAULT_PATH.resolve()
+    if not root.is_dir():
+        raise NotADirectoryError(f"Not a directory: {relative_path}")
+
+    vault_root = config.VAULT_PATH.resolve()
+    repaired: list[dict] = []
+    failed: list[dict] = []
+
+    for path in root.rglob("*.md"):
+        if any(part in config.EXCLUDED_DIRS for part in path.parts):
+            continue
+        if path.is_symlink() or not path.is_file():
+            continue
+
+        raw = path.read_bytes()
+        try:
+            raw.decode("utf-8")
+            continue
+        except UnicodeDecodeError:
+            pass
+
+        rel = str(path.relative_to(vault_root))
+        try:
+            decoded = raw.decode(source_encoding)
+            if not dry_run:
+                path.write_text(decoded, encoding="utf-8")
+            repaired.append(
+                {
+                    "path": rel,
+                    "source_encoding": source_encoding,
+                    "bytes_before": len(raw),
+                    "bytes_after": len(decoded.encode("utf-8")),
+                    "changed": not dry_run,
+                }
+            )
+        except UnicodeDecodeError as e:
+            failed.append(
+                {
+                    "path": rel,
+                    "source_encoding": source_encoding,
+                    "position": e.start,
+                    "reason": e.reason,
+                }
+            )
+
+        if len(repaired) + len(failed) >= max_files:
+            break
+
+    return {
+        "path_prefix": relative_path,
+        "source_encoding": source_encoding,
+        "dry_run": dry_run,
+        "repaired_count": len(repaired),
+        "failed_count": len(failed),
+        "repaired": repaired,
+        "failed": failed,
+        "truncated": len(repaired) + len(failed) >= max_files,
+    }
 
 
 def delete_directory_path(relative_path: str, only_if_empty: bool = True) -> bool:

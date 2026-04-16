@@ -3,6 +3,31 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
+## [v0.5.0] - 2026-04-16
+
+This release turns the current fork backlog into a practical operator-focused package: better write primitives, better health visibility, better vault hygiene workflows, and a first read-only analytics layer.
+
+### Features
+- Add `vault_write_binary` for writing allowed binary files such as PNG, JPEG, WebP, GIF, SVG, and PDF from base64 input with overwrite protection and size limits.
+- Add `vault_str_replace` for exact unique-string replacement without requiring a full file rewrite in the request.
+- Add `vault_analytics_summary` for compact read-only vault hygiene summaries.
+- Add `vault_analytics_findings` for detailed findings by category, including broken wikilinks, missing frontmatter, suspicious tag variants, and encoding issues.
+
+### Operations
+- Add a real `/health` endpoint that reports vault reachability, frontmatter-index state, semantic-engine status, heartbeat state, and uptime.
+- Add optional push-style heartbeats via `VAULT_MCP_HEARTBEAT_URL` and `VAULT_MCP_HEARTBEAT_INTERVAL`.
+- Expand `vault-semantic doctor` with JSON report writing and explicit UTF-8 repair flows (`--repair-utf8`, `--repair-encoding`, `--dry-run`).
+- Add a dedicated operations runbook covering health/heartbeat, UTF-8 repair flow, reindex discipline, and analytics usage.
+
+### Reliability and Safety
+- Add atomic binary writes via a dedicated byte-write path instead of routing binary content through text-only writes.
+- Keep binary writes on an allowlist of supported media types and extensions, guarded by a configurable decoded size limit.
+- Make string replacement intentionally strict: replacement only succeeds when the target text occurs exactly once.
+- Add tests for binary writes, exact string replacement, analytics summaries/findings, heartbeat-aware health payloads, and UTF-8 repair behavior.
+
+### Documentation
+- Refresh README for the new release, tool list, heartbeat configuration, analytics capabilities, and UTF-8 operator workflow.
+
 ## [v0.4.1] - 2026-04-15
 
 Small maintenance and security release focused on safer OAuth persistence, better vault hygiene diagnostics, and one practical filesystem tool.

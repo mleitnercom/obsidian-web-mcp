@@ -91,3 +91,47 @@ def test_semantic_cli_doctor_can_scan_utf8(monkeypatch, capsys):
     assert output["utf8_scan"]["path_prefix"] == "notes"
     assert output["utf8_scan"]["issue_count"] == 1
     assert output["utf8_scan"]["issues"][0]["path"] == "latin1-note.md"
+
+
+def test_semantic_cli_doctor_can_write_report(monkeypatch, capsys, tmp_path):
+    """Doctor mode can persist its JSON report to disk."""
+    report_path = tmp_path / "reports" / "doctor.json"
+    monkeypatch.setattr(semantic_cli, "SemanticSearchEngine", _FakeCliEngine)
+    monkeypatch.setattr("sys.argv", ["vault-semantic", "doctor", "--report-path", str(report_path)])
+
+    semantic_cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    written = json.loads(report_path.read_text(encoding="utf-8"))
+    assert output == written
+    assert written["status_before_init"]["available"] is True
+
+
+def test_semantic_cli_doctor_can_repair_utf8(monkeypatch, capsys):
+    """Doctor mode can include a controlled UTF-8 repair pass."""
+    monkeypatch.setattr(semantic_cli, "SemanticSearchEngine", _FakeCliEngine)
+    monkeypatch.setattr(
+        semantic_cli,
+        "repair_markdown_encoding_issues",
+        lambda relative_path="", max_files=50, source_encoding="cp1252", dry_run=False: {
+            "path_prefix": relative_path,
+            "source_encoding": source_encoding,
+            "dry_run": dry_run,
+            "repaired_count": 1,
+            "failed_count": 0,
+            "repaired": [{"path": "latin1-note.md", "changed": not dry_run}],
+            "failed": [],
+            "truncated": False,
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["vault-semantic", "doctor", "--repair-utf8", "--repair-encoding", "latin-1", "--dry-run"],
+    )
+
+    semantic_cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["utf8_repair"]["source_encoding"] == "latin-1"
+    assert output["utf8_repair"]["dry_run"] is True
+    assert output["utf8_repair"]["repaired_count"] == 1

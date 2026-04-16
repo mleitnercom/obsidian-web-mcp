@@ -4,9 +4,10 @@ import argparse
 import json
 import logging
 import sys
+from pathlib import Path
 
 from .retrieval import SemanticSearchEngine
-from .vault import scan_markdown_encoding_issues
+from .vault import repair_markdown_encoding_issues, scan_markdown_encoding_issues
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -47,8 +48,29 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Scan markdown files for non-UTF-8 content that can break semantic indexing.",
     )
+    doctor.add_argument(
+        "--repair-utf8",
+        action="store_true",
+        help="Repair non-UTF-8 markdown files by decoding with a chosen source encoding and rewriting as UTF-8.",
+    )
     doctor.add_argument("--path-prefix", default="", help="Optional subdirectory to restrict UTF-8 scanning.")
     doctor.add_argument("--max-issues", type=int, default=50, help="Maximum UTF-8 issues to report.")
+    doctor.add_argument(
+        "--repair-encoding",
+        choices=("cp1252", "latin-1"),
+        default="cp1252",
+        help="Source encoding to use for explicit UTF-8 repair attempts.",
+    )
+    doctor.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be repaired without modifying files.",
+    )
+    doctor.add_argument(
+        "--report-path",
+        default="",
+        help="Optional path to write the JSON doctor report to disk.",
+    )
 
     return parser
 
@@ -72,6 +94,15 @@ def _status_payload(engine: SemanticSearchEngine) -> dict:
         "path_index": f"{cache_path}/path_index.json",
     }
     return payload
+
+
+def _maybe_write_report(path: str, payload: dict) -> None:
+    """Write a diagnostic payload to disk when requested."""
+    if not path:
+        return
+    report_path = Path(path)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def main() -> None:
@@ -129,6 +160,22 @@ def main() -> None:
                     "path_prefix": args.path_prefix,
                     "error": str(exc),
                 }
+        if args.repair_utf8:
+            try:
+                payload["utf8_repair"] = repair_markdown_encoding_issues(
+                    relative_path=args.path_prefix,
+                    max_files=args.max_issues,
+                    source_encoding=args.repair_encoding,
+                    dry_run=args.dry_run,
+                )
+            except Exception as exc:  # pragma: no cover - defensive CLI path
+                payload["utf8_repair"] = {
+                    "path_prefix": args.path_prefix,
+                    "source_encoding": args.repair_encoding,
+                    "dry_run": args.dry_run,
+                    "error": str(exc),
+                }
+        _maybe_write_report(args.report_path, payload)
         print(json.dumps(payload, indent=2))
         return
 

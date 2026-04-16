@@ -37,6 +37,8 @@ def _env_csv(name: str, default: list[str]) -> list[str]:
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", os.path.expanduser("~/Obsidian/MyVault")))
 VAULT_MCP_TOKEN = os.environ.get("VAULT_MCP_TOKEN", "")
 VAULT_MCP_PORT = _env_int("VAULT_MCP_PORT", 8420)
+VAULT_MCP_HEARTBEAT_URL = os.environ.get("VAULT_MCP_HEARTBEAT_URL", "").strip()
+VAULT_MCP_HEARTBEAT_INTERVAL = _env_int("VAULT_MCP_HEARTBEAT_INTERVAL", 60)
 
 # OAuth 2.0 client credentials (for Claude app integration)
 VAULT_OAUTH_CLIENT_ID = os.environ.get("VAULT_OAUTH_CLIENT_ID", "vault-mcp-client")
@@ -86,6 +88,7 @@ SEMANTIC_UPDATE_DEBOUNCE_SECONDS = _env_int("VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECO
 
 # Safety limits
 MAX_CONTENT_SIZE = _env_int("VAULT_MAX_CONTENT_SIZE", 1_000_000)
+MAX_BINARY_SIZE = _env_int("VAULT_MAX_BINARY_SIZE", 10 * 1024 * 1024)
 MAX_BATCH_SIZE = _env_int("VAULT_MAX_BATCH_SIZE", 20)
 MAX_SEARCH_RESULTS = _env_int("VAULT_MAX_SEARCH_RESULTS", 50)
 DEFAULT_SEARCH_RESULTS = _env_int("VAULT_DEFAULT_SEARCH_RESULTS", 20)

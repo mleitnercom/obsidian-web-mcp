@@ -4,16 +4,19 @@ Exposes read/write access to an Obsidian vault over Streamable HTTP.
 Designed to run behind Cloudflare Tunnel for secure remote access.
 """
 
+import asyncio
 import json
 import logging
 import sys
 import time
+import urllib.request
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from . import config
@@ -29,6 +32,23 @@ logger = logging.getLogger(__name__)
 frontmatter_index = FrontmatterIndex()
 semantic_engine = SemanticSearchEngine()
 _semantic_callback_registered = False
+_server_started_at = time.monotonic()
+_heartbeat_state = {
+    "enabled": bool(config.VAULT_MCP_HEARTBEAT_URL),
+    "url": config.VAULT_MCP_HEARTBEAT_URL,
+    "interval_seconds": config.VAULT_MCP_HEARTBEAT_INTERVAL,
+    "last_attempt_at": None,
+    "last_success_at": None,
+    "last_error": "",
+    "last_status_code": None,
+}
+
+
+def _sync_heartbeat_config_state() -> None:
+    """Refresh heartbeat state from current config values."""
+    _heartbeat_state["enabled"] = bool(config.VAULT_MCP_HEARTBEAT_URL)
+    _heartbeat_state["url"] = config.VAULT_MCP_HEARTBEAT_URL
+    _heartbeat_state["interval_seconds"] = config.VAULT_MCP_HEARTBEAT_INTERVAL
 
 
 def _truncate_log_value(value: Any, limit: int = 120) -> str:
@@ -82,6 +102,59 @@ def _tool_rate_limit_error(scope: str, limit: int) -> str | None:
     return None
 
 
+async def _heartbeat_loop(url: str, interval: int) -> None:
+    """Send periodic HTTP GET heartbeats to a push-style endpoint."""
+    def _send() -> int:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            return resp.status
+
+    while True:
+        now = datetime.now(timezone.utc).isoformat()
+        _heartbeat_state["last_attempt_at"] = now
+        try:
+            status = await asyncio.to_thread(_send)
+            _heartbeat_state["last_success_at"] = datetime.now(timezone.utc).isoformat()
+            _heartbeat_state["last_status_code"] = status
+            _heartbeat_state["last_error"] = ""
+            logger.debug("Heartbeat sent: HTTP %s", status)
+        except Exception as exc:
+            _heartbeat_state["last_error"] = str(exc)
+            logger.debug("Heartbeat failed: %s", exc)
+        await asyncio.sleep(interval)
+
+
+def _health_payload() -> dict:
+    """Build a compact operational health payload."""
+    _sync_heartbeat_config_state()
+    vault_exists = VAULT_PATH.exists()
+    vault_is_dir = VAULT_PATH.is_dir()
+    observer = frontmatter_index._observer
+    semantic_status = semantic_engine.status
+    return {
+        "status": "ok" if vault_exists and vault_is_dir else "degraded",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "vault": {
+            "path": str(VAULT_PATH),
+            "exists": vault_exists,
+            "is_dir": vault_is_dir,
+        },
+        "frontmatter_index": {
+            "active": observer is not None,
+            "observer_alive": bool(observer and observer.is_alive()),
+            "file_count": frontmatter_index.file_count,
+        },
+        "semantic": {
+            "enabled": semantic_status["enabled"],
+            "available": semantic_status["available"],
+            "initialized": semantic_status["initialized"],
+            "chunk_count": semantic_status["chunk_count"],
+            "reason": semantic_status["reason"],
+        },
+        "heartbeat": dict(_heartbeat_state),
+        "uptime_seconds": round(time.monotonic() - _server_started_at, 3),
+    }
+
+
 @asynccontextmanager
 async def lifespan(server):
     """Initialize the frontmatter index once per process.
@@ -91,7 +164,9 @@ async def lifespan(server):
     torn down at the end of each cycle.
     """
     global _semantic_callback_registered
+    _sync_heartbeat_config_state()
     frontmatter_index.start()
+    heartbeat_task = None
     if (
         config.SEMANTIC_SEARCH_ENABLED
         and config.SEMANTIC_AUTO_REINDEX
@@ -101,7 +176,22 @@ async def lifespan(server):
         # happens when semantic tools are actually used.
         frontmatter_index.on_change(semantic_engine.handle_vault_change)
         _semantic_callback_registered = True
-    yield {"frontmatter_index": frontmatter_index}
+    if config.VAULT_MCP_HEARTBEAT_URL:
+        heartbeat_task = asyncio.create_task(
+            _heartbeat_loop(
+                config.VAULT_MCP_HEARTBEAT_URL,
+                config.VAULT_MCP_HEARTBEAT_INTERVAL,
+            )
+        )
+        logger.info(
+            "Heartbeat enabled (interval: %ds)",
+            config.VAULT_MCP_HEARTBEAT_INTERVAL,
+        )
+    try:
+        yield {"frontmatter_index": frontmatter_index}
+    finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
 
 
 # Create the MCP server
@@ -120,7 +210,16 @@ mcp = FastMCP(
 # --- Register all tools ---
 
 from .tools.read import vault_read as _vault_read, vault_batch_read as _vault_batch_read
-from .tools.write import vault_write as _vault_write, vault_batch_frontmatter_update as _vault_batch_frontmatter_update
+from .tools.analytics import (
+    vault_analytics_findings as _vault_analytics_findings,
+    vault_analytics_summary as _vault_analytics_summary,
+)
+from .tools.write import (
+    vault_batch_frontmatter_update as _vault_batch_frontmatter_update,
+    vault_str_replace as _vault_str_replace,
+    vault_write as _vault_write,
+    vault_write_binary as _vault_write_binary,
+)
 from .tools.search import vault_search as _vault_search, vault_search_frontmatter as _vault_search_frontmatter
 from .tools.manage import (
     vault_delete as _vault_delete,
@@ -135,8 +234,12 @@ from .tools.semantic_search import (
     vault_reindex as _vault_reindex,
 )
 from .models import (
+    VaultAnalyticsFindingsInput,
+    VaultAnalyticsSummaryInput,
     VaultReadInput,
+    VaultStrReplaceInput,
     VaultWriteInput,
+    VaultWriteBinaryInput,
     VaultBatchReadInput,
     VaultBatchFrontmatterUpdateInput,
     VaultSearchInput,
@@ -151,6 +254,70 @@ from .models import (
 )
 
 _set_semantic_engine(semantic_engine)
+
+
+@mcp.tool(
+    name="vault_analytics_summary",
+    description="Return a compact analytics summary for vault hygiene, including frontmatter, link, tag, and encoding findings.",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_analytics_summary(
+    path_prefix: str | None = None,
+    required_frontmatter: list[str] | None = None,
+    max_examples: int = 3,
+) -> str:
+    """Build a compact analytics summary for a vault path."""
+    inp = VaultAnalyticsSummaryInput(
+        path_prefix=path_prefix,
+        required_frontmatter=required_frontmatter,
+        max_examples=max_examples,
+    )
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_analytics_summary",
+        lambda: _vault_analytics_summary(inp.path_prefix or "", inp.required_frontmatter, inp.max_examples),
+        path_prefix=inp.path_prefix,
+        required_frontmatter=inp.required_frontmatter,
+        max_examples=inp.max_examples,
+    )
+
+
+@mcp.tool(
+    name="vault_analytics_findings",
+    description="Return detailed findings for one vault analytics category such as broken_wikilinks, encoding_issues, or frontmatter_missing.",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_analytics_findings(
+    category: str,
+    path_prefix: str | None = None,
+    required_frontmatter: list[str] | None = None,
+    max_results: int = 50,
+) -> str:
+    """Return detailed findings for one analytics category."""
+    inp = VaultAnalyticsFindingsInput(
+        category=category,
+        path_prefix=path_prefix,
+        required_frontmatter=required_frontmatter,
+        max_results=max_results,
+    )
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_analytics_findings",
+        lambda: _vault_analytics_findings(
+            inp.category,
+            inp.path_prefix or "",
+            inp.required_frontmatter,
+            inp.max_results,
+        ),
+        category=inp.category,
+        path_prefix=inp.path_prefix,
+        required_frontmatter=inp.required_frontmatter,
+        max_results=inp.max_results,
+    )
 
 
 @mcp.tool(
@@ -208,6 +375,40 @@ def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontma
 
 
 @mcp.tool(
+    name="vault_write_binary",
+    description="Write a binary file such as an image, SVG, or PDF to the Obsidian vault. Data must be base64-encoded and match an allowed media type.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_write_binary(
+    path: str,
+    data: str,
+    media_type: str,
+    overwrite: bool = False,
+    create_dirs: bool = True,
+) -> str:
+    """Write an allowed binary file to the vault."""
+    inp = VaultWriteBinaryInput(
+        path=path,
+        data=data,
+        media_type=media_type,
+        overwrite=overwrite,
+        create_dirs=create_dirs,
+    )
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_write_binary",
+        lambda: _vault_write_binary(inp.path, inp.data, inp.media_type, inp.overwrite, inp.create_dirs),
+        path=inp.path,
+        media_type=inp.media_type,
+        overwrite=inp.overwrite,
+        create_dirs=inp.create_dirs,
+        base64_bytes=len(inp.data),
+    )
+
+
+@mcp.tool(
     name="vault_batch_frontmatter_update",
     description="Update YAML frontmatter fields on multiple files without changing body content. Each update merges new fields into existing frontmatter.",
     annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -222,6 +423,26 @@ def vault_batch_frontmatter_update(updates: list[dict]) -> str:
         "vault_batch_frontmatter_update",
         lambda: _vault_batch_frontmatter_update(inp.updates),
         updates=len(inp.updates),
+    )
+
+
+@mcp.tool(
+    name="vault_str_replace",
+    description="Replace one exact unique string in a vault file. Fails if old_str is missing or occurs multiple times.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_str_replace(path: str, old_str: str, new_str: str = "") -> str:
+    """Replace one unique exact string in a vault file."""
+    inp = VaultStrReplaceInput(path=path, old_str=old_str, new_str=new_str)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_str_replace",
+        lambda: _vault_str_replace(inp.path, inp.old_str, inp.new_str),
+        path=inp.path,
+        old_str_bytes=len(inp.old_str.encode("utf-8")),
+        new_str_bytes=len(inp.new_str.encode("utf-8")),
     )
 
 
@@ -492,7 +713,11 @@ def build_app():
             headers={"MCP-Protocol-Version": "2025-06-18"},
         )
 
+    async def health_check(_request):
+        return JSONResponse(_health_payload())
+
     app.routes.insert(0, Route("/", mcp_root_probe, methods=["GET", "HEAD"]))
+    app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
 
     for route in oauth_routes:
         app.routes.insert(0, route)

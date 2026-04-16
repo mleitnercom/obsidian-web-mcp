@@ -1,5 +1,6 @@
 """Integration tests for tool functions."""
 
+import base64
 import json
 import os
 from datetime import date, datetime
@@ -8,7 +9,13 @@ import pytest
 import frontmatter
 
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
-from obsidian_vault_mcp.tools.write import vault_write, vault_batch_frontmatter_update
+from obsidian_vault_mcp.tools.write import (
+    vault_batch_frontmatter_update,
+    vault_str_replace,
+    vault_write,
+    vault_write_binary,
+)
+from obsidian_vault_mcp.tools.analytics import vault_analytics_findings, vault_analytics_summary
 from obsidian_vault_mcp.tools.search import vault_search
 from obsidian_vault_mcp.tools.manage import vault_delete, vault_delete_directory, vault_list, vault_tree
 
@@ -69,6 +76,98 @@ def test_vault_write_merge_frontmatter(vault_dir):
     read_result = json.loads(vault_read("test-note.md"))
     assert read_result["frontmatter"]["status"] == "active"  # preserved
     assert read_result["frontmatter"]["priority"] == "high"  # new
+
+
+def test_vault_write_binary_creates_png(vault_dir):
+    """vault_write_binary writes an allowed binary file."""
+    png_bytes = b"\x89PNG\r\n\x1a\nfakepng"
+    result = json.loads(
+        vault_write_binary(
+            "assets/visual.png",
+            base64.b64encode(png_bytes).decode("ascii"),
+            "image/png",
+        )
+    )
+    assert "error" not in result
+    assert result["created"] is True
+    assert result["size"] == len(png_bytes)
+    assert (vault_dir / "assets" / "visual.png").read_bytes() == png_bytes
+
+
+def test_vault_write_binary_rejects_media_type_mismatch(vault_dir):
+    """vault_write_binary rejects a mismatched extension and media type."""
+    result = json.loads(
+        vault_write_binary(
+            "assets/visual.jpg",
+            base64.b64encode(b"notreallyjpg").decode("ascii"),
+            "image/png",
+        )
+    )
+    assert "error" in result
+    assert "not allowed" in result["error"]
+
+
+def test_vault_write_binary_requires_overwrite_opt_in(vault_dir):
+    """vault_write_binary refuses to overwrite unless overwrite=true."""
+    (vault_dir / "assets").mkdir()
+    (vault_dir / "assets" / "visual.png").write_bytes(b"old")
+
+    result = json.loads(
+        vault_write_binary(
+            "assets/visual.png",
+            base64.b64encode(b"new").decode("ascii"),
+            "image/png",
+        )
+    )
+    assert "error" in result
+    assert "overwrite=true" in result["error"]
+    assert (vault_dir / "assets" / "visual.png").read_bytes() == b"old"
+
+
+def test_vault_str_replace_updates_unique_match(vault_dir):
+    """vault_str_replace replaces one exact unique string."""
+    result = json.loads(vault_str_replace("test-note.md", "test note", "updated note"))
+    assert "error" not in result
+    assert result["replaced"] is True
+    assert result["occurrences_found"] == 1
+    assert "updated note" in (vault_dir / "test-note.md").read_text(encoding="utf-8")
+
+
+def test_vault_str_replace_rejects_missing_match(vault_dir):
+    """vault_str_replace errors when old_str is not present."""
+    result = json.loads(vault_str_replace("test-note.md", "missing text", "anything"))
+    assert result["error"] == "old_str not found in file"
+
+
+def test_vault_str_replace_rejects_multiple_matches(vault_dir):
+    """vault_str_replace requires old_str to be unique within the file."""
+    (vault_dir / "repeated.md").write_text("same\nsame\n", encoding="utf-8")
+
+    result = json.loads(vault_str_replace("repeated.md", "same", "new"))
+    assert "error" in result
+    assert result["occurrences"] == 2
+
+
+def test_vault_analytics_summary_reports_hygiene_findings(vault_dir):
+    """vault_analytics_summary returns compact counts and examples."""
+    (vault_dir / "missing-frontmatter.md").write_text("plain text\n", encoding="utf-8")
+    (vault_dir / "broken-link.md").write_text("[[Missing Target]]\n", encoding="utf-8")
+    result = json.loads(vault_analytics_summary(required_frontmatter=["status", "type"]))
+
+    assert "error" not in result
+    assert result["file_count"] >= 4
+    assert result["findings"]["frontmatter_missing"] >= 2
+    assert result["findings"]["broken_wikilinks"] >= 1
+
+
+def test_vault_analytics_findings_returns_broken_wikilinks(vault_dir):
+    """vault_analytics_findings returns detailed category results."""
+    (vault_dir / "broken-link.md").write_text("[[Missing Target]]\n", encoding="utf-8")
+    result = json.loads(vault_analytics_findings("broken_wikilinks"))
+
+    assert "error" not in result
+    assert result["category"] == "broken_wikilinks"
+    assert any(item["target"] == "Missing Target" for item in result["results"])
 
 
 def test_vault_search_finds_text(vault_dir):

@@ -4,7 +4,7 @@ Production-hardened fork of `obsidian-web-mcp` for MCP access to an Obsidian vau
 
 ## Release
 
-Latest: [v0.4.1](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.4.1) (2026-04-15).
+Latest: [v0.5.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.5.0) (2026-04-16).
 
 ## Status
 
@@ -79,14 +79,22 @@ This is a server that provides network access to your personal notes. Security i
 
 **MCP transport compatibility is preserved.** The server answers `GET /` and `HEAD /` with an MCP protocol probe response for newer clients, while keeping normal tool access behind the authenticated HTTP app.
 
+**A lightweight health endpoint is available.** `GET /health` stays readable without bearer auth and returns a compact operational snapshot for vault reachability, frontmatter-index state, and semantic-engine status.
+
+**Optional push heartbeats are supported.** If `VAULT_MCP_HEARTBEAT_URL` is configured, the server emits periodic GET pings to a push-style monitoring endpoint while also surfacing the current heartbeat state in `/health`.
+
 ## Tools
 
 | Tool | Description |
 |------|-------------|
 | `vault_read` | Read a file, returning content, metadata, and parsed YAML frontmatter |
 | `vault_batch_read` | Read multiple files in one call; handles missing files gracefully |
+| `vault_analytics_summary` | Return a compact hygiene summary covering frontmatter, wikilinks, tags, and encoding issues |
+| `vault_analytics_findings` | Return detailed findings for one analytics category such as broken wikilinks or encoding issues |
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
+| `vault_write_binary` | Write an allowed binary file such as PNG, JPEG, WebP, GIF, SVG, or PDF from base64 input |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content |
+| `vault_str_replace` | Replace one unique exact string in a file without rewriting the whole note body in the request |
 | `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
 | `vault_semantic_search` | Optional semantic, keyword, or hybrid search backed by a persistent FAISS index (supports `path_prefix`, `filter_tags`, `search_mode`, `min_score`) |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
@@ -147,11 +155,15 @@ python -m pip install -e .[semantic-sentence]
 
 The server starts on port 8420 by default. It serves MCP over Streamable HTTP at `/mcp/`.
 
-For semantic troubleshooting, the maintenance CLI can also scan the vault for non-UTF-8 markdown files:
+For semantic troubleshooting, the maintenance CLI can scan the vault for non-UTF-8 markdown files, write a JSON report, and run an explicit repair pass for common legacy encodings:
 
 ```bash
 vault-semantic doctor --scan-utf8
+vault-semantic doctor --scan-utf8 --report-path ./reports/utf8-doctor.json
+vault-semantic doctor --repair-utf8 --repair-encoding cp1252 --dry-run
 ```
+
+For vault hygiene beyond pure search, the server also exposes analytics endpoints for frontmatter gaps, broken wikilinks, suspicious tag variants, and encoding issues.
 
 ## Configuration
 
@@ -162,6 +174,8 @@ All configuration is via environment variables:
 | `VAULT_PATH` | Yes | `~/Obsidian/MyVault` | Absolute path to your Obsidian vault directory |
 | `VAULT_MCP_TOKEN` | Yes | (none) | 256-bit bearer token for authenticating MCP requests |
 | `VAULT_MCP_PORT` | No | `8420` | Port the HTTP server listens on |
+| `VAULT_MCP_HEARTBEAT_URL` | No | (empty) | Optional push-style heartbeat URL for Uptime Kuma, Healthchecks.io, Cronitor, or similar |
+| `VAULT_MCP_HEARTBEAT_INTERVAL` | No | `60` | Seconds between heartbeat pings when `VAULT_MCP_HEARTBEAT_URL` is configured |
 | `VAULT_OAUTH_CLIENT_ID` | No | `vault-mcp-client` | OAuth 2.0 client ID for Claude integration |
 | `VAULT_OAUTH_CLIENT_SECRET` | Yes | (none) | OAuth 2.0 client secret for Claude integration |
 | `VAULT_OAUTH_AUTH_USERNAME` | No | (none) | Optional username required at `/oauth/authorize` before issuing an auth code |
@@ -186,6 +200,7 @@ All configuration is via environment variables:
 | `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX` | No | `false` | Allow `vault_reindex(full=true)` from MCP clients; keep this off for normal live operation |
 | `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | No | `4` | Debounce window for automatic incremental semantic updates when auto-reindex is enabled |
 | `VAULT_MAX_CONTENT_SIZE` | No | `1000000` | Maximum bytes allowed per write operation |
+| `VAULT_MAX_BINARY_SIZE` | No | `10485760` | Maximum bytes allowed for `vault_write_binary` after base64 decoding |
 | `VAULT_MAX_BATCH_SIZE` | No | `20` | Maximum files allowed in a batch read/frontmatter update |
 | `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard upper bound for search results |
 | `VAULT_DEFAULT_SEARCH_RESULTS` | No | `20` | Default search result count when the client does not specify one |
@@ -217,7 +232,7 @@ The Claude desktop and mobile apps can connect to remote MCP servers via OAuth.
 4. Enter the OAuth client ID and client secret you configured
 5. Claude will discover the OAuth endpoints automatically and open a browser window
 6. If authorize-login credentials are configured, sign in in the browser window (and approve if `VAULT_OAUTH_REQUIRE_APPROVAL=true`); otherwise the server auto-approves the authorization
-7. Claude now has access to all thirteen vault tools -- on desktop and mobile
+7. Claude now has access to the vault toolset -- on desktop and mobile
 
 For local-only use (no tunnel), point Claude at `http://localhost:8420`.
 

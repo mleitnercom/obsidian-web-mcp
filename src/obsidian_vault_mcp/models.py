@@ -8,6 +8,7 @@ from .config import (
     CONTEXT_LINES,
     DEFAULT_SEARCH_RESULTS,
     MAX_BATCH_SIZE,
+    MAX_BINARY_SIZE,
     MAX_CONTENT_SIZE,
     MAX_LIST_DEPTH,
     MAX_SEARCH_RESULTS,
@@ -52,6 +53,124 @@ class VaultWriteInput(BaseModel):
     merge_frontmatter: bool = Field(
         default=False,
         description="If true, merge YAML frontmatter with existing file's frontmatter instead of replacing",
+    )
+
+
+class VaultWriteBinaryInput(BaseModel):
+    """Write or overwrite an allowed binary file in the vault."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(
+        ...,
+        description="Relative path from vault root including filename and extension",
+        min_length=1,
+        max_length=500,
+    )
+    data: str = Field(
+        ...,
+        description="Base64-encoded binary content",
+        min_length=1,
+        max_length=((MAX_BINARY_SIZE + 2) // 3) * 4 + 1024,
+    )
+    media_type: Literal[
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "image/svg+xml",
+        "application/pdf",
+    ] = Field(
+        ...,
+        description="MIME type of the binary content",
+    )
+    overwrite: bool = Field(
+        default=False,
+        description="If true, allow replacing an existing file",
+    )
+    create_dirs: bool = Field(
+        default=True,
+        description="Create parent directories if they don't exist",
+    )
+
+
+class VaultStrReplaceInput(BaseModel):
+    """Replace exactly one unique string in an existing file."""
+
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+
+    path: str = Field(
+        ...,
+        description="Relative path from vault root",
+        min_length=1,
+        max_length=500,
+    )
+    old_str: str = Field(
+        ...,
+        description="Exact string to replace; must occur exactly once",
+        min_length=1,
+        max_length=MAX_CONTENT_SIZE,
+    )
+    new_str: str = Field(
+        default="",
+        description="Replacement string; empty string deletes the matched text",
+        max_length=MAX_CONTENT_SIZE,
+    )
+
+
+class VaultAnalyticsSummaryInput(BaseModel):
+    """Build a compact analytics summary for a vault path."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path_prefix: str | None = Field(
+        default=None,
+        description="Optional folder prefix to restrict the analysis",
+        max_length=500,
+    )
+    required_frontmatter: list[str] | None = Field(
+        default=None,
+        description="Optional required frontmatter fields to validate",
+        max_length=20,
+    )
+    max_examples: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Maximum example findings to include per category",
+    )
+
+
+class VaultAnalyticsFindingsInput(BaseModel):
+    """Return detailed findings for one analytics category."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    category: Literal[
+        "frontmatter_missing",
+        "required_frontmatter_missing",
+        "broken_wikilinks",
+        "suspicious_tag_variants",
+        "encoding_issues",
+    ] = Field(
+        ...,
+        description="Analytics finding category to return",
+    )
+    path_prefix: str | None = Field(
+        default=None,
+        description="Optional folder prefix to restrict the analysis",
+        max_length=500,
+    )
+    required_frontmatter: list[str] | None = Field(
+        default=None,
+        description="Optional required frontmatter fields to validate",
+        max_length=20,
+    )
+    max_results: int = Field(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of findings to return",
     )
 
 

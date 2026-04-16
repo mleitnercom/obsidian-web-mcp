@@ -8,6 +8,7 @@ from obsidian_vault_mcp.vault import (
     delete_directory_path,
     move_path,
     list_directory,
+    repair_markdown_encoding_issues,
     read_file,
     resolve_vault_path,
     scan_markdown_encoding_issues,
@@ -147,3 +148,26 @@ def test_scan_markdown_encoding_issues_reports_bad_files(vault_dir):
     issues = scan_markdown_encoding_issues()
 
     assert any(issue["path"] == "latin1-note.md" for issue in issues)
+
+
+def test_repair_markdown_encoding_issues_can_rewrite_latin1(vault_dir):
+    """Repair pass rewrites a non-UTF-8 markdown file as UTF-8."""
+    bad_file = vault_dir / "latin1-note.md"
+    bad_file.write_bytes("Datei\xe4nderungen\n".encode("latin-1"))
+
+    result = repair_markdown_encoding_issues(source_encoding="latin-1")
+
+    assert result["repaired_count"] == 1
+    assert bad_file.read_text(encoding="utf-8") == "Dateiänderungen\n"
+
+
+def test_repair_markdown_encoding_issues_supports_dry_run(vault_dir):
+    """Dry-run repair reports changes without mutating files."""
+    bad_file = vault_dir / "latin1-note.md"
+    original = "Datei\xe4nderungen\n".encode("latin-1")
+    bad_file.write_bytes(original)
+
+    result = repair_markdown_encoding_issues(source_encoding="latin-1", dry_run=True)
+
+    assert result["repaired_count"] == 1
+    assert bad_file.read_bytes() == original
