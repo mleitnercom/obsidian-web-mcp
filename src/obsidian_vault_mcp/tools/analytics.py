@@ -1,5 +1,6 @@
 """Vault analytics tools for hygiene and structural diagnostics."""
 
+import posixpath
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -27,15 +28,19 @@ def _iter_markdown_files(path_prefix: str = "") -> tuple[Path, list[Path]]:
     return root, files
 
 
-def _load_posts(path_prefix: str = "") -> tuple[list[dict], dict[str, list[str]]]:
+def _load_posts(path_prefix: str = "") -> tuple[list[dict], dict[str, list[str]], dict[str, str]]:
     vault_root = config.VAULT_PATH.resolve()
     _, files = _iter_markdown_files(path_prefix)
     posts: list[dict] = []
     basename_index: dict[str, list[str]] = defaultdict(list)
+    path_index: dict[str, str] = {}
 
     for path in files:
         rel = str(path.relative_to(vault_root)).replace("\\", "/")
         basename_index[path.stem.lower()].append(rel)
+        path_index[rel.lower()] = rel
+        if path.suffix.lower() == ".md":
+            path_index[path.with_suffix("").relative_to(vault_root).as_posix().lower()] = rel
         try:
             raw = path.read_text(encoding="utf-8")
             post = frontmatter.loads(raw)
@@ -55,7 +60,7 @@ def _load_posts(path_prefix: str = "") -> tuple[list[dict], dict[str, list[str]]
             }
         )
 
-    return posts, basename_index
+    return posts, basename_index, path_index
 
 
 def _extract_tags(frontmatter_data: dict) -> list[str]:
@@ -67,16 +72,87 @@ def _extract_tags(frontmatter_data: dict) -> list[str]:
     return []
 
 
-def _resolve_wikilink_target(target: str, basename_index: dict[str, list[str]]) -> bool:
+def _split_wikilink_target(target: str) -> str:
     clean = target.split("|", 1)[0].split("#", 1)[0].strip()
+    return clean.replace("\\", "/")
+
+
+def _normalize_relative_candidate(source_path: str, candidate: str) -> str | None:
+    if not candidate:
+        return ""
+
+    if candidate.startswith("/"):
+        normalized = posixpath.normpath(candidate.lstrip("/"))
+    elif candidate.startswith("./") or candidate.startswith("../"):
+        source_parent = posixpath.dirname(source_path)
+        normalized = posixpath.normpath(posixpath.join(source_parent, candidate))
+    else:
+        normalized = posixpath.normpath(candidate)
+
+    if normalized in ("", ".") or normalized.startswith("../"):
+        return None
+    return normalized
+
+
+def _candidate_lookup_key(relative_candidate: str) -> str:
+    if Path(relative_candidate).suffix:
+        return relative_candidate.lower()
+    return f"{relative_candidate}.md".lower()
+
+
+def _classify_wikilink_target(
+    source_path: str,
+    target: str,
+    basename_index: dict[str, list[str]],
+    path_index: dict[str, str],
+) -> dict:
+    clean = _split_wikilink_target(target)
     if not clean:
-        return True
-    candidate = clean.replace("\\", "/")
-    if "/" in candidate or "." in Path(candidate).name:
-        candidate_path = candidate if Path(candidate).suffix else f"{candidate}.md"
-        resolved = config.VAULT_PATH.resolve() / candidate_path
-        return resolved.exists()
-    return bool(basename_index.get(candidate.lower()))
+        return {"status": "ok_exact", "target": target}
+
+    relative_candidate = _normalize_relative_candidate(source_path, clean)
+    if relative_candidate is not None:
+        exact_match = path_index.get(_candidate_lookup_key(relative_candidate))
+        if exact_match:
+            return {
+                "status": "ok_exact",
+                "target": target,
+                "resolved_candidate": exact_match,
+            }
+
+    basename_matches = basename_index.get(Path(clean).stem.lower(), [])
+    if "/" not in clean and "." not in Path(clean).name:
+        if basename_matches:
+            result = {
+                "status": "ok_basename",
+                "target": target,
+                "match_count": len(basename_matches),
+            }
+            if len(basename_matches) == 1:
+                result["resolved_candidate"] = basename_matches[0]
+            else:
+                result["candidates"] = basename_matches[:5]
+            return result
+        return {"status": "missing_target", "target": target}
+
+    if basename_matches:
+        result = {
+            "status": "repairable_path_mismatch",
+            "target": target,
+            "match_count": len(basename_matches),
+        }
+        if len(basename_matches) == 1:
+            result["resolved_candidate"] = basename_matches[0]
+        else:
+            result["candidates"] = basename_matches[:5]
+        if relative_candidate is not None:
+            result["requested_candidate"] = relative_candidate
+        return result
+
+    result = {"status": "missing_target", "target": target}
+    if relative_candidate is not None:
+        result["requested_candidate"] = relative_candidate
+    return result
 
 
 def _frontmatter_missing(posts: list[dict]) -> list[dict]:
@@ -94,13 +170,27 @@ def _required_frontmatter_missing(posts: list[dict], required_fields: list[str])
     return findings
 
 
-def _broken_wikilinks(posts: list[dict], basename_index: dict[str, list[str]]) -> list[dict]:
+def _broken_wikilinks(
+    posts: list[dict],
+    basename_index: dict[str, list[str]],
+    path_index: dict[str, str],
+) -> list[dict]:
     findings = []
     for post in posts:
         for match in WIKILINK_RE.findall(post["text"]):
-            if not _resolve_wikilink_target(match, basename_index):
-                findings.append({"path": post["path"], "target": match})
+            classification = _classify_wikilink_target(post["path"], match, basename_index, path_index)
+            if not classification["status"].startswith("ok_"):
+                findings.append({"path": post["path"], **classification})
     return findings
+
+
+def _broken_wikilink_breakdown(findings: list[dict]) -> dict[str, int]:
+    counts = Counter(item["status"] for item in findings)
+    return {
+        "total": len(findings),
+        "repairable": counts.get("repairable_path_mismatch", 0),
+        "missing_target": counts.get("missing_target", 0),
+    }
 
 
 def _suspicious_tag_variants(posts: list[dict]) -> list[dict]:
@@ -134,11 +224,12 @@ def vault_analytics_summary(
 ) -> str:
     """Return a compact analytics summary for vault hygiene."""
     try:
-        posts, basename_index = _load_posts(path_prefix)
+        posts, basename_index, path_index = _load_posts(path_prefix)
         encoding_issues = scan_markdown_encoding_issues(path_prefix, max_results=1000)
         frontmatter_missing = _frontmatter_missing(posts)
         required_missing = _required_frontmatter_missing(posts, required_frontmatter or [])
-        broken_wikilinks = _broken_wikilinks(posts, basename_index)
+        broken_wikilinks = _broken_wikilinks(posts, basename_index, path_index)
+        broken_wikilink_breakdown = _broken_wikilink_breakdown(broken_wikilinks)
         suspicious_tags = _suspicious_tag_variants(posts)
 
         summary = {
@@ -147,7 +238,9 @@ def vault_analytics_summary(
             "findings": {
                 "frontmatter_missing": len(frontmatter_missing),
                 "required_frontmatter_missing": len(required_missing),
-                "broken_wikilinks": len(broken_wikilinks),
+                "broken_wikilinks": broken_wikilink_breakdown["total"],
+                "broken_wikilinks_repairable": broken_wikilink_breakdown["repairable"],
+                "broken_wikilinks_missing_target": broken_wikilink_breakdown["missing_target"],
                 "suspicious_tag_variants": len(suspicious_tags),
                 "encoding_issues": len(encoding_issues),
             },
@@ -172,12 +265,12 @@ def vault_analytics_findings(
 ) -> str:
     """Return detailed findings for one analytics category."""
     try:
-        posts, basename_index = _load_posts(path_prefix)
+        posts, basename_index, path_index = _load_posts(path_prefix)
         required_frontmatter = required_frontmatter or []
         category_map = {
             "frontmatter_missing": lambda: _frontmatter_missing(posts),
             "required_frontmatter_missing": lambda: _required_frontmatter_missing(posts, required_frontmatter),
-            "broken_wikilinks": lambda: _broken_wikilinks(posts, basename_index),
+            "broken_wikilinks": lambda: _broken_wikilinks(posts, basename_index, path_index),
             "suspicious_tag_variants": lambda: _suspicious_tag_variants(posts),
             "encoding_issues": lambda: scan_markdown_encoding_issues(path_prefix, max_results=max_results),
         }

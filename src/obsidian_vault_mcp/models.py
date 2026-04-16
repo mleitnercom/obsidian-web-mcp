@@ -116,6 +116,10 @@ class VaultStrReplaceInput(BaseModel):
         description="Replacement string; empty string deletes the matched text",
         max_length=MAX_CONTENT_SIZE,
     )
+    replace_all: bool = Field(
+        default=False,
+        description="If true, replace every occurrence of old_str instead of requiring a unique match",
+    )
 
 
 class VaultAnalyticsSummaryInput(BaseModel):

@@ -148,6 +148,18 @@ def test_vault_str_replace_rejects_multiple_matches(vault_dir):
     assert result["occurrences"] == 2
 
 
+def test_vault_str_replace_can_replace_all_matches(vault_dir):
+    """vault_str_replace can replace all occurrences when explicitly requested."""
+    (vault_dir / "repeated.md").write_text("Mail\nMail\n", encoding="utf-8")
+
+    result = json.loads(vault_str_replace("repeated.md", "Mail", "mail", replace_all=True))
+
+    assert "error" not in result
+    assert result["replace_all"] is True
+    assert result["occurrences_found"] == 2
+    assert (vault_dir / "repeated.md").read_text(encoding="utf-8") == "mail\nmail\n"
+
+
 def test_vault_analytics_summary_reports_hygiene_findings(vault_dir):
     """vault_analytics_summary returns compact counts and examples."""
     (vault_dir / "missing-frontmatter.md").write_text("plain text\n", encoding="utf-8")
@@ -168,6 +180,44 @@ def test_vault_analytics_findings_returns_broken_wikilinks(vault_dir):
     assert "error" not in result
     assert result["category"] == "broken_wikilinks"
     assert any(item["target"] == "Missing Target" for item in result["results"])
+
+
+def test_vault_analytics_handles_source_relative_wikilinks(vault_dir):
+    """Source-relative wikilinks should not be flagged when the target exists."""
+    (vault_dir / "target-note.md").write_text("target\n", encoding="utf-8")
+    source_dir = vault_dir / "reports"
+    source_dir.mkdir()
+    (source_dir / "report.md").write_text("[[../target-note]]\n", encoding="utf-8")
+
+    result = json.loads(vault_analytics_summary())
+
+    assert "error" not in result
+    assert result["findings"]["broken_wikilinks"] == 0
+    assert result["findings"]["broken_wikilinks_repairable"] == 0
+    assert result["findings"]["broken_wikilinks_missing_target"] == 0
+
+
+def test_vault_analytics_classifies_repairable_and_missing_wikilinks(vault_dir):
+    """Broken-wikilink analytics should distinguish repairable path mismatches from missing targets."""
+    target_dir = vault_dir / "projects"
+    target_dir.mkdir()
+    (target_dir / "actual-target.md").write_text("exists\n", encoding="utf-8")
+    (vault_dir / "repairable-link.md").write_text("[[wrong/actual-target]]\n", encoding="utf-8")
+    (vault_dir / "missing-link.md").write_text("[[Missing Target]]\n", encoding="utf-8")
+
+    summary = json.loads(vault_analytics_summary())
+    findings = json.loads(vault_analytics_findings("broken_wikilinks", max_results=10))
+
+    assert summary["findings"]["broken_wikilinks"] == 2
+    assert summary["findings"]["broken_wikilinks_repairable"] == 1
+    assert summary["findings"]["broken_wikilinks_missing_target"] == 1
+
+    repairable = next(item for item in findings["results"] if item["target"] == "wrong/actual-target")
+    missing = next(item for item in findings["results"] if item["target"] == "Missing Target")
+
+    assert repairable["status"] == "repairable_path_mismatch"
+    assert repairable["resolved_candidate"] == "projects/actual-target.md"
+    assert missing["status"] == "missing_target"
 
 
 def test_vault_search_finds_text(vault_dir):

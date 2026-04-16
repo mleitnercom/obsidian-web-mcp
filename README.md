@@ -4,7 +4,7 @@ Production-hardened fork of `obsidian-web-mcp` for MCP access to an Obsidian vau
 
 ## Release
 
-Latest: [v0.5.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.5.0) (2026-04-16).
+Latest: [v0.5.1](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.5.1) (2026-04-17).
 
 ## Status
 
@@ -89,12 +89,12 @@ This is a server that provides network access to your personal notes. Security i
 |------|-------------|
 | `vault_read` | Read a file, returning content, metadata, and parsed YAML frontmatter |
 | `vault_batch_read` | Read multiple files in one call; handles missing files gracefully |
-| `vault_analytics_summary` | Return a compact hygiene summary covering frontmatter, wikilinks, tags, and encoding issues |
-| `vault_analytics_findings` | Return detailed findings for one analytics category such as broken wikilinks or encoding issues |
+| `vault_analytics_summary` | Return a compact hygiene summary covering frontmatter, wikilinks, tags, and encoding issues, including a broken-link breakdown |
+| `vault_analytics_findings` | Return detailed findings for one analytics category such as broken wikilinks or encoding issues, including wikilink classification details |
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
 | `vault_write_binary` | Write an allowed binary file such as PNG, JPEG, WebP, GIF, SVG, or PDF from base64 input |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content |
-| `vault_str_replace` | Replace one unique exact string in a file without rewriting the whole note body in the request |
+| `vault_str_replace` | Replace one exact string in a file without rewriting the whole note body in the request; optional `replace_all=true` supports file-local bulk normalization |
 | `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
 | `vault_semantic_search` | Optional semantic, keyword, or hybrid search backed by a persistent FAISS index (supports `path_prefix`, `filter_tags`, `search_mode`, `min_score`) |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
@@ -163,7 +163,7 @@ vault-semantic doctor --scan-utf8 --report-path ./reports/utf8-doctor.json
 vault-semantic doctor --repair-utf8 --repair-encoding cp1252 --dry-run
 ```
 
-For vault hygiene beyond pure search, the server also exposes analytics endpoints for frontmatter gaps, broken wikilinks, suspicious tag variants, and encoding issues.
+For vault hygiene beyond pure search, the server also exposes analytics endpoints for frontmatter gaps, broken wikilinks, suspicious tag variants, and encoding issues. Broken-link analytics now distinguish raw path mismatches that are likely repairable from targets that appear to be genuinely missing.
 
 ## Configuration
 

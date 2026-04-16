@@ -3,6 +3,22 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
+## [v0.5.1] - 2026-04-17
+
+Small follow-up release focused on making analytics output more actionable and string replacement more useful for real vault-normalization work.
+
+### Features
+- Extend `vault_str_replace` with optional `replace_all=true` so file-local normalization passes no longer require repeated single-hit calls.
+
+### Analytics
+- Fix wikilink analysis so source-relative links like `[[../target-note]]` are resolved against the note's own folder instead of always against the vault root.
+- Classify broken wikilink findings into more useful buckets, including `repairable_path_mismatch` and `missing_target`.
+- Expand `vault_analytics_summary` with a broken-link breakdown (`broken_wikilinks_repairable`, `broken_wikilinks_missing_target`) while keeping the overall count.
+
+### Tests / Documentation
+- Add regression coverage for `replace_all`, source-relative wikilinks, and repairable-vs-missing broken-link classification.
+- Refresh the README release reference and tool descriptions for the new replace and analytics behavior.
+
 ## [v0.5.0] - 2026-04-16
 
 This release turns the current fork backlog into a practical operator-focused package: better write primitives, better health visibility, better vault hygiene workflows, and a first read-only analytics layer.

@@ -140,15 +140,15 @@ def vault_write_binary(
         return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type})
 
 
-def vault_str_replace(path: str, old_str: str, new_str: str = "") -> str:
-    """Replace a unique exact string in a file."""
+def vault_str_replace(path: str, old_str: str, new_str: str = "", replace_all: bool = False) -> str:
+    """Replace an exact string in a file, optionally across all occurrences."""
     try:
         content, _ = read_file(path)
         occurrences = content.count(old_str)
 
         if occurrences == 0:
             return vault_json_dumps({"error": "old_str not found in file", "path": path})
-        if occurrences > 1:
+        if not replace_all and occurrences > 1:
             return vault_json_dumps(
                 {
                     "error": f"old_str found {occurrences} times, must be unique",
@@ -158,7 +158,7 @@ def vault_str_replace(path: str, old_str: str, new_str: str = "") -> str:
             )
 
         size_before = len(content.encode("utf-8"))
-        new_content = content.replace(old_str, new_str, 1)
+        new_content = content.replace(old_str, new_str) if replace_all else content.replace(old_str, new_str, 1)
         size_after = len(new_content.encode("utf-8"))
         changed = new_content != content
 
@@ -170,9 +170,10 @@ def vault_str_replace(path: str, old_str: str, new_str: str = "") -> str:
                 "path": path,
                 "replaced": True,
                 "changed": changed,
-                "occurrences_found": 1,
+                "occurrences_found": occurrences,
                 "size_before": size_before,
                 "size_after": size_after,
+                "replace_all": replace_all,
             }
         )
     except FileNotFoundError:
