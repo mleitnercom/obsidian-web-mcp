@@ -167,6 +167,9 @@ def test_oauth_registered_clients_migrate_legacy_plaintext_store(monkeypatch, tm
     )
 
     legacy_secret = "legacy-secret"
+    # codeql[py/clear-text-storage-sensitive-data]
+    # Intentional legacy fixture: this test verifies migration from a plaintext
+    # persisted client_secret to hashed-at-rest storage on load.
     oauth.config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH.write_text(
         json.dumps(
             {
