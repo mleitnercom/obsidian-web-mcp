@@ -192,6 +192,34 @@ def test_oauth_registered_clients_cleanup_persists(monkeypatch, tmp_path):
     assert registration["client_id"] not in payload
 
 
+def test_oauth_registered_clients_do_not_expire_when_ttl_is_zero(monkeypatch, tmp_path):
+    """TTL=0 disables automatic expiry of persisted dynamic client registrations."""
+    reset_rate_limits()
+    oauth._auth_codes.clear()
+    oauth._reset_registered_client_store_for_tests()
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS", True)
+    monkeypatch.setattr(
+        oauth.config,
+        "VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH",
+        tmp_path / "oauth_registered_clients.json",
+    )
+    monkeypatch.setattr(config, "REGISTERED_CLIENT_TTL_SECONDS", 0)
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        registration = client.post(
+            "/oauth/register",
+            json={"redirect_uris": ["https://chatgpt.com/connector/oauth/callback"]},
+        ).json()
+
+    oauth._registered_clients[registration["client_id"]]["created_at"] = 0.0
+    oauth._cleanup_registered_clients()
+    payload = json.loads(oauth.config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH.read_text(encoding="utf-8"))
+
+    assert registration["client_id"] in oauth._registered_clients
+    assert registration["client_id"] in payload
+
+
 def test_oauth_registered_clients_migrate_legacy_plaintext_store(monkeypatch, tmp_path):
     """Legacy persisted stores with plaintext client_secret are migrated on load."""
     reset_rate_limits()

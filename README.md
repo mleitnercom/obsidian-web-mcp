@@ -212,8 +212,8 @@ All configuration is via environment variables:
 | `VAULT_RATE_LIMIT_OAUTH_AUTHORIZE` | No | `30` | Per-IP `/oauth/authorize` requests per minute |
 | `VAULT_RATE_LIMIT_OAUTH_TOKEN` | No | `30` | Per-IP `/oauth/token` requests per minute |
 | `VAULT_RATE_LIMIT_OAUTH_REGISTER` | No | `10` | Per-IP `/oauth/register` requests per minute |
-| `VAULT_REGISTERED_CLIENT_TTL_SECONDS` | No | `3600` | How long dynamic OAuth client registrations stay valid in memory |
-| `VAULT_MAX_REGISTERED_CLIENTS` | No | `128` | Maximum retained dynamic OAuth client registrations in memory |
+| `VAULT_REGISTERED_CLIENT_TTL_SECONDS` | No | `0` | How long dynamic OAuth client registrations stay valid; `0` disables automatic expiry |
+| `VAULT_MAX_REGISTERED_CLIENTS` | No | `128` | Maximum retained dynamic OAuth client registrations before the oldest entries are trimmed |
 
 Generate tokens with: `python -c "import secrets; print(secrets.token_hex(32))"`
 

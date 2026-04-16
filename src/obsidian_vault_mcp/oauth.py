@@ -72,14 +72,15 @@ def _cleanup_registered_clients() -> None:
     """Expire old dynamic client registrations and cap total retained clients."""
     changed = False
     now = time.time()
-    expired = [
-        client_id
-        for client_id, data in _registered_clients.items()
-        if (now - data.get("created_at", now)) > config.REGISTERED_CLIENT_TTL_SECONDS
-    ]
-    for client_id in expired:
-        del _registered_clients[client_id]
-        changed = True
+    if config.REGISTERED_CLIENT_TTL_SECONDS > 0:
+        expired = [
+            client_id
+            for client_id, data in _registered_clients.items()
+            if (now - data.get("created_at", now)) > config.REGISTERED_CLIENT_TTL_SECONDS
+        ]
+        for client_id in expired:
+            del _registered_clients[client_id]
+            changed = True
 
     while len(_registered_clients) >= config.MAX_REGISTERED_CLIENTS and _registered_clients:
         oldest_client_id = min(

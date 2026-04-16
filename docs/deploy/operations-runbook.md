@@ -6,6 +6,7 @@ This is the practical operator path for the current production-oriented fork.
 
 - `GET /health` returns a compact JSON status snapshot without bearer auth.
 - It includes vault reachability, frontmatter-index state, semantic-engine state, heartbeat state, and uptime.
+- Open it directly in a browser if you just want a quick operator check.
 - If you want push-style monitoring, set:
 
 ```ini
@@ -55,6 +56,12 @@ Recommended operator order:
 - Keep `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX=false` in normal live operation.
 - Prefer `vault-semantic reindex --mode full` manually or via a nightly timer.
 - Leave `VAULT_SEMANTIC_AUTO_REINDEX=0` on stability-sensitive systems unless you explicitly want watcher-driven semantic refreshes.
+
+## OAuth Client Registrations
+
+- Dynamic OAuth client registrations are persisted by default.
+- `VAULT_REGISTERED_CLIENT_TTL_SECONDS=0` disables automatic expiry and is the recommended single-user setting for stable ChatGPT and Claude reconnects.
+- Keep `VAULT_MAX_REGISTERED_CLIENTS` as the safety cap so very old registrations can still be trimmed if the store ever grows unexpectedly.
 
 ## Vault Analytics
 
