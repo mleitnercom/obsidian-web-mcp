@@ -81,18 +81,16 @@ def _oauth_health_payload() -> dict[str, Any]:
 def _log_oauth_runtime_summary() -> None:
     """Log the OAuth settings that determine restart-safe reconnect behavior."""
     oauth_status = _oauth_health_payload()
-    logger.info(
-        "OAuth runtime: public_base_url_configured=%s persistence_enabled=%s "
-        "store=%s store_exists=%s ttl_seconds=%s max_registered_clients=%s "
-        "restart_stable_reconnects=%s",
-        oauth_status["public_base_url_configured"],
-        oauth_status["registered_client_persistence_enabled"],
-        oauth_status["registered_client_store_path"],
-        oauth_status["registered_client_store_exists"],
-        oauth_status["registered_client_ttl_seconds"],
-        oauth_status["max_registered_clients"],
-        oauth_status["restart_stable_reconnects"],
-    )
+    if oauth_status["restart_stable_reconnects"]:
+        logger.info(
+            "OAuth runtime is configured for restart-stable connector reconnects; "
+            "use the health endpoint for detailed status"
+        )
+    else:
+        logger.info(
+            "OAuth runtime may require connector re-registration after restart or expiry; "
+            "use the health endpoint for detailed status"
+        )
 
     if not oauth_status["registered_client_persistence_enabled"]:
         logger.warning(
@@ -101,10 +99,9 @@ def _log_oauth_runtime_summary() -> None:
         )
     elif oauth_status["registered_client_ttl_seconds"] != 0:
         logger.warning(
-            "OAuth registered-client TTL is %ss; connectors may require "
+            "OAuth registered-client TTL is non-zero; connectors may require "
             "re-registration after expiry. Set "
             "VAULT_REGISTERED_CLIENT_TTL_SECONDS=0 for stable reconnects",
-            oauth_status["registered_client_ttl_seconds"],
         )
 
     if not oauth_status["public_base_url_configured"]:
@@ -115,8 +112,8 @@ def _log_oauth_runtime_summary() -> None:
 
     if oauth_status["registered_client_persistence_enabled"] and not oauth_status["registered_client_store_exists"]:
         logger.info(
-            "No persisted OAuth client registration store found yet at %s",
-            oauth_status["registered_client_store_path"],
+            "No persisted OAuth client registration store found yet; "
+            "it will be created on first dynamic client registration",
         )
 
 
