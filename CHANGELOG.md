@@ -3,7 +3,7 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
-## [Unreleased]
+## [v0.5.2] - 2026-04-17
 
 ### Features
 - Add direct PDF text extraction to `vault_read` and `vault_batch_read` via `pypdf`, including basic PDF metadata in the response.
