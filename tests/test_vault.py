@@ -57,6 +57,15 @@ def test_read_missing_file(vault_dir):
         read_file("nonexistent.md")
 
 
+def test_read_file_rejects_binary_pdf(vault_dir):
+    """Known binary files should fail with a clear error before UTF-8 decoding."""
+    pdf_file = vault_dir / "sample.pdf"
+    pdf_file.write_bytes(b"%PDF-1.7\n%\xb5\xb5\xb5\xb5\n")
+
+    with pytest.raises(ValueError, match=r"Binary file type \.pdf is not supported"):
+        read_file("sample.pdf")
+
+
 def test_write_atomic_new_file(vault_dir):
     """Write a new file and verify it exists."""
     is_new, size = write_file_atomic("new-file.md", "# Hello\n\nNew content.")

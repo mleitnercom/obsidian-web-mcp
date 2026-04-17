@@ -60,6 +60,66 @@ def _truncate_log_value(value: Any, limit: int = 120) -> str:
     return text
 
 
+def _oauth_health_payload() -> dict[str, Any]:
+    """Expose the restart-relevant OAuth runtime configuration."""
+    store_path = config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH
+    restart_stable = (
+        config.VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS
+        and config.REGISTERED_CLIENT_TTL_SECONDS == 0
+    )
+    return {
+        "public_base_url_configured": bool(config.VAULT_PUBLIC_BASE_URL),
+        "registered_client_persistence_enabled": config.VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS,
+        "registered_client_store_path": str(store_path),
+        "registered_client_store_exists": store_path.exists(),
+        "registered_client_ttl_seconds": config.REGISTERED_CLIENT_TTL_SECONDS,
+        "max_registered_clients": config.MAX_REGISTERED_CLIENTS,
+        "restart_stable_reconnects": restart_stable,
+    }
+
+
+def _log_oauth_runtime_summary() -> None:
+    """Log the OAuth settings that determine restart-safe reconnect behavior."""
+    oauth_status = _oauth_health_payload()
+    logger.info(
+        "OAuth runtime: public_base_url_configured=%s persistence_enabled=%s "
+        "store=%s store_exists=%s ttl_seconds=%s max_registered_clients=%s "
+        "restart_stable_reconnects=%s",
+        oauth_status["public_base_url_configured"],
+        oauth_status["registered_client_persistence_enabled"],
+        oauth_status["registered_client_store_path"],
+        oauth_status["registered_client_store_exists"],
+        oauth_status["registered_client_ttl_seconds"],
+        oauth_status["max_registered_clients"],
+        oauth_status["restart_stable_reconnects"],
+    )
+
+    if not oauth_status["registered_client_persistence_enabled"]:
+        logger.warning(
+            "OAuth registered-client persistence is disabled; connectors may "
+            "require re-registration after every server restart"
+        )
+    elif oauth_status["registered_client_ttl_seconds"] != 0:
+        logger.warning(
+            "OAuth registered-client TTL is %ss; connectors may require "
+            "re-registration after expiry. Set "
+            "VAULT_REGISTERED_CLIENT_TTL_SECONDS=0 for stable reconnects",
+            oauth_status["registered_client_ttl_seconds"],
+        )
+
+    if not oauth_status["public_base_url_configured"]:
+        logger.info(
+            "VAULT_PUBLIC_BASE_URL is not set; explicit configuration is "
+            "recommended behind tunnels and reverse proxies for stable OAuth discovery"
+        )
+
+    if oauth_status["registered_client_persistence_enabled"] and not oauth_status["registered_client_store_exists"]:
+        logger.info(
+            "No persisted OAuth client registration store found yet at %s",
+            oauth_status["registered_client_store_path"],
+        )
+
+
 def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
     """Run one MCP tool call with consistent start/end/error logging."""
     started = time.monotonic()
@@ -150,6 +210,7 @@ def _health_payload() -> dict:
             "chunk_count": semantic_status["chunk_count"],
             "reason": semantic_status["reason"],
         },
+        "oauth": _oauth_health_payload(),
         "heartbeat": dict(_heartbeat_state),
         "uptime_seconds": round(time.monotonic() - _server_started_at, 3),
     }
@@ -684,6 +745,7 @@ def main():
         logger.warning("VAULT_MCP_TOKEN is not set -- auth will reject all requests")
 
     try:
+        _log_oauth_runtime_summary()
         app = build_app()
         logger.info(f"Starting server on port {VAULT_MCP_PORT} with bearer auth + OAuth")
 

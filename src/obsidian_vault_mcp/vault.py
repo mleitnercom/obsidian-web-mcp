@@ -10,6 +10,35 @@ from pathlib import Path
 
 from . import config
 
+UNSUPPORTED_BINARY_EXTENSIONS = frozenset({
+    ".7z",
+    ".avi",
+    ".bmp",
+    ".doc",
+    ".docx",
+    ".eml",
+    ".gif",
+    ".gz",
+    ".jpeg",
+    ".jpg",
+    ".mov",
+    ".mp3",
+    ".mp4",
+    ".msg",
+    ".pdf",
+    ".png",
+    ".ppt",
+    ".pptx",
+    ".rar",
+    ".tar",
+    ".tiff",
+    ".wav",
+    ".webp",
+    ".xls",
+    ".xlsx",
+    ".zip",
+})
+
 
 class _DateAwareEncoder(json.JSONEncoder):
     """JSON encoder that serialises date/datetime objects to ISO 8601 strings.
@@ -61,6 +90,16 @@ def _iso_timestamp(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
+def _reject_unsupported_binary(path: Path) -> None:
+    """Reject known binary formats before attempting UTF-8 text reads."""
+    suffix = path.suffix.lower()
+    if suffix in UNSUPPORTED_BINARY_EXTENSIONS:
+        raise ValueError(
+            f"Binary file type {suffix} is not supported by vault_read. "
+            "Use a dedicated binary/PDF reader."
+        )
+
+
 def read_file(relative_path: str) -> tuple[str, dict]:
     """Read a file and return (content, metadata).
 
@@ -70,6 +109,8 @@ def read_file(relative_path: str) -> tuple[str, dict]:
 
     if not path.is_file():
         raise FileNotFoundError(f"Not a file: {relative_path}")
+
+    _reject_unsupported_binary(path)
 
     stat = path.stat()
     content = path.read_text(encoding="utf-8")

@@ -63,6 +63,19 @@ Recommended operator order:
 - `VAULT_REGISTERED_CLIENT_TTL_SECONDS=0` disables automatic expiry and is the recommended single-user setting for stable ChatGPT and Claude reconnects.
 - Keep `VAULT_MAX_REGISTERED_CLIENTS` as the safety cap so very old registrations can still be trimmed if the store ever grows unexpectedly.
 
+Restart-safe checklist:
+
+1. Keep `VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS=true`.
+2. Keep `VAULT_REGISTERED_CLIENT_TTL_SECONDS=0`.
+3. Set `VAULT_PUBLIC_BASE_URL` explicitly when you run behind Cloudflare Tunnel or another reverse proxy.
+4. Keep `VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH` on persistent disk, not in a temp directory.
+5. After a restart, open `GET /health` and confirm the `oauth` block reports:
+   - `registered_client_persistence_enabled=true`
+   - `registered_client_store_exists=true`
+   - `restart_stable_reconnects=true`
+
+If those values are correct and the connector still asks for reauthentication after a restart, the remaining problem is likely client-side reconnect behavior rather than missing server-side persistence.
+
 ## Vault Analytics
 
 Use analytics for read-only hygiene checks, not as an auto-fix path.

@@ -41,6 +41,19 @@ def test_vault_read_serializes_yaml_date_frontmatter(vault_dir):
     assert result["frontmatter"]["created"] == "2026-04-05"
 
 
+def test_vault_read_rejects_binary_pdf(vault_dir):
+    """vault_read should return a clear binary-file error for PDFs."""
+    (vault_dir / "sample.pdf").write_bytes(b"%PDF-1.7\n%\xb5\xb5\xb5\xb5\n")
+
+    result = json.loads(vault_read("sample.pdf"))
+
+    assert result["path"] == "sample.pdf"
+    assert result["error"] == (
+        "Binary file type .pdf is not supported by vault_read. "
+        "Use a dedicated binary/PDF reader."
+    )
+
+
 def test_vault_search_frontmatter_excerpt_serializes_datetime(vault_dir):
     """vault_search serializes datetime values found in frontmatter excerpts."""
     post = frontmatter.Post("Searchable content.\n")
@@ -236,6 +249,24 @@ def test_vault_batch_read_handles_missing(vault_dir):
     assert result["found"] == 1
     assert result["missing"] == 1
     assert "error" in result["files"][1]
+
+
+def test_vault_batch_read_reports_binary_pdf_error(vault_dir):
+    """vault_batch_read should report binary-file errors without aborting the batch."""
+    (vault_dir / "sample.pdf").write_bytes(b"%PDF-1.7\n%\xb5\xb5\xb5\xb5\n")
+
+    result = json.loads(vault_batch_read(
+        ["test-note.md", "sample.pdf"],
+        include_content=True,
+    ))
+
+    assert result["found"] == 1
+    assert result["missing"] == 1
+    pdf_entry = next(item for item in result["files"] if item["path"] == "sample.pdf")
+    assert pdf_entry["error"] == (
+        "Binary file type .pdf is not supported by vault_read. "
+        "Use a dedicated binary/PDF reader."
+    )
 
 
 def test_vault_list_returns_items(vault_dir):

@@ -236,6 +236,15 @@ The Claude desktop and mobile apps can connect to remote MCP servers via OAuth.
 
 For local-only use (no tunnel), point Claude at `http://localhost:8420`.
 
+If Claude or ChatGPT asks to reauthenticate after a server restart, verify these first:
+
+1. `VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS=true`
+2. `VAULT_REGISTERED_CLIENT_TTL_SECONDS=0`
+3. `VAULT_PUBLIC_BASE_URL` is set explicitly for your public tunnel hostname
+4. `GET /health` shows `oauth.registered_client_store_exists=true` and `oauth.restart_stable_reconnects=true`
+
+This fork now exposes those restart-relevant OAuth settings in `/health` and logs them once during startup so operator mistakes are easier to spot.
+
 ### Connecting to ChatGPT
 
 ChatGPT can use the same deployed MCP endpoint, but connector behavior may vary a bit more by rollout and client version than Claude does.

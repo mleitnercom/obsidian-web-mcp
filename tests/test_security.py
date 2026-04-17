@@ -652,6 +652,8 @@ def test_build_app_exposes_health_without_bearer(vault_dir, monkeypatch):
     assert body["status"] == "ok"
     assert body["vault"]["exists"] is True
     assert body["frontmatter_index"]["active"] is False
+    assert body["oauth"]["registered_client_persistence_enabled"] is True
+    assert "restart_stable_reconnects" in body["oauth"]
     assert "heartbeat" in body
     assert "uptime_seconds" in body
 
@@ -674,6 +676,33 @@ def test_health_reflects_heartbeat_configuration(vault_dir, monkeypatch):
     assert body["heartbeat"]["enabled"] is True
     assert body["heartbeat"]["url"] == "https://hc.example/ping"
     assert body["heartbeat"]["interval_seconds"] == 90
+
+
+def test_health_reflects_oauth_restart_configuration(vault_dir, monkeypatch, tmp_path):
+    """Health payload should expose restart-relevant OAuth persistence settings."""
+    reset_rate_limits()
+    base_app = Starlette()
+    store_path = tmp_path / "oauth_registered_clients.json"
+    store_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+    monkeypatch.setattr(server.config, "VAULT_PUBLIC_BASE_URL", "https://vault.example")
+    monkeypatch.setattr(server.config, "VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS", True)
+    monkeypatch.setattr(server.config, "VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH", store_path)
+    monkeypatch.setattr(server.config, "REGISTERED_CLIENT_TTL_SECONDS", 0)
+    monkeypatch.setattr(server.config, "MAX_REGISTERED_CLIENTS", 128)
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    body = response.json()
+    assert body["oauth"]["public_base_url_configured"] is True
+    assert body["oauth"]["registered_client_store_path"] == str(store_path)
+    assert body["oauth"]["registered_client_store_exists"] is True
+    assert body["oauth"]["registered_client_ttl_seconds"] == 0
+    assert body["oauth"]["restart_stable_reconnects"] is True
 
 
 def test_build_app_exposes_oauth_discovery_aliases_without_bearer(vault_dir, monkeypatch):
