@@ -14,6 +14,7 @@ from obsidian_vault_mcp.vault import (
     scan_markdown_encoding_issues,
     write_file_atomic,
 )
+from .conftest import build_simple_pdf_bytes
 
 
 def test_resolve_valid_path(vault_dir):
@@ -58,12 +59,18 @@ def test_read_missing_file(vault_dir):
 
 
 def test_read_file_rejects_binary_pdf(vault_dir):
-    """Known binary files should fail with a clear error before UTF-8 decoding."""
+    """PDF files should be read through the dedicated extractor path."""
     pdf_file = vault_dir / "sample.pdf"
-    pdf_file.write_bytes(b"%PDF-1.7\n%\xb5\xb5\xb5\xb5\n")
+    pdf_file.write_bytes(build_simple_pdf_bytes("Hello PDF"))
 
-    with pytest.raises(ValueError, match=r"Binary file type \.pdf is not supported"):
-        read_file("sample.pdf")
+    content, metadata = read_file("sample.pdf")
+
+    assert "Hello PDF" in content
+    assert metadata["type"] == "pdf"
+    assert metadata["content_source"] == "pdf_text_extraction"
+    assert metadata["pages"] == 1
+    assert metadata["pages_with_text"] == 1
+    assert metadata["extractable_text"] is True
 
 
 def test_write_atomic_new_file(vault_dir):

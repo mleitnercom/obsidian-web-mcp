@@ -8,6 +8,7 @@ from datetime import date, datetime
 import pytest
 import frontmatter
 
+from .conftest import build_simple_pdf_bytes
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
 from obsidian_vault_mcp.tools.write import (
     vault_batch_frontmatter_update,
@@ -41,17 +42,19 @@ def test_vault_read_serializes_yaml_date_frontmatter(vault_dir):
     assert result["frontmatter"]["created"] == "2026-04-05"
 
 
-def test_vault_read_rejects_binary_pdf(vault_dir):
-    """vault_read should return a clear binary-file error for PDFs."""
-    (vault_dir / "sample.pdf").write_bytes(b"%PDF-1.7\n%\xb5\xb5\xb5\xb5\n")
+def test_vault_read_extracts_pdf_text(vault_dir):
+    """vault_read should extract text and metadata from PDFs."""
+    (vault_dir / "sample.pdf").write_bytes(build_simple_pdf_bytes("Hello PDF"))
 
     result = json.loads(vault_read("sample.pdf"))
 
+    assert "error" not in result
     assert result["path"] == "sample.pdf"
-    assert result["error"] == (
-        "Binary file type .pdf is not supported by vault_read. "
-        "Use a dedicated binary/PDF reader."
-    )
+    assert "Hello PDF" in result["content"]
+    assert result["frontmatter"] is None
+    assert result["metadata"]["type"] == "pdf"
+    assert result["metadata"]["pages"] == 1
+    assert result["metadata"]["pages_with_text"] == 1
 
 
 def test_vault_search_frontmatter_excerpt_serializes_datetime(vault_dir):
@@ -251,20 +254,30 @@ def test_vault_batch_read_handles_missing(vault_dir):
     assert "error" in result["files"][1]
 
 
-def test_vault_batch_read_reports_binary_pdf_error(vault_dir):
-    """vault_batch_read should report binary-file errors without aborting the batch."""
-    (vault_dir / "sample.pdf").write_bytes(b"%PDF-1.7\n%\xb5\xb5\xb5\xb5\n")
+def test_vault_batch_read_includes_pdf_text(vault_dir):
+    """vault_batch_read should include PDF extraction results without aborting the batch."""
+    (vault_dir / "sample.pdf").write_bytes(build_simple_pdf_bytes("Hello PDF"))
 
     result = json.loads(vault_batch_read(
         ["test-note.md", "sample.pdf"],
         include_content=True,
     ))
 
-    assert result["found"] == 1
-    assert result["missing"] == 1
+    assert result["found"] == 2
+    assert result["missing"] == 0
     pdf_entry = next(item for item in result["files"] if item["path"] == "sample.pdf")
-    assert pdf_entry["error"] == (
-        "Binary file type .pdf is not supported by vault_read. "
+    assert "Hello PDF" in pdf_entry["content"]
+    assert pdf_entry["metadata"]["type"] == "pdf"
+
+
+def test_vault_read_rejects_other_binary_file_types(vault_dir):
+    """Known unsupported binary formats should still return a clear error."""
+    (vault_dir / "image.png").write_bytes(b"\x89PNG\r\n\x1a\nfakepng")
+
+    result = json.loads(vault_read("image.png"))
+
+    assert result["error"] == (
+        "Binary file type .png is not supported by vault_read. "
         "Use a dedicated binary/PDF reader."
     )
 

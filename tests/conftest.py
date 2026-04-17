@@ -7,6 +7,37 @@ from pathlib import Path
 import pytest
 
 
+def build_simple_pdf_bytes(text: str) -> bytes:
+    """Build a tiny one-page PDF with extractable text for tests."""
+    escaped = (
+        text.replace("\\", "\\\\")
+        .replace("(", "\\(")
+        .replace(")", "\\)")
+    )
+    stream = f"BT\n/F1 24 Tf\n72 100 Td\n({escaped}) Tj\nET".encode("latin-1")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
+    ]
+
+    parts = [b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"]
+    offsets: list[int] = []
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(sum(len(part) for part in parts))
+        parts.append(f"{index} 0 obj\n".encode("ascii") + obj + b"\nendobj\n")
+
+    xref_offset = sum(len(part) for part in parts)
+    xref = [b"xref\n0 6\n", b"0000000000 65535 f \n"]
+    xref.extend(f"{offset:010d} 00000 n \n".encode("ascii") for offset in offsets)
+    parts.extend(xref)
+    parts.append(b"trailer\n<< /Size 6 /Root 1 0 R >>\n")
+    parts.append(f"startxref\n{xref_offset}\n%%EOF\n".encode("ascii"))
+    return b"".join(parts)
+
+
 @pytest.fixture
 def vault_dir(tmp_path, monkeypatch):
     """Create a temporary vault directory with sample files."""

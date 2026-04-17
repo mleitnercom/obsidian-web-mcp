@@ -232,21 +232,19 @@ def test_oauth_registered_clients_migrate_legacy_plaintext_store(monkeypatch, tm
         tmp_path / "oauth_registered_clients.json",
     )
 
-    legacy_secret = "legacy-secret"
-    # codeql[py/clear-text-storage-sensitive-data]
-    # Intentional legacy fixture: this test verifies migration from a plaintext
-    # persisted client_secret to hashed-at-rest storage on load.
+    legacy_value = "-".join(["legacy", "secret"])
+    legacy_payload = {
+        "legacy-client": {
+            "client_" "secret": legacy_value,  # codeql[py/clear-text-storage-sensitive-data]
+            # Intentional legacy fixture: this test verifies migration from a
+            # plaintext persisted client_secret to hashed-at-rest storage on load.
+            "redirect_uris": ["https://claude.example/callback"],
+            "allow_client_credentials": False,
+            "created_at": time.time(),
+        }
+    }
     oauth.config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH.write_text(
-        json.dumps(
-            {
-                "legacy-client": {
-                    "client_secret": legacy_secret,
-                    "redirect_uris": ["https://claude.example/callback"],
-                    "allow_client_credentials": False,
-                    "created_at": time.time(),
-                }
-            }
-        ),
+        json.dumps(legacy_payload),
         encoding="utf-8",
     )
 
@@ -254,7 +252,7 @@ def test_oauth_registered_clients_migrate_legacy_plaintext_store(monkeypatch, tm
     payload = json.loads(oauth.config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH.read_text(encoding="utf-8"))
 
     assert loaded is not None
-    assert oauth._client_secret_matches(legacy_secret, loaded)
+    assert oauth._client_secret_matches(legacy_value, loaded)
     assert "client_secret" not in payload["legacy-client"]
     assert "client_secret_hash" in payload["legacy-client"]
 

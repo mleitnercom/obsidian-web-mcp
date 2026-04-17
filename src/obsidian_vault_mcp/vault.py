@@ -25,7 +25,6 @@ UNSUPPORTED_BINARY_EXTENSIONS = frozenset({
     ".mp3",
     ".mp4",
     ".msg",
-    ".pdf",
     ".png",
     ".ppt",
     ".pptx",
@@ -100,6 +99,55 @@ def _reject_unsupported_binary(path: Path) -> None:
         )
 
 
+def _read_pdf_file(path: Path) -> tuple[str, dict]:
+    """Extract text and metadata from a PDF file."""
+    try:
+        from pypdf import PdfReader
+    except ImportError as e:
+        raise RuntimeError(
+            "PDF reading support requires pypdf to be installed"
+        ) from e
+
+    try:
+        reader = PdfReader(str(path))
+    except Exception as e:
+        raise ValueError(f"Failed to open PDF file: {e}") from e
+
+    if getattr(reader, "is_encrypted", False):
+        try:
+            decrypt_result = reader.decrypt("")
+        except Exception as e:
+            raise ValueError("Encrypted PDF files are not supported by vault_read") from e
+        if decrypt_result == 0 or getattr(reader, "is_encrypted", False):
+            raise ValueError("Encrypted PDF files are not supported by vault_read")
+
+    page_texts: list[str] = []
+    extracted_page_count = 0
+    for page in reader.pages:
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            text = ""
+        text = text.strip()
+        if text:
+            extracted_page_count += 1
+            page_texts.append(text)
+
+    stat = path.stat()
+    metadata = {
+        "size": stat.st_size,
+        "modified": _iso_timestamp(stat.st_mtime),
+        "created": _iso_timestamp(stat.st_birthtime if hasattr(stat, "st_birthtime") else stat.st_ctime),
+        "type": "pdf",
+        "content_source": "pdf_text_extraction",
+        "pages": len(reader.pages),
+        "pages_with_text": extracted_page_count,
+        "extractable_text": extracted_page_count > 0,
+    }
+
+    return "\n\n".join(page_texts), metadata
+
+
 def read_file(relative_path: str) -> tuple[str, dict]:
     """Read a file and return (content, metadata).
 
@@ -109,6 +157,9 @@ def read_file(relative_path: str) -> tuple[str, dict]:
 
     if not path.is_file():
         raise FileNotFoundError(f"Not a file: {relative_path}")
+
+    if path.suffix.lower() == ".pdf":
+        return _read_pdf_file(path)
 
     _reject_unsupported_binary(path)
 

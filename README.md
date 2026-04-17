@@ -87,8 +87,8 @@ This is a server that provides network access to your personal notes. Security i
 
 | Tool | Description |
 |------|-------------|
-| `vault_read` | Read a file, returning content, metadata, and parsed YAML frontmatter |
-| `vault_batch_read` | Read multiple files in one call; handles missing files gracefully |
+| `vault_read` | Read a file, returning content, metadata, and parsed YAML frontmatter; PDFs are read through built-in text extraction |
+| `vault_batch_read` | Read multiple files in one call; handles missing files gracefully and includes extracted PDF text when applicable |
 | `vault_analytics_summary` | Return a compact hygiene summary covering frontmatter, wikilinks, tags, and encoding issues, including a broken-link breakdown |
 | `vault_analytics_findings` | Return detailed findings for one analytics category such as broken wikilinks or encoding issues, including wikilink classification details |
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
@@ -154,6 +154,8 @@ python -m pip install -e .[semantic-sentence]
 ```
 
 The server starts on port 8420 by default. It serves MCP over Streamable HTTP at `/mcp/`.
+
+`vault_read` supports normal text/markdown files and also extracts text from `.pdf` files via `pypdf`. Other known binary formats are still rejected with a clear error instead of a misleading UTF-8 decode failure.
 
 For semantic troubleshooting, the maintenance CLI can scan the vault for non-UTF-8 markdown files, write a JSON report, and run an explicit repair pass for common legacy encodings:
 

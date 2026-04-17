@@ -100,6 +100,12 @@ Current categories:
 - `suspicious_tag_variants`
 - `encoding_issues`
 
+## PDF Reads
+
+- `vault_read` and `vault_batch_read` now extract text from `.pdf` files via `pypdf`.
+- Other known binary formats remain intentionally blocked with a clear error.
+- If a PDF is image-only or otherwise has no extractable text layer, the read call may return empty content while still reporting PDF metadata such as page count.
+
 ## Release Baseline
 
 The current operator baseline assumes:

@@ -16,12 +16,13 @@ def vault_read(path: str) -> str:
         content, metadata = read_file(path)
 
         fm_data = None
-        try:
-            post = frontmatter.loads(content)
-            if post.metadata:
-                fm_data = post.metadata
-        except Exception:
-            pass
+        if metadata.get("type") != "pdf":
+            try:
+                post = frontmatter.loads(content)
+                if post.metadata:
+                    fm_data = post.metadata
+            except Exception:
+                pass
 
         return json_dumps({
             "path": path,
@@ -49,12 +50,13 @@ def vault_batch_read(paths: list[str], include_content: bool = True) -> str:
             content, metadata = read_file(path)
 
             fm_data = None
-            try:
-                post = frontmatter.loads(content)
-                if post.metadata:
-                    fm_data = post.metadata
-            except Exception:
-                pass
+            if metadata.get("type") != "pdf":
+                try:
+                    post = frontmatter.loads(content)
+                    if post.metadata:
+                        fm_data = post.metadata
+                except Exception:
+                    pass
 
             entry = {
                 "path": path,

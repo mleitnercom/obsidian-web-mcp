@@ -383,7 +383,7 @@ def vault_analytics_findings(
 
 @mcp.tool(
     name="vault_read",
-    description="Read a file from the Obsidian vault, returning content, metadata, and parsed YAML frontmatter.",
+    description="Read a file from the Obsidian vault, returning content, metadata, and parsed YAML frontmatter. PDFs are read through built-in text extraction.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
 def vault_read(path: str) -> str:
@@ -397,7 +397,7 @@ def vault_read(path: str) -> str:
 
 @mcp.tool(
     name="vault_batch_read",
-    description="Read multiple files from the vault in one call. Handles missing files gracefully.",
+    description="Read multiple files from the vault in one call. Handles missing files gracefully and includes extracted PDF text when applicable.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
 def vault_batch_read(paths: list[str], include_content: bool = True) -> str:

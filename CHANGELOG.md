@@ -3,6 +3,15 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
+## [Unreleased]
+
+### Features
+- Add direct PDF text extraction to `vault_read` and `vault_batch_read` via `pypdf`, including basic PDF metadata in the response.
+
+### Reliability / Operator UX
+- Keep other known binary formats on the clear rejection path so binary-read failures are differentiated from PDF support.
+- Document PDF-read behavior in the README and operations runbook.
+
 ## [v0.5.1] - 2026-04-17
 
 Small follow-up release focused on making analytics output more actionable and string replacement more useful for real vault-normalization work.
