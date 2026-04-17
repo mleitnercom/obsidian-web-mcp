@@ -10,6 +10,7 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ### Reliability / Operator UX
 - Keep other known binary formats on the clear rejection path so binary-read failures are differentiated from PDF support.
+- Surface restart-relevant OAuth state more clearly through the health payload and startup logging so reconnect problems after service restarts are easier to diagnose.
 - Document PDF-read behavior in the README and operations runbook.
 
 ## [v0.5.1] - 2026-04-17
