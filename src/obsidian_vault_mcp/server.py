@@ -63,6 +63,14 @@ def _truncate_log_value(value: Any, limit: int = 120) -> str:
 def _oauth_health_payload() -> dict[str, Any]:
     """Expose the restart-relevant OAuth runtime configuration."""
     store_path = config.VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH
+    registered_client_count = 0
+    if store_path.exists():
+        try:
+            payload = json.loads(store_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                registered_client_count = len(payload)
+        except Exception:
+            registered_client_count = 0
     restart_stable = (
         config.VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS
         and config.REGISTERED_CLIENT_TTL_SECONDS == 0
@@ -72,6 +80,7 @@ def _oauth_health_payload() -> dict[str, Any]:
         "registered_client_persistence_enabled": config.VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS,
         "registered_client_store_path": str(store_path),
         "registered_client_store_exists": store_path.exists(),
+        "registered_client_count": registered_client_count,
         "registered_client_ttl_seconds": config.REGISTERED_CLIENT_TTL_SECONDS,
         "max_registered_clients": config.MAX_REGISTERED_CLIENTS,
         "restart_stable_reconnects": restart_stable,
@@ -186,6 +195,15 @@ def _health_payload() -> dict:
     vault_exists = VAULT_PATH.exists()
     vault_is_dir = VAULT_PATH.is_dir()
     observer = frontmatter_index._observer
+    if semantic_engine.enabled and not semantic_engine.status["initialized"]:
+        can_probe_without_build = (
+            semantic_engine._cache_files_exist() or not config.SEMANTIC_BUILD_ON_DEMAND
+        )
+        if can_probe_without_build:
+            try:
+                semantic_engine.initialize()
+            except Exception as exc:
+                logger.warning("Semantic health probe failed during initialize: %s", exc)
     semantic_status = semantic_engine.status
     return {
         "status": "ok" if vault_exists and vault_is_dir else "degraded",
