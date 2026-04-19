@@ -853,10 +853,23 @@ def build_app():
 
     app = mcp.streamable_http_app()
 
-    async def mcp_root_probe(_request):
-        return Response(
+    async def mcp_root_probe(request):
+        accept = request.headers.get("accept", "")
+        headers = {
+            "MCP-Protocol-Version": "2025-06-18",
+            "Cache-Control": "no-cache",
+        }
+        if "text/event-stream" in accept:
+            return Response(
+                content="event: ready\ndata: {}\n\n",
+                status_code=200,
+                media_type="text/event-stream",
+                headers=headers,
+            )
+        return JSONResponse(
+            {"protocolVersion": "2025-06-18"},
             status_code=200,
-            headers={"MCP-Protocol-Version": "2025-06-18"},
+            headers=headers,
         )
 
     async def health_check(_request):

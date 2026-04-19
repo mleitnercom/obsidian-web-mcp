@@ -112,6 +112,24 @@ def test_bearer_auth_allows_root_probe_without_token(monkeypatch):
     assert response.json() == {"ok": True}
 
 
+def test_root_probe_advertises_sse_content_type_when_requested(vault_dir, monkeypatch):
+    """GET / should answer SSE-style probes with an explicit event-stream content type."""
+    reset_rate_limits()
+    base_app = Starlette()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.get("/", headers={"Accept": "text/event-stream"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["MCP-Protocol-Version"] == "2025-06-18"
+    assert "event: ready" in response.text
+
+
 def test_oauth_register_returns_unique_secret(monkeypatch):
     """Dynamic registration does not leak the server's configured client secret."""
     reset_rate_limits()
