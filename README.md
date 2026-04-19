@@ -180,53 +180,80 @@ For vault hygiene beyond pure search, the server also exposes analytics endpoint
 
 All configuration is via environment variables:
 
+### Core
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `VAULT_PATH` | Yes | `~/Obsidian/MyVault` | Absolute path to your Obsidian vault directory |
-| `VAULT_MCP_TOKEN` | Yes | (none) | 256-bit bearer token for authenticating MCP requests |
-| `VAULT_MCP_PORT` | No | `8420` | Port the HTTP server listens on |
-| `VAULT_MCP_HEARTBEAT_URL` | No | (empty) | Optional push-style heartbeat URL for Uptime Kuma, Healthchecks.io, Cronitor, or similar |
-| `VAULT_MCP_HEARTBEAT_INTERVAL` | No | `60` | Seconds between heartbeat pings when `VAULT_MCP_HEARTBEAT_URL` is configured |
-| `VAULT_MCP_POST_WRITE_CMD` | No | (empty) | Optional local follow-up command executed after vault mutations; receives `MCP_OPERATION`, `MCP_PATHS`, and `MCP_PATHS_JSON` via env vars |
-| `VAULT_MCP_POST_WRITE_TIMEOUT` | No | `30` | Timeout in seconds for the post-write hook command |
-| `VAULT_OAUTH_CLIENT_ID` | No | `vault-mcp-client` | OAuth 2.0 client ID for Claude integration |
-| `VAULT_OAUTH_CLIENT_SECRET` | Yes | (none) | OAuth 2.0 client secret for Claude integration |
-| `VAULT_OAUTH_AUTH_USERNAME` | No | (none) | Optional username required at `/oauth/authorize` before issuing an auth code |
-| `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional password required at `/oauth/authorize` before issuing an auth code |
-| `VAULT_OAUTH_REQUIRE_APPROVAL` | No | `true` | Require an extra post-login consent click (`false` keeps login but skips the extra allow step) |
-| `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Secret used to sign the temporary browser login session cookie |
-| `VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS` | No | `true` | Persist dynamic OAuth client registrations across service restarts |
-| `VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH` | No | `VAULT_SEMANTIC_CACHE_PATH/oauth_registered_clients.json` | JSON file used to store dynamic OAuth client registrations |
-| `VAULT_PUBLIC_BASE_URL` | No | (auto-detected) | Public HTTPS base URL for OAuth metadata (recommended behind reverse proxies/tunnels) |
-| `VAULT_TRUSTED_PROXY_IPS` | No | `127.0.0.1,::1` | Comma-separated proxy IPs trusted for forwarded headers (uvicorn `forwarded_allow_ips`) |
-| `VAULT_ALLOWED_HOSTS` | No | `127.0.0.1:*,localhost:*,[::1]:*` | Comma-separated hosts allowed by DNS rebinding protection (add your tunnel hostname here) |
-| `VAULT_SEMANTIC_SEARCH_ENABLED` | No | `false` | Enable optional FAISS-based semantic search |
-| `VAULT_SEMANTIC_EMBED_BACKEND` | No | `fastembed` | Embedding backend selection: `auto`, `sentence`, or `fastembed` |
-| `VAULT_SEMANTIC_EMBED_MODEL` | No | `BAAI/bge-small-en-v1.5` | Embedding model used by the selected semantic backend |
-| `VAULT_SEMANTIC_CACHE_PATH` | No | `VAULT_PATH/.obsidian-vault-mcp` | Cache directory for FAISS index and semantic metadata |
-| `VAULT_SEMANTIC_CHUNK_SIZE` | No | `900` | Target character length for semantic chunks |
-| `VAULT_SEMANTIC_CHUNK_OVERLAP` | No | `150` | Character overlap between adjacent semantic chunks |
-| `VAULT_SEMANTIC_EMBED_BATCH_SIZE` | No | `64` | Embedding batch size during index builds (lower values reduce RAM peaks) |
-| `VAULT_SEMANTIC_MAX_RESULTS` | No | `20` | Hard upper bound for semantic search results |
-| `VAULT_SEMANTIC_AUTO_REINDEX` | No | `false` | Allow watcher-driven semantic refreshes in the live MCP service |
-| `VAULT_SEMANTIC_BUILD_ON_DEMAND` | No | `false` | Allow the live MCP service to build a missing semantic cache on first semantic query |
-| `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX` | No | `false` | Allow `vault_reindex(full=true)` from MCP clients; keep this off for normal live operation |
-| `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | No | `4` | Debounce window for automatic incremental semantic updates when auto-reindex is enabled |
-| `VAULT_MAX_CONTENT_SIZE` | No | `1000000` | Maximum bytes allowed per write operation |
-| `VAULT_MAX_BINARY_SIZE` | No | `10485760` | Maximum bytes allowed for `vault_write_binary` after base64 decoding |
-| `VAULT_MAX_BATCH_SIZE` | No | `20` | Maximum files allowed in a batch read/frontmatter update |
-| `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard upper bound for search results |
-| `VAULT_DEFAULT_SEARCH_RESULTS` | No | `20` | Default search result count when the client does not specify one |
-| `VAULT_MAX_LIST_DEPTH` | No | `5` | Maximum recursion depth for `vault_list` |
-| `VAULT_MAX_TREE_DEPTH` | No | `10` | Maximum recursion depth for `vault_tree` |
-| `VAULT_CONTEXT_LINES` | No | `2` | Default context lines returned around search hits |
-| `VAULT_RATE_LIMIT_READ` | No | `100` | Per-token read requests per minute |
-| `VAULT_RATE_LIMIT_WRITE` | No | `30` | Per-token write requests per minute |
-| `VAULT_RATE_LIMIT_OAUTH_AUTHORIZE` | No | `30` | Per-IP `/oauth/authorize` requests per minute |
-| `VAULT_RATE_LIMIT_OAUTH_TOKEN` | No | `30` | Per-IP `/oauth/token` requests per minute |
-| `VAULT_RATE_LIMIT_OAUTH_REGISTER` | No | `10` | Per-IP `/oauth/register` requests per minute |
-| `VAULT_REGISTERED_CLIENT_TTL_SECONDS` | No | `0` | How long dynamic OAuth client registrations stay valid; `0` disables automatic expiry |
-| `VAULT_MAX_REGISTERED_CLIENTS` | No | `128` | Maximum retained dynamic OAuth client registrations before the oldest entries are trimmed |
+| `VAULT_PATH` | Yes | `~/Obsidian/MyVault` | Vault root path |
+| `VAULT_MCP_TOKEN` | Yes | (none) | Bearer token for MCP requests |
+| `VAULT_MCP_PORT` | No | `8420` | HTTP listen port |
+
+### OAuth and Connector State
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VAULT_OAUTH_CLIENT_ID` | No | `vault-mcp-client` | OAuth client ID |
+| `VAULT_OAUTH_CLIENT_SECRET` | Yes | (none) | OAuth client secret |
+| `VAULT_OAUTH_AUTH_USERNAME` | No | (none) | Optional authorize-login username |
+| `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional authorize-login password |
+| `VAULT_OAUTH_REQUIRE_APPROVAL` | No | `true` | Keep extra allow click after login |
+| `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Cookie-signing secret for browser login |
+| `VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS` | No | `true` | Persist dynamic client registrations |
+| `VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH` | No | `VAULT_SEMANTIC_CACHE_PATH/oauth_registered_clients.json` | Registration store file |
+| `VAULT_REGISTERED_CLIENT_TTL_SECONDS` | No | `0` | Dynamic client lifetime; `0` disables expiry |
+| `VAULT_MAX_REGISTERED_CLIENTS` | No | `128` | Max retained dynamic clients |
+
+### Public URL, Proxy, and Host Validation
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VAULT_PUBLIC_BASE_URL` | No | (auto-detected) | Public HTTPS base URL |
+| `VAULT_TRUSTED_PROXY_IPS` | No | `127.0.0.1,::1` | Proxy IPs trusted for forwarded headers |
+| `VAULT_ALLOWED_HOSTS` | No | `127.0.0.1:*,localhost:*,[::1]:*` | Hosts allowed by rebinding protection |
+
+### Health and Post-Write Automation
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VAULT_MCP_HEARTBEAT_URL` | No | (empty) | Optional push heartbeat URL |
+| `VAULT_MCP_HEARTBEAT_INTERVAL` | No | `60` | Heartbeat interval in seconds |
+| `VAULT_MCP_POST_WRITE_CMD` | No | (empty) | Optional local post-write command |
+| `VAULT_MCP_POST_WRITE_TIMEOUT` | No | `30` | Post-write hook timeout in seconds |
+
+### Semantic Search
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VAULT_SEMANTIC_SEARCH_ENABLED` | No | `false` | Enable semantic search |
+| `VAULT_SEMANTIC_EMBED_BACKEND` | No | `fastembed` | `auto`, `sentence`, or `fastembed` |
+| `VAULT_SEMANTIC_EMBED_MODEL` | No | `BAAI/bge-small-en-v1.5` | Embedding model |
+| `VAULT_SEMANTIC_CACHE_PATH` | No | `VAULT_PATH/.obsidian-vault-mcp` | Semantic cache directory |
+| `VAULT_SEMANTIC_CHUNK_SIZE` | No | `900` | Target chunk size |
+| `VAULT_SEMANTIC_CHUNK_OVERLAP` | No | `150` | Chunk overlap |
+| `VAULT_SEMANTIC_EMBED_BATCH_SIZE` | No | `64` | Embedding batch size |
+| `VAULT_SEMANTIC_MAX_RESULTS` | No | `20` | Hard semantic result cap |
+| `VAULT_SEMANTIC_AUTO_REINDEX` | No | `false` | Allow watcher-driven refreshes |
+| `VAULT_SEMANTIC_BUILD_ON_DEMAND` | No | `false` | Build cache on first semantic query |
+| `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX` | No | `false` | Allow `vault_reindex(full=true)` via MCP |
+| `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | No | `4` | Debounce for auto-updates |
+
+### Limits and Rate Limits
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VAULT_MAX_CONTENT_SIZE` | No | `1000000` | Max bytes per text write |
+| `VAULT_MAX_BINARY_SIZE` | No | `10485760` | Max decoded bytes for `vault_write_binary` |
+| `VAULT_MAX_BATCH_SIZE` | No | `20` | Max files in batch operations |
+| `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard search result cap |
+| `VAULT_DEFAULT_SEARCH_RESULTS` | No | `20` | Default search result count |
+| `VAULT_MAX_LIST_DEPTH` | No | `5` | Max recursion depth for `vault_list` |
+| `VAULT_MAX_TREE_DEPTH` | No | `10` | Max recursion depth for `vault_tree` |
+| `VAULT_CONTEXT_LINES` | No | `2` | Default search context lines |
+| `VAULT_RATE_LIMIT_READ` | No | `100` | Read requests per token per minute |
+| `VAULT_RATE_LIMIT_WRITE` | No | `30` | Write requests per token per minute |
+| `VAULT_RATE_LIMIT_OAUTH_AUTHORIZE` | No | `30` | `/oauth/authorize` per IP per minute |
+| `VAULT_RATE_LIMIT_OAUTH_TOKEN` | No | `30` | `/oauth/token` per IP per minute |
+| `VAULT_RATE_LIMIT_OAUTH_REGISTER` | No | `10` | `/oauth/register` per IP per minute |
 
 Generate tokens with: `python -c "import secrets; print(secrets.token_hex(32))"`
 
