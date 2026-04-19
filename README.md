@@ -258,6 +258,10 @@ If Claude or ChatGPT asks to reauthenticate after a server restart, verify these
 
 This fork now exposes those restart-relevant OAuth settings in `/health` and logs them once during startup so operator mistakes are easier to spot. With those settings in place, a plain server restart should not invalidate persisted client registrations or the bearer token itself; if reconnects still happen, the remaining cause is more likely client-side token or connector state than missing server-side persistence.
 
+ChatGPT has also proven a bit stricter than Claude during connector refresh. In practice it may probe both `/` and `/mcp`, use SSE-style root discovery, and send permissive refresh headers such as `Accept: */*` while reloading actions. This fork now answers those refresh probes more defensively so the ChatGPT "Aktualisieren" flow can still rediscover actions cleanly.
+
+If a ChatGPT connector was originally created before `VAULT_REGISTERED_CLIENT_TTL_SECONDS=0`, one one-time re-registration may still be needed because the older dynamic client registration may already have expired from the persisted store. After that, the current recommended settings should keep reconnects stable across normal server restarts.
+
 ### Connecting to ChatGPT
 
 ChatGPT can use the same deployed MCP endpoint, but connector behavior may vary a bit more by rollout and client version than Claude does.

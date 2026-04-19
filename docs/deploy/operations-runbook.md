@@ -98,6 +98,41 @@ Restart-safe checklist:
 
 If those values are correct and the connector still asks for reauthentication after a restart, the remaining problem is likely client-side reconnect behavior rather than missing server-side persistence.
 
+Legacy note:
+
+- If a ChatGPT connector was created before `VAULT_REGISTERED_CLIENT_TTL_SECONDS=0` became the default, one final delete/reconnect cycle may still be required.
+- In that case, ChatGPT may still hold an older dynamic `client_id` locally while the server-side registration has already expired from the persisted store.
+
+## ChatGPT Refresh Quirks
+
+ChatGPT currently behaves a little differently from Claude when it refreshes actions:
+
+- it may probe both `/` and `/mcp`
+- it may use an SSE-style root probe on `GET /`
+- it may send permissive refresh headers such as `Accept: */*`
+- it may try action refresh even when the actual `/mcp` tool path is healthy
+
+This fork now compensates for those refresh quirks by:
+
+- returning explicit content types on `GET /`
+- allowing `POST /` to reach the same MCP transport as `POST /mcp`
+- normalizing wildcard or missing `Accept` headers on refresh-style MCP POSTs
+
+Typical symptom patterns:
+
+- `MCP SSE probe returned an unsupported content type`
+- `Child exited without calling task_status.started()`
+- "Noch keine App-Aktionen verfuegbar" even though Claude still works
+
+Operator checklist when ChatGPT action refresh fails:
+
+1. open `GET /health`
+2. confirm the `oauth` block still shows persisted registrations and restart-stable reconnects
+3. inspect `journalctl -u obsidian-mcp` for `GET /`, `POST /`, `GET /.well-known/...`, and `POST /mcp`
+4. distinguish root-probe/refresh failures from real `/mcp` failures
+
+If Claude still works while ChatGPT action refresh fails, that usually points to a ChatGPT-specific probe or refresh-compatibility issue rather than a total MCP outage.
+
 ## Vault Analytics
 
 Use analytics for read-only hygiene checks, not as an auto-fix path.
