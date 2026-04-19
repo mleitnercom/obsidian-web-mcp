@@ -3,7 +3,9 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
-## [Unreleased]
+## [v0.6.0-rc1] - 2026-04-19
+
+Release candidate for live validation before the final `v0.6.0` release.
 
 ### Features
 - Add `vault_batch_replace` for exact-string replacements across multiple files in one request.
