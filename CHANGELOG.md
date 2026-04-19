@@ -3,9 +3,7 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
-## [v0.6.0-rc1] - 2026-04-19
-
-Release candidate for live validation before the final `v0.6.0` release.
+## [v0.6.0] - 2026-04-19
 
 ### Features
 - Add `vault_batch_replace` for exact-string replacements across multiple files in one request.
@@ -17,11 +15,14 @@ Release candidate for live validation before the final `v0.6.0` release.
 - Expand broken-link analytics with explicit ambiguous classifications and line/column metadata for findings.
 - Surface post-write-hook enablement in `/health`.
 - Preserve the OAuth `resource` parameter across login and approval redirects so stricter MCP clients keep their resource indicator intact during interactive authorize flows.
+- Improve ChatGPT connector refresh compatibility by returning explicit root-probe content types, allowing `POST /` to reach the MCP transport, and normalizing wildcard or missing `Accept` headers on refresh-style MCP POSTs.
+- Expand operational guidance for distinguishing root-probe/refresh failures from real `/mcp` transport failures during connector troubleshooting.
 
 ### Docs / Tests
 - Document the post-write hook, format-stable frontmatter updates, and the new editing tools in the README and operations runbook.
 - Add regression coverage for YAML formatting preservation, batch replace, patch/append, ambiguous wikilinks, and the hook execution model.
 - Clarify in the README that the post-write hook is a trusted-operator feature for single-user or otherwise tightly controlled deployments.
+- Document ChatGPT-specific refresh quirks and troubleshooting patterns in the README and operations runbook.
 
 ### Implementation Notes
 - The format-stable frontmatter round-trip and lighter-weight edit primitives continue in the same direction as work consolidated by `jjsmackay`.
