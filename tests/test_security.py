@@ -6,6 +6,7 @@ import time
 import pytest
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
@@ -133,13 +134,26 @@ def test_root_probe_advertises_sse_content_type_when_requested(vault_dir, monkey
 def test_root_post_aliases_to_mcp_transport(vault_dir, monkeypatch):
     """POST / should hit the same MCP transport as POST /mcp for root-oriented clients."""
     reset_rate_limits()
+    class _CaptureTransport:
+        async def __call__(self, scope, receive, send):
+            request = Request(scope, receive)
+            response = JSONResponse(
+                {
+                    "path": request.url.path,
+                    "accept": request.headers.get("accept"),
+                }
+            )
+            await response(scope, receive, send)
+
+    base_app = Starlette(routes=[Route("/mcp", endpoint=_CaptureTransport(), methods=["POST"])])
     monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
     monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
     monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
 
     app = server.build_app()
-    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
-    headers = {"Authorization": "Bearer test-token-12345"}
+    payload = {"hello": "world"}
+    headers = {"Authorization": "Bearer test-token-12345", "Host": "localhost"}
 
     with TestClient(app) as client:
         root_response = client.post("/", json=payload, headers=headers)
@@ -147,6 +161,34 @@ def test_root_post_aliases_to_mcp_transport(vault_dir, monkeypatch):
 
     assert root_response.status_code == mcp_response.status_code
     assert root_response.headers.get("content-type") == mcp_response.headers.get("content-type")
+    assert root_response.json()["accept"] == "application/json, text/event-stream"
+    assert mcp_response.json()["path"] == "/mcp"
+
+
+def test_root_post_adds_default_accept_for_chatgpt_style_clients(vault_dir, monkeypatch):
+    """POST / should stay compatible when a client omits Accept during tool refresh."""
+    reset_rate_limits()
+    class _CaptureTransport:
+        async def __call__(self, scope, receive, send):
+            request = Request(scope, receive)
+            response = JSONResponse({"accept": request.headers.get("accept")})
+            await response(scope, receive, send)
+
+    base_app = Starlette(routes=[Route("/mcp", endpoint=_CaptureTransport(), methods=["POST"])])
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+
+    app = server.build_app()
+    payload = {"hello": "world"}
+    headers = {"Authorization": "Bearer test-token-12345", "Host": "localhost"}
+
+    with TestClient(app) as client:
+        response = client.post("/", json=payload, headers=headers)
+
+    assert response.status_code != 406
+    assert response.json()["accept"] == "application/json, text/event-stream"
 
 
 def test_oauth_register_returns_unique_secret(monkeypatch):
