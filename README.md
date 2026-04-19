@@ -12,6 +12,8 @@ This fork exists because the upstream project appears inactive and did not inclu
 
 The current fork includes pragmatic fixes and compatibility work in areas such as frontmatter date serialization, OAuth/discovery behavior, reverse proxy or tunnel deployments, and Claude/ChatGPT connector usage.
 
+Recent editing-oriented work in this fork also builds on ideas already explored in other active forks: the format-stable frontmatter round-trip and lighter-weight edit primitives follow the same general direction as `jjsmackay`, while the optional post-write hook was informed by `cruciblemining` and tightened here to execute without a shell.
+
 ## Upstream
 
 An issue report and a PR were already submitted upstream, with related issue threads cross-referenced there.
@@ -254,7 +256,7 @@ If Claude or ChatGPT asks to reauthenticate after a server restart, verify these
 3. `VAULT_PUBLIC_BASE_URL` is set explicitly for your public tunnel hostname
 4. `GET /health` shows `oauth.registered_client_store_exists=true` and `oauth.restart_stable_reconnects=true`
 
-This fork now exposes those restart-relevant OAuth settings in `/health` and logs them once during startup so operator mistakes are easier to spot.
+This fork now exposes those restart-relevant OAuth settings in `/health` and logs them once during startup so operator mistakes are easier to spot. With those settings in place, a plain server restart should not invalidate persisted client registrations or the bearer token itself; if reconnects still happen, the remaining cause is more likely client-side token or connector state than missing server-side persistence.
 
 ### Connecting to ChatGPT
 

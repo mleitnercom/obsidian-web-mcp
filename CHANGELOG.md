@@ -19,6 +19,10 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 - Document the post-write hook, format-stable frontmatter updates, and the new editing tools in the README and operations runbook.
 - Add regression coverage for YAML formatting preservation, batch replace, patch/append, ambiguous wikilinks, and the hook execution model.
 
+### Implementation Notes
+- The format-stable frontmatter round-trip and lighter-weight edit primitives continue in the same direction as work consolidated by `jjsmackay`.
+- The optional post-write hook was informed by `cruciblemining`, with this fork keeping the execution model intentionally stricter by avoiding shell invocation.
+
 ## [v0.5.2] - 2026-04-17
 
 ### Features
