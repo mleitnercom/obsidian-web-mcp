@@ -85,7 +85,7 @@ This is a server that provides network access to your personal notes. Security i
 
 **Optional push heartbeats are supported.** If `VAULT_MCP_HEARTBEAT_URL` is configured, the server emits periodic GET pings to a push-style monitoring endpoint while also surfacing the current heartbeat state in `/health`.
 
-**Optional post-write hooks are supported.** If `VAULT_MCP_POST_WRITE_CMD` is configured, the server can trigger a local follow-up command after vault mutations such as writes, deletes, moves, and appends. The command is executed without a shell and receives mutation metadata via environment variables.
+**Optional post-write hooks are supported.** If `VAULT_MCP_POST_WRITE_CMD` is configured, the server can trigger a local follow-up command after vault mutations such as writes, deletes, moves, and appends. The command is executed without a shell and receives mutation metadata via environment variables. This is intentionally a trusted-operator feature for single-user or otherwise tightly controlled deployments: it is opt-in and constrained, but authenticated write activity can still trigger a local follow-up command.
 
 ## Tools
 

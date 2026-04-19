@@ -14,10 +14,12 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 - Preserve YAML frontmatter formatting more faithfully during `vault_write(merge_frontmatter=true)` and `vault_batch_frontmatter_update` by round-tripping through `ruamel.yaml`.
 - Expand broken-link analytics with explicit ambiguous classifications and line/column metadata for findings.
 - Surface post-write-hook enablement in `/health`.
+- Preserve the OAuth `resource` parameter across login and approval redirects so stricter MCP clients keep their resource indicator intact during interactive authorize flows.
 
 ### Docs / Tests
 - Document the post-write hook, format-stable frontmatter updates, and the new editing tools in the README and operations runbook.
 - Add regression coverage for YAML formatting preservation, batch replace, patch/append, ambiguous wikilinks, and the hook execution model.
+- Clarify in the README that the post-write hook is a trusted-operator feature for single-user or otherwise tightly controlled deployments.
 
 ### Implementation Notes
 - The format-stable frontmatter round-trip and lighter-weight edit primitives continue in the same direction as work consolidated by `jjsmackay`.

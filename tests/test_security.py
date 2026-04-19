@@ -338,6 +338,7 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
                 "response_type": "code",
                 "client_id": registration["client_id"],
                 "redirect_uri": "https://claude.example/callback",
+                "resource": "https://vault.example/mcp",
                 "username": "michael",
                 "password": "correct horse battery staple",
             },
@@ -345,6 +346,7 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
         )
         assert login.status_code == 303
         assert "vault_mcp_oauth_session" in login.headers.get("set-cookie", "")
+        assert "resource=https%3A%2F%2Fvault.example%2Fmcp" in login.headers["location"]
 
         authorize = client.get(login.headers["location"])
         assert authorize.status_code == 200
@@ -356,12 +358,14 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
                 "response_type": "code",
                 "client_id": registration["client_id"],
                 "redirect_uri": "https://claude.example/callback",
+                "resource": "https://vault.example/mcp",
                 "approve": "allow",
             },
             follow_redirects=False,
         )
         assert approve.status_code == 303
         assert "approved=1" in approve.headers["location"]
+        assert "resource=https%3A%2F%2Fvault.example%2Fmcp" in approve.headers["location"]
 
         finalize = client.get(approve.headers["location"], follow_redirects=False)
         assert finalize.status_code == 302

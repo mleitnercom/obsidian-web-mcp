@@ -262,6 +262,7 @@ def _authorize_params_from_request(request: Request, form: dict | None = None) -
         "response_type": source.get("response_type", ""),
         "client_id": source.get("client_id", ""),
         "redirect_uri": source.get("redirect_uri", ""),
+        "resource": source.get("resource", ""),
         "state": source.get("state", ""),
         "code_challenge": source.get("code_challenge", ""),
         "code_challenge_method": source.get("code_challenge_method", "S256"),
