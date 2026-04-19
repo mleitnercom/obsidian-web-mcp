@@ -130,6 +130,25 @@ def test_root_probe_advertises_sse_content_type_when_requested(vault_dir, monkey
     assert "event: ready" in response.text
 
 
+def test_root_post_aliases_to_mcp_transport(vault_dir, monkeypatch):
+    """POST / should hit the same MCP transport as POST /mcp for root-oriented clients."""
+    reset_rate_limits()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+
+    app = server.build_app()
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    headers = {"Authorization": "Bearer test-token-12345"}
+
+    with TestClient(app) as client:
+        root_response = client.post("/", json=payload, headers=headers)
+        mcp_response = client.post("/mcp", json=payload, headers=headers)
+
+    assert root_response.status_code == mcp_response.status_code
+    assert root_response.headers.get("content-type") == mcp_response.headers.get("content-type")
+
+
 def test_oauth_register_returns_unique_secret(monkeypatch):
     """Dynamic registration does not leak the server's configured client secret."""
     reset_rate_limits()
@@ -644,8 +663,10 @@ def test_main_fails_closed_when_authenticated_app_cannot_build(vault_dir, monkey
 def test_build_app_exposes_mcp_root_probe(vault_dir, monkeypatch):
     """GET / returns the MCP protocol probe header without auth."""
     reset_rate_limits()
+    base_app = Starlette()
     monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
     monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
 
     app = server.build_app()
     with TestClient(app) as client:
@@ -662,6 +683,7 @@ def test_build_app_exposes_health_without_bearer(vault_dir, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
     monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
     monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+    monkeypatch.setattr(server.frontmatter_index, "_observer", None)
 
     app = server.build_app()
     with TestClient(app) as client:
@@ -671,7 +693,7 @@ def test_build_app_exposes_health_without_bearer(vault_dir, monkeypatch):
     assert response.status_code == 200
     assert body["status"] == "ok"
     assert body["vault"]["exists"] is True
-    assert body["frontmatter_index"]["active"] is False
+    assert body["frontmatter_index"]["observer_alive"] is False
     assert body["oauth"]["registered_client_persistence_enabled"] is True
     assert "restart_stable_reconnects" in body["oauth"]
     assert "registered_client_count" in body["oauth"]

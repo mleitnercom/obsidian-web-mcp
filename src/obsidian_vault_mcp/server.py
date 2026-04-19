@@ -852,6 +852,14 @@ def build_app():
     from .oauth import oauth_routes
 
     app = mcp.streamable_http_app()
+    mcp_transport = next(
+        (
+            route.endpoint
+            for route in app.routes
+            if getattr(route, "path", None) == "/mcp"
+        ),
+        None,
+    )
 
     async def mcp_root_probe(request):
         accept = request.headers.get("accept", "")
@@ -875,6 +883,8 @@ def build_app():
     async def health_check(_request):
         return JSONResponse(_health_payload())
 
+    if mcp_transport is not None:
+        app.routes.insert(0, Route("/", endpoint=mcp_transport, methods=["POST"]))
     app.routes.insert(0, Route("/", mcp_root_probe, methods=["GET", "HEAD"]))
     app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
 
