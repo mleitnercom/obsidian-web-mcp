@@ -5,8 +5,8 @@ import binascii
 import logging
 from pathlib import Path
 
-import frontmatter
-
+from .. import frontmatter_io
+from ..hooks import fire_post_write
 from ..vault import (
     read_file,
     resolve_vault_path,
@@ -35,20 +35,20 @@ def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontma
         if merge_frontmatter:
             try:
                 existing_content, _ = read_file(path)
-                existing_post = frontmatter.loads(existing_content)
-                new_post = frontmatter.loads(content)
+                existing_meta, _ = frontmatter_io.loads(existing_content)
+                new_meta, new_body = frontmatter_io.loads(content)
 
-                merged_meta = dict(existing_post.metadata)
-                merged_meta.update(new_post.metadata)
+                for key, value in new_meta.items():
+                    existing_meta[key] = value
 
-                new_post.metadata = merged_meta
-                content = frontmatter.dumps(new_post)
+                content = frontmatter_io.dumps(existing_meta, new_body)
             except FileNotFoundError:
                 pass
             except Exception as e:
                 logger.warning(f"Frontmatter merge failed for {path}, writing as-is: {e}")
 
         is_new, size = write_file_atomic(path, content, create_dirs=create_dirs)
+        fire_post_write("created" if is_new else "updated", [path])
 
         return vault_json_dumps({"path": path, "created": is_new, "size": size})
     except ValueError as e:
@@ -61,6 +61,7 @@ def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontma
 def vault_batch_frontmatter_update(updates: list[dict]) -> str:
     """Update frontmatter fields on multiple files without changing body content."""
     results = []
+    updated_paths: list[str] = []
 
     for update in updates:
         file_path = update.get("path", "")
@@ -68,21 +69,29 @@ def vault_batch_frontmatter_update(updates: list[dict]) -> str:
 
         try:
             content, _ = read_file(file_path)
-            post = frontmatter.loads(content)
+            metadata, body = frontmatter_io.loads(content)
+
+            if all(metadata.get(key) == value for key, value in fields.items()):
+                results.append({"path": file_path, "updated": False, "unchanged": True})
+                continue
 
             for key, value in fields.items():
-                post.metadata[key] = value
+                metadata[key] = value
 
-            new_content = frontmatter.dumps(post)
+            new_content = frontmatter_io.dumps(metadata, body)
             write_file_atomic(file_path, new_content, create_dirs=False)
 
             results.append({"path": file_path, "updated": True})
+            updated_paths.append(file_path)
         except FileNotFoundError:
             results.append({"path": file_path, "updated": False, "error": "File not found"})
         except ValueError as e:
             results.append({"path": file_path, "updated": False, "error": str(e)})
         except Exception as e:
             results.append({"path": file_path, "updated": False, "error": str(e)})
+
+    if updated_paths:
+        fire_post_write("updated_frontmatter", updated_paths)
 
     return vault_json_dumps({"results": results})
 
@@ -125,6 +134,7 @@ def vault_write_binary(
             )
 
         is_new, size = write_bytes_atomic(path, decoded, create_dirs=create_dirs, overwrite=overwrite)
+        fire_post_write("created" if is_new else "updated", [path])
         return vault_json_dumps(
             {
                 "path": path,
@@ -140,40 +150,130 @@ def vault_write_binary(
         return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type})
 
 
+def _replace_in_content(
+    *,
+    path: str,
+    content: str,
+    old_str: str,
+    new_str: str,
+    replace_all: bool,
+) -> dict:
+    occurrences = content.count(old_str)
+    if occurrences == 0:
+        return {"error": "old_str not found in file", "path": path}
+    if not replace_all and occurrences > 1:
+        return {
+            "error": f"old_str found {occurrences} times, must be unique",
+            "path": path,
+            "occurrences": occurrences,
+        }
+
+    size_before = len(content.encode("utf-8"))
+    new_content = content.replace(old_str, new_str) if replace_all else content.replace(old_str, new_str, 1)
+    size_after = len(new_content.encode("utf-8"))
+    changed = new_content != content
+
+    if changed:
+        write_file_atomic(path, new_content, create_dirs=False)
+
+    return {
+        "path": path,
+        "replaced": True,
+        "changed": changed,
+        "occurrences_found": occurrences,
+        "size_before": size_before,
+        "size_after": size_after,
+        "replace_all": replace_all,
+    }
+
+
 def vault_str_replace(path: str, old_str: str, new_str: str = "", replace_all: bool = False) -> str:
     """Replace an exact string in a file, optionally across all occurrences."""
     try:
         content, _ = read_file(path)
-        occurrences = content.count(old_str)
+        result = _replace_in_content(
+            path=path,
+            content=content,
+            old_str=old_str,
+            new_str=new_str,
+            replace_all=replace_all,
+        )
+        if result.get("changed"):
+            fire_post_write("updated", [path])
+        return vault_json_dumps(result)
+    except FileNotFoundError:
+        return vault_json_dumps({"error": f"File not found: {path}", "path": path})
+    except ValueError as e:
+        return vault_json_dumps({"error": str(e), "path": path})
+    except Exception as e:
+        logger.error(f"vault_str_replace error for {path}: {e}")
+        return vault_json_dumps({"error": str(e), "path": path})
 
-        if occurrences == 0:
-            return vault_json_dumps({"error": "old_str not found in file", "path": path})
-        if not replace_all and occurrences > 1:
-            return vault_json_dumps(
-                {
-                    "error": f"old_str found {occurrences} times, must be unique",
-                    "path": path,
-                    "occurrences": occurrences,
-                }
+
+def vault_batch_replace(updates: list[dict]) -> str:
+    """Replace exact strings across multiple files."""
+    results = []
+    changed_paths: list[str] = []
+
+    for update in updates:
+        path = update.get("path", "")
+        old_str = update.get("old_str", "")
+        new_str = update.get("new_str", "")
+        replace_all = bool(update.get("replace_all", False))
+
+        try:
+            content, _ = read_file(path)
+            result = _replace_in_content(
+                path=path,
+                content=content,
+                old_str=old_str,
+                new_str=new_str,
+                replace_all=replace_all,
             )
+            results.append(result)
+            if result.get("changed"):
+                changed_paths.append(path)
+        except FileNotFoundError:
+            results.append({"error": f"File not found: {path}", "path": path})
+        except ValueError as e:
+            results.append({"error": str(e), "path": path})
+        except Exception as e:
+            logger.error(f"vault_batch_replace error for {path}: {e}")
+            results.append({"error": str(e), "path": path})
 
-        size_before = len(content.encode("utf-8"))
-        new_content = content.replace(old_str, new_str) if replace_all else content.replace(old_str, new_str, 1)
-        size_after = len(new_content.encode("utf-8"))
-        changed = new_content != content
+    if changed_paths:
+        fire_post_write("updated", changed_paths)
 
-        if changed:
-            write_file_atomic(path, new_content, create_dirs=False)
+    return vault_json_dumps({"results": results})
 
+
+def vault_patch(path: str, old_text: str, new_text: str = "") -> str:
+    """Replace one unique occurrence of old_text in a file."""
+    try:
+        content, _ = read_file(path)
+        result = _replace_in_content(
+            path=path,
+            content=content,
+            old_str=old_text,
+            new_str=new_text,
+            replace_all=False,
+        )
+        if result.get("error"):
+            if "occurrences" in result:
+                result["error"] = (
+                    f"old_text matches {result['occurrences']} times, provide more context to make it unique"
+                )
+            else:
+                result["error"] = "old_text not found in file"
+            return vault_json_dumps(result)
+        if result.get("changed"):
+            fire_post_write("updated", [path])
         return vault_json_dumps(
             {
                 "path": path,
-                "replaced": True,
-                "changed": changed,
-                "occurrences_found": occurrences,
-                "size_before": size_before,
-                "size_after": size_after,
-                "replace_all": replace_all,
+                "patched": True,
+                "changed": result["changed"],
+                "size_after": result["size_after"],
             }
         )
     except FileNotFoundError:
@@ -181,5 +281,30 @@ def vault_str_replace(path: str, old_str: str, new_str: str = "", replace_all: b
     except ValueError as e:
         return vault_json_dumps({"error": str(e), "path": path})
     except Exception as e:
-        logger.error(f"vault_str_replace error for {path}: {e}")
+        logger.error(f"vault_patch error for {path}: {e}")
+        return vault_json_dumps({"error": str(e), "path": path})
+
+
+def vault_append(path: str, content: str, create_if_missing: bool = False) -> str:
+    """Append content to the end of a file."""
+    try:
+        is_new = False
+        try:
+            existing, _ = read_file(path)
+            if existing and not existing.endswith("\n") and content:
+                content = "\n" + content
+            new_content = existing + content
+        except FileNotFoundError:
+            if not create_if_missing:
+                return vault_json_dumps({"error": f"File not found: {path}", "path": path})
+            new_content = content
+            is_new = True
+
+        _, size = write_file_atomic(path, new_content, create_dirs=create_if_missing)
+        fire_post_write("created" if is_new else "updated", [path])
+        return vault_json_dumps({"path": path, "appended": True, "created": is_new, "size": size})
+    except ValueError as e:
+        return vault_json_dumps({"error": str(e), "path": path})
+    except Exception as e:
+        logger.error(f"vault_append error for {path}: {e}")
         return vault_json_dumps({"error": str(e), "path": path})

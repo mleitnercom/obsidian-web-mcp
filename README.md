@@ -79,9 +79,11 @@ This is a server that provides network access to your personal notes. Security i
 
 **MCP transport compatibility is preserved.** The server answers `GET /` and `HEAD /` with an MCP protocol probe response for newer clients, while keeping normal tool access behind the authenticated HTTP app.
 
-**A lightweight health endpoint is available.** `GET /health` stays readable without bearer auth and returns a compact operational snapshot for vault reachability, frontmatter-index state, and semantic-engine status.
+**A lightweight health endpoint is available.** `GET /health` stays readable without bearer auth and returns a compact operational snapshot for vault reachability, frontmatter-index state, semantic-engine status, and operational features like the optional post-write hook.
 
 **Optional push heartbeats are supported.** If `VAULT_MCP_HEARTBEAT_URL` is configured, the server emits periodic GET pings to a push-style monitoring endpoint while also surfacing the current heartbeat state in `/health`.
+
+**Optional post-write hooks are supported.** If `VAULT_MCP_POST_WRITE_CMD` is configured, the server can trigger a local follow-up command after vault mutations such as writes, deletes, moves, and appends. The command is executed without a shell and receives mutation metadata via environment variables.
 
 ## Tools
 
@@ -93,8 +95,11 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_analytics_findings` | Return detailed findings for one analytics category such as broken wikilinks or encoding issues, including wikilink classification details |
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
 | `vault_write_binary` | Write an allowed binary file such as PNG, JPEG, WebP, GIF, SVG, or PDF from base64 input |
-| `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content |
+| `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content, preserving existing YAML formatting where possible |
 | `vault_str_replace` | Replace one exact string in a file without rewriting the whole note body in the request; optional `replace_all=true` supports file-local bulk normalization |
+| `vault_batch_replace` | Run exact string replacements across multiple files in one call |
+| `vault_patch` | Replace one unique exact text occurrence in a file for a targeted edit |
+| `vault_append` | Append content to the end of a file, optionally creating it first |
 | `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
 | `vault_semantic_search` | Optional semantic, keyword, or hybrid search backed by a persistent FAISS index (supports `path_prefix`, `filter_tags`, `search_mode`, `min_score`) |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
@@ -157,6 +162,8 @@ The server starts on port 8420 by default. It serves MCP over Streamable HTTP at
 
 `vault_read` supports normal text/markdown files and also extracts text from `.pdf` files via `pypdf`. Other known binary formats are still rejected with a clear error instead of a misleading UTF-8 decode failure.
 
+Frontmatter-aware write paths now preserve formatting much better than the older PyYAML-style rewrite flow. `vault_write(merge_frontmatter=true)` and `vault_batch_frontmatter_update` keep quote styles, key order, inline comments, and flow-style lists where possible by round-tripping YAML with `ruamel.yaml`.
+
 For semantic troubleshooting, the maintenance CLI can scan the vault for non-UTF-8 markdown files, write a JSON report, and run an explicit repair pass for common legacy encodings:
 
 ```bash
@@ -165,7 +172,7 @@ vault-semantic doctor --scan-utf8 --report-path ./reports/utf8-doctor.json
 vault-semantic doctor --repair-utf8 --repair-encoding cp1252 --dry-run
 ```
 
-For vault hygiene beyond pure search, the server also exposes analytics endpoints for frontmatter gaps, broken wikilinks, suspicious tag variants, and encoding issues. Broken-link analytics now distinguish raw path mismatches that are likely repairable from targets that appear to be genuinely missing.
+For vault hygiene beyond pure search, the server also exposes analytics endpoints for frontmatter gaps, broken wikilinks, suspicious tag variants, and encoding issues. Broken-link analytics distinguish likely repairable path mismatches, genuinely missing targets, and ambiguous basename/path matches that still need operator judgement.
 
 ## Configuration
 
@@ -178,6 +185,8 @@ All configuration is via environment variables:
 | `VAULT_MCP_PORT` | No | `8420` | Port the HTTP server listens on |
 | `VAULT_MCP_HEARTBEAT_URL` | No | (empty) | Optional push-style heartbeat URL for Uptime Kuma, Healthchecks.io, Cronitor, or similar |
 | `VAULT_MCP_HEARTBEAT_INTERVAL` | No | `60` | Seconds between heartbeat pings when `VAULT_MCP_HEARTBEAT_URL` is configured |
+| `VAULT_MCP_POST_WRITE_CMD` | No | (empty) | Optional local follow-up command executed after vault mutations; receives `MCP_OPERATION`, `MCP_PATHS`, and `MCP_PATHS_JSON` via env vars |
+| `VAULT_MCP_POST_WRITE_TIMEOUT` | No | `30` | Timeout in seconds for the post-write hook command |
 | `VAULT_OAUTH_CLIENT_ID` | No | `vault-mcp-client` | OAuth 2.0 client ID for Claude integration |
 | `VAULT_OAUTH_CLIENT_SECRET` | Yes | (none) | OAuth 2.0 client secret for Claude integration |
 | `VAULT_OAUTH_AUTH_USERNAME` | No | (none) | Optional username required at `/oauth/authorize` before issuing an auth code |
@@ -338,6 +347,25 @@ The server coexists with Obsidian Sync (or any file-based sync mechanism) withou
 - If Sync and the MCP server write to the same file simultaneously, the last write wins (standard filesystem semantics) but neither write is corrupted
 - The frontmatter index watches for filesystem changes via `watchdog` and updates automatically when Sync brings in new files
 
+## Mutation Hooks
+
+If you want lightweight automation after vault mutations, configure:
+
+```bash
+export VAULT_MCP_POST_WRITE_CMD="/usr/local/bin/obsidian-post-write"
+export VAULT_MCP_POST_WRITE_TIMEOUT=30
+```
+
+The hook runs after writes, binary writes, append/patch/replace operations, moves, and deletes.
+
+The command is executed without `shell=True`. It receives:
+
+- `MCP_OPERATION` such as `created`, `updated`, `moved`, or `deleted`
+- `MCP_PATHS` as a colon-separated list of vault-relative paths
+- `MCP_PATHS_JSON` as a JSON array of the same paths
+
+This is useful for Git sync, backup triggers, or forwarding audit events, but it is intentionally opt-in and local to the machine that hosts the vault.
+
 ## Semantic Search
 
 Semantic search is optional and disabled by default. The current implementation is CPU-first and uses:
@@ -419,6 +447,8 @@ Tests use temporary directories and never touch your real vault.
 src/obsidian_vault_mcp/
     auth.py                 # Bearer token middleware (Starlette)
     config.py               # Environment variable configuration
+    frontmatter_io.py       # YAML round-trip helpers that preserve frontmatter formatting
+    hooks.py                # Optional post-write hook dispatcher
     frontmatter_index.py    # In-memory YAML frontmatter index with filesystem watcher
     models.py               # Pydantic input validation models
     oauth.py                # OAuth 2.0 authorization code flow with PKCE
@@ -430,7 +460,7 @@ src/obsidian_vault_mcp/
         read.py             # read, batch_read tools
         search.py           # full-text search, frontmatter search tools
         semantic_search.py  # optional semantic search + reindex tools
-        write.py            # write, batch_frontmatter_update tools
+        write.py            # write, append, patch, replace, and frontmatter update tools
 tests/
     test_chunker.py         # Semantic chunking tests
     conftest.py             # Shared fixtures (temp vault with sample files)

@@ -5,7 +5,7 @@ This is the practical operator path for the current production-oriented fork.
 ## Health and Heartbeat
 
 - `GET /health` returns a compact JSON status snapshot without bearer auth.
-- It includes vault reachability, frontmatter-index state, semantic-engine state, heartbeat state, and uptime.
+- It includes vault reachability, frontmatter-index state, semantic-engine state, heartbeat state, post-write-hook state, and uptime.
 - Open it directly in a browser if you just want a quick operator check.
 - If you want push-style monitoring, set:
 
@@ -15,6 +15,28 @@ VAULT_MCP_HEARTBEAT_INTERVAL=60
 ```
 
 - This is intentionally simple: the server emits periodic HTTP GET pings and also reports the last heartbeat attempt/success in `/health`.
+
+## Post-Write Hook
+
+If you want fire-and-forget follow-up automation after vault mutations, set:
+
+```ini
+VAULT_MCP_POST_WRITE_CMD=/usr/local/bin/obsidian-post-write
+VAULT_MCP_POST_WRITE_TIMEOUT=30
+```
+
+Runtime behavior:
+
+- the command runs locally on the vault host
+- it is executed without a shell
+- it receives `MCP_OPERATION`, `MCP_PATHS`, and `MCP_PATHS_JSON`
+- it is best-effort only; failures are logged but do not fail the user request
+
+Use cases:
+
+- git add/commit automation
+- backup triggers
+- audit or webhook forwarding through a local wrapper script
 
 ## UTF-8 Hygiene
 
@@ -100,6 +122,13 @@ Current categories:
 - `suspicious_tag_variants`
 - `encoding_issues`
 
+Broken-link findings now separate:
+
+- `repairable_path_mismatch`
+- `missing_target`
+- `ambiguous_basename`
+- `ambiguous_path_mismatch`
+
 ## PDF Reads
 
 - `vault_read` and `vault_batch_read` now extract text from `.pdf` files via `pypdf`.
@@ -116,3 +145,5 @@ The current operator baseline assumes:
 - `/health` plus optional push heartbeat
 - UTF-8 doctor scan/report/repair flow
 - read-only vault analytics summary/findings
+- format-stable frontmatter merge/update flow
+- optional post-write hook for local follow-up automation

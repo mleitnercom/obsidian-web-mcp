@@ -653,6 +653,7 @@ def test_build_app_exposes_health_without_bearer(vault_dir, monkeypatch):
     assert body["oauth"]["registered_client_persistence_enabled"] is True
     assert "restart_stable_reconnects" in body["oauth"]
     assert "heartbeat" in body
+    assert "post_write_hook" in body
     assert "uptime_seconds" in body
 
 

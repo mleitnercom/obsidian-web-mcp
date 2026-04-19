@@ -45,16 +45,20 @@ def _load_posts(path_prefix: str = "") -> tuple[list[dict], dict[str, list[str]]
             raw = path.read_text(encoding="utf-8")
             post = frontmatter.loads(raw)
             metadata = dict(post.metadata)
+            body = post.content
         except UnicodeDecodeError:
             raw = ""
             metadata = {}
+            body = ""
         except Exception:
             raw = path.read_text(encoding="utf-8", errors="ignore")
             metadata = {}
+            body = raw
         posts.append(
             {
                 "path": rel,
                 "text": raw,
+                "body": body,
                 "frontmatter": metadata,
                 "name": path.stem,
             }
@@ -122,29 +126,40 @@ def _classify_wikilink_target(
 
     basename_matches = basename_index.get(Path(clean).stem.lower(), [])
     if "/" not in clean and "." not in Path(clean).name:
-        if basename_matches:
+        if len(basename_matches) == 1:
             result = {
                 "status": "ok_basename",
                 "target": target,
-                "match_count": len(basename_matches),
+                "match_count": 1,
+                "resolved_candidate": basename_matches[0],
             }
-            if len(basename_matches) == 1:
-                result["resolved_candidate"] = basename_matches[0]
-            else:
-                result["candidates"] = basename_matches[:5]
             return result
+        if len(basename_matches) > 1:
+            return {
+                "status": "ambiguous_basename",
+                "target": target,
+                "match_count": len(basename_matches),
+                "candidates": basename_matches[:5],
+            }
         return {"status": "missing_target", "target": target}
 
-    if basename_matches:
+    if len(basename_matches) == 1:
         result = {
             "status": "repairable_path_mismatch",
             "target": target,
-            "match_count": len(basename_matches),
+            "match_count": 1,
+            "resolved_candidate": basename_matches[0],
         }
-        if len(basename_matches) == 1:
-            result["resolved_candidate"] = basename_matches[0]
-        else:
-            result["candidates"] = basename_matches[:5]
+        if relative_candidate is not None:
+            result["requested_candidate"] = relative_candidate
+        return result
+    if len(basename_matches) > 1:
+        result = {
+            "status": "ambiguous_path_mismatch",
+            "target": target,
+            "match_count": len(basename_matches),
+            "candidates": basename_matches[:5],
+        }
         if relative_candidate is not None:
             result["requested_candidate"] = relative_candidate
         return result
@@ -153,6 +168,23 @@ def _classify_wikilink_target(
     if relative_candidate is not None:
         result["requested_candidate"] = relative_candidate
     return result
+
+
+def _iter_wikilink_matches(text: str) -> list[dict]:
+    matches: list[dict] = []
+    for match in WIKILINK_RE.finditer(text):
+        start = match.start()
+        line = text.count("\n", 0, start) + 1
+        line_start = text.rfind("\n", 0, start)
+        column = start + 1 if line_start == -1 else start - line_start
+        matches.append(
+            {
+                "target": match.group(1),
+                "line": line,
+                "column": column,
+            }
+        )
+    return matches
 
 
 def _frontmatter_missing(posts: list[dict]) -> list[dict]:
@@ -177,10 +209,17 @@ def _broken_wikilinks(
 ) -> list[dict]:
     findings = []
     for post in posts:
-        for match in WIKILINK_RE.findall(post["text"]):
-            classification = _classify_wikilink_target(post["path"], match, basename_index, path_index)
+        for match in _iter_wikilink_matches(post["body"]):
+            classification = _classify_wikilink_target(post["path"], match["target"], basename_index, path_index)
             if not classification["status"].startswith("ok_"):
-                findings.append({"path": post["path"], **classification})
+                findings.append(
+                    {
+                        "path": post["path"],
+                        "line": match["line"],
+                        "column": match["column"],
+                        **classification,
+                    }
+                )
     return findings
 
 
@@ -190,6 +229,7 @@ def _broken_wikilink_breakdown(findings: list[dict]) -> dict[str, int]:
         "total": len(findings),
         "repairable": counts.get("repairable_path_mismatch", 0),
         "missing_target": counts.get("missing_target", 0),
+        "ambiguous": counts.get("ambiguous_basename", 0) + counts.get("ambiguous_path_mismatch", 0),
     }
 
 
@@ -241,6 +281,7 @@ def vault_analytics_summary(
                 "broken_wikilinks": broken_wikilink_breakdown["total"],
                 "broken_wikilinks_repairable": broken_wikilink_breakdown["repairable"],
                 "broken_wikilinks_missing_target": broken_wikilink_breakdown["missing_target"],
+                "broken_wikilinks_ambiguous": broken_wikilink_breakdown["ambiguous"],
                 "suspicious_tag_variants": len(suspicious_tags),
                 "encoding_issues": len(encoding_issues),
             },

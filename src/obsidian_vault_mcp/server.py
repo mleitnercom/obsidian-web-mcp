@@ -209,6 +209,10 @@ def _health_payload() -> dict:
         },
         "oauth": _oauth_health_payload(),
         "heartbeat": dict(_heartbeat_state),
+        "post_write_hook": {
+            "enabled": bool(config.VAULT_MCP_POST_WRITE_CMD),
+            "timeout_seconds": config.VAULT_MCP_POST_WRITE_TIMEOUT,
+        },
         "uptime_seconds": round(time.monotonic() - _server_started_at, 3),
     }
 
@@ -273,7 +277,10 @@ from .tools.analytics import (
     vault_analytics_summary as _vault_analytics_summary,
 )
 from .tools.write import (
+    vault_append as _vault_append,
+    vault_batch_replace as _vault_batch_replace,
     vault_batch_frontmatter_update as _vault_batch_frontmatter_update,
+    vault_patch as _vault_patch,
     vault_str_replace as _vault_str_replace,
     vault_write as _vault_write,
     vault_write_binary as _vault_write_binary,
@@ -294,7 +301,10 @@ from .tools.semantic_search import (
 from .models import (
     VaultAnalyticsFindingsInput,
     VaultAnalyticsSummaryInput,
+    VaultAppendInput,
+    VaultBatchReplaceInput,
     VaultReadInput,
+    VaultPatchInput,
     VaultStrReplaceInput,
     VaultWriteInput,
     VaultWriteBinaryInput,
@@ -468,7 +478,7 @@ def vault_write_binary(
 
 @mcp.tool(
     name="vault_batch_frontmatter_update",
-    description="Update YAML frontmatter fields on multiple files without changing body content. Each update merges new fields into existing frontmatter.",
+    description="Update YAML frontmatter fields on multiple files without changing body content. Each update merges new fields into existing frontmatter while preserving formatting where possible.",
     annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
 def vault_batch_frontmatter_update(updates: list[dict]) -> str:
@@ -480,6 +490,24 @@ def vault_batch_frontmatter_update(updates: list[dict]) -> str:
     return _run_logged_tool(
         "vault_batch_frontmatter_update",
         lambda: _vault_batch_frontmatter_update(inp.updates),
+        updates=len(inp.updates),
+    )
+
+
+@mcp.tool(
+    name="vault_batch_replace",
+    description="Replace exact strings across multiple files in one call. Each update can require a unique match or opt into replace_all=true.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_batch_replace(updates: list[dict]) -> str:
+    """Batch replace exact strings across multiple files."""
+    inp = VaultBatchReplaceInput(updates=updates)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_batch_replace",
+        lambda: _vault_batch_replace(inp.updates),
         updates=len(inp.updates),
     )
 
@@ -502,6 +530,46 @@ def vault_str_replace(path: str, old_str: str, new_str: str = "", replace_all: b
         old_str_bytes=len(inp.old_str.encode("utf-8")),
         new_str_bytes=len(inp.new_str.encode("utf-8")),
         replace_all=inp.replace_all,
+    )
+
+
+@mcp.tool(
+    name="vault_patch",
+    description="Replace one unique exact text occurrence in a file. Useful for targeted edits when a full rewrite would be overkill.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_patch(path: str, old_text: str, new_text: str = "") -> str:
+    """Replace a unique exact text occurrence in a file."""
+    inp = VaultPatchInput(path=path, old_text=old_text, new_text=new_text)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_patch",
+        lambda: _vault_patch(inp.path, inp.old_text, inp.new_text),
+        path=inp.path,
+        old_text_bytes=len(inp.old_text.encode("utf-8")),
+        new_text_bytes=len(inp.new_text.encode("utf-8")),
+    )
+
+
+@mcp.tool(
+    name="vault_append",
+    description="Append content to the end of a file. Useful for running logs, journals, and incremental note capture.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_append(path: str, content: str, create_if_missing: bool = False) -> str:
+    """Append content to the end of a file."""
+    inp = VaultAppendInput(path=path, content=content, create_if_missing=create_if_missing)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_append",
+        lambda: _vault_append(inp.path, inp.content, inp.create_if_missing),
+        path=inp.path,
+        content_bytes=len(inp.content.encode("utf-8")),
+        create_if_missing=inp.create_if_missing,
     )
 
 

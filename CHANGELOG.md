@@ -3,6 +3,22 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
+## [Unreleased]
+
+### Features
+- Add `vault_batch_replace` for exact-string replacements across multiple files in one request.
+- Add `vault_patch` and `vault_append` for lighter-weight targeted editing without requiring a full file rewrite.
+- Add an optional post-write hook via `VAULT_MCP_POST_WRITE_CMD` for local follow-up automation after vault mutations.
+
+### Reliability / Operator UX
+- Preserve YAML frontmatter formatting more faithfully during `vault_write(merge_frontmatter=true)` and `vault_batch_frontmatter_update` by round-tripping through `ruamel.yaml`.
+- Expand broken-link analytics with explicit ambiguous classifications and line/column metadata for findings.
+- Surface post-write-hook enablement in `/health`.
+
+### Docs / Tests
+- Document the post-write hook, format-stable frontmatter updates, and the new editing tools in the README and operations runbook.
+- Add regression coverage for YAML formatting preservation, batch replace, patch/append, ambiguous wikilinks, and the hook execution model.
+
 ## [v0.5.2] - 2026-04-17
 
 ### Features

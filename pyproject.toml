@@ -9,6 +9,7 @@ dependencies = [
     "python-frontmatter>=1.1.0",
     "pypdf>=5.4.0",
     "pydantic>=2.0",
+    "ruamel.yaml>=0.18.10",
     "watchdog>=4.0.0",
 ]
 

@@ -3,6 +3,7 @@
 import logging
 
 from .. import config
+from ..hooks import fire_post_write
 from ..vault import (
     delete_directory_path,
     delete_path,
@@ -45,6 +46,8 @@ def vault_move(source: str, destination: str, create_dirs: bool = True) -> str:
     """Move a file or directory within the vault."""
     try:
         moved = move_path(source, destination, create_dirs=create_dirs)
+        if moved:
+            fire_post_write("moved", [source, destination])
         return vault_json_dumps({"source": source, "destination": destination, "moved": moved})
     except ValueError as e:
         return vault_json_dumps({"error": str(e), "source": source, "destination": destination})
@@ -121,6 +124,8 @@ def vault_delete(path: str, confirm: bool = False) -> str:
 
     try:
         deleted = delete_path(path)
+        if deleted:
+            fire_post_write("deleted", [path])
         return vault_json_dumps({"path": path, "deleted": deleted})
     except ValueError as e:
         return vault_json_dumps({"error": str(e), "path": path})
@@ -139,6 +144,8 @@ def vault_delete_directory(path: str, confirm: bool = False, only_if_empty: bool
 
     try:
         deleted = delete_directory_path(path, only_if_empty=only_if_empty)
+        if deleted:
+            fire_post_write("deleted_directory", [path])
         return vault_json_dumps({"path": path, "deleted": deleted, "only_if_empty": only_if_empty})
     except (ValueError, NotADirectoryError) as e:
         return vault_json_dumps({"error": str(e), "path": path, "only_if_empty": only_if_empty})

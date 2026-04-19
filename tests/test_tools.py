@@ -11,7 +11,10 @@ import frontmatter
 from .conftest import build_simple_pdf_bytes
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
 from obsidian_vault_mcp.tools.write import (
+    vault_append,
+    vault_batch_replace,
     vault_batch_frontmatter_update,
+    vault_patch,
     vault_str_replace,
     vault_write,
     vault_write_binary,
@@ -92,6 +95,57 @@ def test_vault_write_merge_frontmatter(vault_dir):
     read_result = json.loads(vault_read("test-note.md"))
     assert read_result["frontmatter"]["status"] == "active"  # preserved
     assert read_result["frontmatter"]["priority"] == "high"  # new
+
+
+def test_vault_write_merge_frontmatter_preserves_yaml_formatting(vault_dir):
+    """Round-trip frontmatter updates should preserve quote style, list style, and comments."""
+    (vault_dir / "formatted.md").write_text(
+        "---\n"
+        "title: \"Hello\" # keep me\n"
+        "tags: [One, Two]\n"
+        "published: yes\n"
+        "---\n"
+        "\n"
+        "Original body.\n",
+        encoding="utf-8",
+    )
+
+    result = json.loads(vault_write(
+        "formatted.md",
+        "---\npriority: high\n---\n\nUpdated body.\n",
+        merge_frontmatter=True,
+    ))
+
+    assert "error" not in result
+    raw = (vault_dir / "formatted.md").read_text(encoding="utf-8")
+    assert 'title: "Hello" # keep me' in raw
+    assert "tags: [One, Two]" in raw
+    assert "published: yes" in raw
+    assert "priority: high" in raw
+    assert raw.rstrip().endswith("Updated body.")
+
+
+def test_vault_batch_frontmatter_update_preserves_yaml_formatting(vault_dir):
+    """Batch frontmatter updates should not normalize existing YAML style."""
+    (vault_dir / "formatted.md").write_text(
+        "---\n"
+        "title: \"Hello\" # keep me\n"
+        "tags: [One, Two]\n"
+        "---\n"
+        "\n"
+        "Body.\n",
+        encoding="utf-8",
+    )
+
+    result = json.loads(vault_batch_frontmatter_update([
+        {"path": "formatted.md", "fields": {"status": "active"}},
+    ]))
+
+    assert result["results"][0]["updated"] is True
+    raw = (vault_dir / "formatted.md").read_text(encoding="utf-8")
+    assert 'title: "Hello" # keep me' in raw
+    assert "tags: [One, Two]" in raw
+    assert "status: active" in raw
 
 
 def test_vault_write_binary_creates_png(vault_dir):
@@ -176,6 +230,48 @@ def test_vault_str_replace_can_replace_all_matches(vault_dir):
     assert (vault_dir / "repeated.md").read_text(encoding="utf-8") == "mail\nmail\n"
 
 
+def test_vault_batch_replace_updates_multiple_files(vault_dir):
+    """vault_batch_replace should handle mixed file-local replacements in one call."""
+    (vault_dir / "first.md").write_text("Mail\nMail\n", encoding="utf-8")
+    (vault_dir / "second.md").write_text("Status: Draft\n", encoding="utf-8")
+
+    result = json.loads(vault_batch_replace([
+        {"path": "first.md", "old_str": "Mail", "new_str": "mail", "replace_all": True},
+        {"path": "second.md", "old_str": "Draft", "new_str": "Published"},
+    ]))
+
+    assert len(result["results"]) == 2
+    assert (vault_dir / "first.md").read_text(encoding="utf-8") == "mail\nmail\n"
+    assert "Published" in (vault_dir / "second.md").read_text(encoding="utf-8")
+
+
+def test_vault_patch_updates_unique_match(vault_dir):
+    """vault_patch should replace one unique occurrence with patch-oriented naming."""
+    result = json.loads(vault_patch("test-note.md", "test note", "patched note"))
+
+    assert "error" not in result
+    assert result["patched"] is True
+    assert "patched note" in (vault_dir / "test-note.md").read_text(encoding="utf-8")
+
+
+def test_vault_append_appends_content(vault_dir):
+    """vault_append should append text to an existing file."""
+    result = json.loads(vault_append("test-note.md", "Appended line.\n"))
+
+    assert "error" not in result
+    assert result["appended"] is True
+    assert (vault_dir / "test-note.md").read_text(encoding="utf-8").endswith("Appended line.\n")
+
+
+def test_vault_append_can_create_file(vault_dir):
+    """vault_append can create a new file when explicitly allowed."""
+    result = json.loads(vault_append("logs/run.log", "Started\n", create_if_missing=True))
+
+    assert "error" not in result
+    assert result["created"] is True
+    assert (vault_dir / "logs" / "run.log").read_text(encoding="utf-8") == "Started\n"
+
+
 def test_vault_analytics_summary_reports_hygiene_findings(vault_dir):
     """vault_analytics_summary returns compact counts and examples."""
     (vault_dir / "missing-frontmatter.md").write_text("plain text\n", encoding="utf-8")
@@ -234,6 +330,40 @@ def test_vault_analytics_classifies_repairable_and_missing_wikilinks(vault_dir):
     assert repairable["status"] == "repairable_path_mismatch"
     assert repairable["resolved_candidate"] == "projects/actual-target.md"
     assert missing["status"] == "missing_target"
+
+
+def test_vault_analytics_flags_ambiguous_wikilinks(vault_dir):
+    """Ambiguous basename matches should be surfaced explicitly."""
+    (vault_dir / "team").mkdir()
+    (vault_dir / "archive").mkdir()
+    (vault_dir / "team" / "roadmap.md").write_text("team\n", encoding="utf-8")
+    (vault_dir / "archive" / "roadmap.md").write_text("archive\n", encoding="utf-8")
+    (vault_dir / "ambiguous-link.md").write_text("[[roadmap]]\n", encoding="utf-8")
+
+    summary = json.loads(vault_analytics_summary())
+    findings = json.loads(vault_analytics_findings("broken_wikilinks"))
+
+    assert summary["findings"]["broken_wikilinks"] == 1
+    assert summary["findings"]["broken_wikilinks_ambiguous"] == 1
+    finding = findings["results"][0]
+    assert finding["status"] == "ambiguous_basename"
+    assert finding["line"] == 1
+    assert finding["column"] == 1
+
+
+def test_vault_analytics_ignores_wikilinks_in_frontmatter(vault_dir):
+    """Links embedded in frontmatter metadata should not count as broken body wikilinks."""
+    (vault_dir / "meta-link.md").write_text(
+        "---\n"
+        "related: \"[[Missing Target]]\"\n"
+        "---\n"
+        "\n"
+        "Body without wikilinks.\n",
+        encoding="utf-8",
+    )
+
+    summary = json.loads(vault_analytics_summary())
+    assert summary["findings"]["broken_wikilinks"] == 0
 
 
 def test_vault_search_finds_text(vault_dir):

@@ -122,6 +122,56 @@ class VaultStrReplaceInput(BaseModel):
     )
 
 
+class VaultBatchReplaceInput(BaseModel):
+    """Replace exact strings across multiple files."""
+
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+
+    updates: list[dict] = Field(
+        ...,
+        description="List of updates, each with path, old_str, optional new_str, and optional replace_all",
+        min_length=1,
+        max_length=MAX_BATCH_SIZE,
+    )
+
+    @field_validator("updates")
+    @classmethod
+    def validate_updates(cls, v: list[dict]) -> list[dict]:
+        for i, item in enumerate(v):
+            if "path" not in item or not isinstance(item["path"], str):
+                raise ValueError(f"updates[{i}] must contain a 'path' key with a string value")
+            if "old_str" not in item or not isinstance(item["old_str"], str) or not item["old_str"]:
+                raise ValueError(f"updates[{i}] must contain a non-empty 'old_str' string")
+            if "new_str" in item and not isinstance(item["new_str"], str):
+                raise ValueError(f"updates[{i}] 'new_str' must be a string when provided")
+            if "replace_all" in item and not isinstance(item["replace_all"], bool):
+                raise ValueError(f"updates[{i}] 'replace_all' must be a boolean when provided")
+        return v
+
+
+class VaultPatchInput(BaseModel):
+    """Apply a targeted unique patch to a file."""
+
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+
+    path: str = Field(..., description="Relative path from vault root", min_length=1, max_length=500)
+    old_text: str = Field(..., description="Unique exact text to replace", min_length=1, max_length=MAX_CONTENT_SIZE)
+    new_text: str = Field(default="", description="Replacement text", max_length=MAX_CONTENT_SIZE)
+
+
+class VaultAppendInput(BaseModel):
+    """Append content to the end of a file."""
+
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+
+    path: str = Field(..., description="Relative path from vault root", min_length=1, max_length=500)
+    content: str = Field(..., description="Text to append", max_length=MAX_CONTENT_SIZE)
+    create_if_missing: bool = Field(
+        default=False,
+        description="If true, create the file when it does not already exist",
+    )
+
+
 class VaultAnalyticsSummaryInput(BaseModel):
     """Build a compact analytics summary for a vault path."""
 
