@@ -44,6 +44,31 @@ _heartbeat_state = {
 }
 
 
+class McpRefreshCompatibilityMiddleware:
+    """Normalize permissive refresh probes from clients that omit MCP-friendly Accept headers."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("method") == "POST" and scope.get("path") in {"/", "/mcp"}:
+            headers = list(scope.get("headers", []))
+            accept_index = next(
+                (idx for idx, (name, _value) in enumerate(headers) if name.lower() == b"accept"),
+                None,
+            )
+            desired = b"application/json, text/event-stream"
+            if accept_index is None:
+                headers.append((b"accept", desired))
+                scope = {**scope, "headers": headers}
+            else:
+                name, value = headers[accept_index]
+                if value.strip() in {b"", b"*/*"}:
+                    headers[accept_index] = (name, desired)
+                    scope = {**scope, "headers": headers}
+        await self.app(scope, receive, send)
+
+
 def _sync_heartbeat_config_state() -> None:
     """Refresh heartbeat state from current config values."""
     _heartbeat_state["enabled"] = bool(config.VAULT_MCP_HEARTBEAT_URL)
@@ -861,29 +886,6 @@ def build_app():
         None,
     )
 
-    class _RootMcpTransportAlias:
-        """ASGI wrapper that keeps root POST probes compatible with MCP transport expectations."""
-
-        def __init__(self, transport):
-            self.transport = transport
-
-        async def __call__(self, scope, receive, send):
-            headers = list(scope.get("headers", []))
-            accept_index = next(
-                (idx for idx, (name, _value) in enumerate(headers) if name.lower() == b"accept"),
-                None,
-            )
-            desired = b"application/json, text/event-stream"
-            if accept_index is None:
-                headers.append((b"accept", desired))
-                scope = {**scope, "headers": headers}
-            else:
-                name, value = headers[accept_index]
-                if value.strip() in {b"", b"*/*"}:
-                    headers[accept_index] = (name, desired)
-                    scope = {**scope, "headers": headers}
-            await self.transport(scope, receive, send)
-
     async def mcp_root_probe(request):
         accept = request.headers.get("accept", "")
         headers = {
@@ -907,13 +909,14 @@ def build_app():
         return JSONResponse(_health_payload())
 
     if mcp_transport is not None:
-        app.routes.insert(0, Route("/", endpoint=_RootMcpTransportAlias(mcp_transport), methods=["POST"]))
+        app.routes.insert(0, Route("/", endpoint=mcp_transport, methods=["POST"]))
     app.routes.insert(0, Route("/", mcp_root_probe, methods=["GET", "HEAD"]))
     app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
 
     for route in oauth_routes:
         app.routes.insert(0, route)
 
+    app.add_middleware(McpRefreshCompatibilityMiddleware)
     app.add_middleware(BearerAuthMiddleware)
     return app
 
