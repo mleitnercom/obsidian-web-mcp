@@ -97,6 +97,10 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_analytics_findings` | Return detailed findings for one analytics category such as broken wikilinks or encoding issues, including wikilink classification details |
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
 | `vault_write_binary` | Write an allowed binary file such as PNG, JPEG, WebP, GIF, SVG, or PDF from base64 input |
+| `vault_write_binary_init` | Initialize a staged chunked binary upload when one base64 payload would be too large for a single tool call |
+| `vault_write_binary_chunk` | Append one base64-encoded chunk to a staged binary upload in strict sequential order |
+| `vault_write_binary_commit` | Verify a staged binary upload with a SHA-256 checksum and atomically commit it into the vault |
+| `vault_write_binary_abort` | Discard a staged chunked binary upload without writing it into the vault |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content, preserving existing YAML formatting where possible |
 | `vault_str_replace` | Replace one exact string in a file without rewriting the whole note body in the request; optional `replace_all=true` supports file-local bulk normalization |
 | `vault_batch_replace` | Run exact string replacements across multiple files in one call |
@@ -301,6 +305,18 @@ Practical recommendations:
 4. If the connector expects `/authorize` instead of `/oauth/authorize`, this fork already provides the compatibility alias.
 
 In practice, the fixes in this fork around OAuth discovery, forwarded-host handling, `/authorize` compatibility, and date serialization were added specifically to improve real client interoperability, including ChatGPT-style connector flows.
+
+### Chunked Binary Uploads
+
+If a single `vault_write_binary` call would be too large for the agent or connector payload limit, use the staged chunked flow instead:
+
+1. `vault_write_binary_init`
+2. one or more `vault_write_binary_chunk` calls
+3. `vault_write_binary_commit` with the SHA-256 checksum of the full decoded file
+
+If you need to cancel the upload, call `vault_write_binary_abort`.
+
+Chunked uploads are staged under the server cache directory and only become visible in the vault after a successful commit.
 
 ## Remote Access with Cloudflare Tunnel
 
