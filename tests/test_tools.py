@@ -1,6 +1,7 @@
 """Integration tests for tool functions."""
 
 import base64
+import hashlib
 import json
 import os
 from datetime import date, datetime
@@ -8,11 +9,16 @@ from datetime import date, datetime
 import pytest
 import frontmatter
 
+from obsidian_vault_mcp import config
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
 from obsidian_vault_mcp.tools.write import (
     vault_batch_frontmatter_update,
     vault_str_replace,
     vault_write,
+    vault_write_binary_abort,
+    vault_write_binary_chunk,
+    vault_write_binary_commit,
+    vault_write_binary_init,
     vault_write_binary,
 )
 from obsidian_vault_mcp.tools.analytics import vault_analytics_findings, vault_analytics_summary
@@ -135,6 +141,80 @@ def test_vault_write_binary_requires_overwrite_opt_in(vault_dir):
     assert "error" in result
     assert "overwrite=true" in result["error"]
     assert (vault_dir / "assets" / "visual.png").read_bytes() == b"old"
+
+
+def test_vault_write_binary_chunked_commit_creates_pdf(vault_dir, monkeypatch):
+    """Chunked binary upload should stage, verify, and commit a file successfully."""
+    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    pdf_bytes = b"%PDF-1.7\n%chunked\nbody"
+
+    init_result = json.loads(
+        vault_write_binary_init(
+            "assets/chunked.pdf",
+            "application/pdf",
+            len(pdf_bytes),
+        )
+    )
+    assert "error" not in init_result
+
+    upload_id = init_result["upload_id"]
+    chunk_a = json.loads(vault_write_binary_chunk(upload_id, 0, base64.b64encode(pdf_bytes[:8]).decode("ascii")))
+    chunk_b = json.loads(vault_write_binary_chunk(upload_id, 1, base64.b64encode(pdf_bytes[8:]).decode("ascii")))
+    commit_result = json.loads(
+        vault_write_binary_commit(
+            upload_id,
+            hashlib.sha256(pdf_bytes).hexdigest(),
+        )
+    )
+
+    assert chunk_a["received_bytes"] == 8
+    assert chunk_b["complete"] is True
+    assert commit_result["created"] is True
+    assert commit_result["size"] == len(pdf_bytes)
+    assert (vault_dir / "assets" / "chunked.pdf").read_bytes() == pdf_bytes
+    assert not ((vault_dir / ".obsidian-vault-mcp" / "upload-staging" / upload_id).exists())
+
+
+def test_vault_write_binary_chunked_rejects_out_of_order_chunk(vault_dir, monkeypatch):
+    """Chunked binary upload should enforce strictly increasing chunk indexes."""
+    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    payload = b"abcdef"
+
+    init_result = json.loads(vault_write_binary_init("assets/out-of-order.pdf", "application/pdf", len(payload)))
+    upload_id = init_result["upload_id"]
+    result = json.loads(vault_write_binary_chunk(upload_id, 1, base64.b64encode(payload).decode("ascii")))
+
+    assert "error" in result
+    assert "expected 0" in result["error"]
+
+
+def test_vault_write_binary_chunked_detects_checksum_mismatch(vault_dir, monkeypatch):
+    """Commit should fail if the provided checksum does not match the staged bytes."""
+    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    payload = b"checksum-test"
+
+    init_result = json.loads(vault_write_binary_init("assets/checksum.pdf", "application/pdf", len(payload)))
+    upload_id = init_result["upload_id"]
+    json.loads(vault_write_binary_chunk(upload_id, 0, base64.b64encode(payload).decode("ascii")))
+    commit_result = json.loads(vault_write_binary_commit(upload_id, "0" * 64))
+
+    assert commit_result["error"] == "Checksum mismatch"
+    assert commit_result["actual_checksum"] == hashlib.sha256(payload).hexdigest()
+    assert not (vault_dir / "assets" / "checksum.pdf").exists()
+
+
+def test_vault_write_binary_chunked_abort_discards_staged_upload(vault_dir, monkeypatch):
+    """Abort should remove staged chunk data and metadata."""
+    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    payload = b"abort-me"
+
+    init_result = json.loads(vault_write_binary_init("assets/abort.pdf", "application/pdf", len(payload)))
+    upload_id = init_result["upload_id"]
+    json.loads(vault_write_binary_chunk(upload_id, 0, base64.b64encode(payload).decode("ascii")))
+    abort_result = json.loads(vault_write_binary_abort(upload_id))
+
+    assert abort_result["aborted"] is True
+    assert not ((vault_dir / ".obsidian-vault-mcp" / "upload-staging" / upload_id).exists())
 
 
 def test_vault_str_replace_updates_unique_match(vault_dir):

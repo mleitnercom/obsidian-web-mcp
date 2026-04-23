@@ -94,6 +94,107 @@ class VaultWriteBinaryInput(BaseModel):
     )
 
 
+class VaultWriteBinaryInitInput(BaseModel):
+    """Initialize a staged chunked binary upload."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(
+        ...,
+        description="Relative path from vault root including filename and extension",
+        min_length=1,
+        max_length=500,
+    )
+    media_type: Literal[
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "image/svg+xml",
+        "application/pdf",
+    ] = Field(
+        ...,
+        description="MIME type of the binary content",
+    )
+    total_size: int = Field(
+        ...,
+        ge=1,
+        le=MAX_BINARY_SIZE,
+        description="Total decoded file size in bytes expected across all chunks",
+    )
+    overwrite: bool = Field(
+        default=False,
+        description="If true, allow replacing an existing file at commit time",
+    )
+    create_dirs: bool = Field(
+        default=True,
+        description="Create parent directories if they don't exist when the upload is committed",
+    )
+
+
+class VaultWriteBinaryChunkInput(BaseModel):
+    """Append one chunk to a staged chunked binary upload."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    upload_id: str = Field(
+        ...,
+        description="Upload session identifier returned by vault_write_binary_init",
+        min_length=8,
+        max_length=100,
+    )
+    chunk_index: int = Field(
+        ...,
+        ge=0,
+        description="Zero-based sequential chunk number; must match the next expected index",
+    )
+    data: str = Field(
+        ...,
+        description="Base64-encoded binary chunk payload",
+        min_length=1,
+        max_length=((256 * 1024 + 2) // 3) * 4 + 1024,
+    )
+
+
+class VaultWriteBinaryCommitInput(BaseModel):
+    """Finalize a staged chunked binary upload."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    upload_id: str = Field(
+        ...,
+        description="Upload session identifier returned by vault_write_binary_init",
+        min_length=8,
+        max_length=100,
+    )
+    expected_checksum: str = Field(
+        ...,
+        description="SHA-256 checksum of the full decoded file, hex encoded",
+        min_length=64,
+        max_length=64,
+    )
+
+    @field_validator("expected_checksum")
+    @classmethod
+    def validate_expected_checksum(cls, v: str) -> str:
+        if any(ch not in "0123456789abcdefABCDEF" for ch in v):
+            raise ValueError("expected_checksum must be a 64-character hex SHA-256 digest")
+        return v.lower()
+
+
+class VaultWriteBinaryAbortInput(BaseModel):
+    """Abort a staged chunked binary upload."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    upload_id: str = Field(
+        ...,
+        description="Upload session identifier returned by vault_write_binary_init",
+        min_length=8,
+        max_length=100,
+    )
+
+
 class VaultStrReplaceInput(BaseModel):
     """Replace exactly one unique string in an existing file."""
 

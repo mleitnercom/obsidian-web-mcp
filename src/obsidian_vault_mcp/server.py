@@ -277,6 +277,10 @@ from .tools.analytics import (
 )
 from .tools.write import (
     vault_batch_frontmatter_update as _vault_batch_frontmatter_update,
+    vault_write_binary_abort as _vault_write_binary_abort,
+    vault_write_binary_chunk as _vault_write_binary_chunk,
+    vault_write_binary_commit as _vault_write_binary_commit,
+    vault_write_binary_init as _vault_write_binary_init,
     vault_str_replace as _vault_str_replace,
     vault_write as _vault_write,
     vault_write_binary as _vault_write_binary,
@@ -300,7 +304,11 @@ from .models import (
     VaultReadInput,
     VaultStrReplaceInput,
     VaultWriteInput,
+    VaultWriteBinaryAbortInput,
     VaultWriteBinaryInput,
+    VaultWriteBinaryChunkInput,
+    VaultWriteBinaryCommitInput,
+    VaultWriteBinaryInitInput,
     VaultBatchReadInput,
     VaultBatchFrontmatterUpdateInput,
     VaultSearchInput,
@@ -466,6 +474,96 @@ def vault_write_binary(
         overwrite=inp.overwrite,
         create_dirs=inp.create_dirs,
         base64_bytes=len(inp.data),
+    )
+
+
+@mcp.tool(
+    name="vault_write_binary_init",
+    description="Initialize a chunked binary upload into the Obsidian vault. Use this when one base64 payload would be too large for a single tool call.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_write_binary_init(
+    path: str,
+    media_type: str,
+    total_size: int,
+    overwrite: bool = False,
+    create_dirs: bool = True,
+) -> str:
+    """Initialize a staged binary upload."""
+    inp = VaultWriteBinaryInitInput(
+        path=path,
+        media_type=media_type,
+        total_size=total_size,
+        overwrite=overwrite,
+        create_dirs=create_dirs,
+    )
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_write_binary_init",
+        lambda: _vault_write_binary_init(inp.path, inp.media_type, inp.total_size, inp.overwrite, inp.create_dirs),
+        path=inp.path,
+        media_type=inp.media_type,
+        total_size=inp.total_size,
+        overwrite=inp.overwrite,
+        create_dirs=inp.create_dirs,
+    )
+
+
+@mcp.tool(
+    name="vault_write_binary_chunk",
+    description="Append one base64-encoded chunk to a staged binary upload. Chunks must be sent in strict ascending order starting at chunk_index=0.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_write_binary_chunk(upload_id: str, chunk_index: int, data: str) -> str:
+    """Append one chunk to a staged binary upload."""
+    inp = VaultWriteBinaryChunkInput(upload_id=upload_id, chunk_index=chunk_index, data=data)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_write_binary_chunk",
+        lambda: _vault_write_binary_chunk(inp.upload_id, inp.chunk_index, inp.data),
+        upload_id=inp.upload_id,
+        chunk_index=inp.chunk_index,
+        base64_bytes=len(inp.data),
+    )
+
+
+@mcp.tool(
+    name="vault_write_binary_commit",
+    description="Verify and commit a staged chunked binary upload into the vault using a SHA-256 checksum over the full decoded file.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_write_binary_commit(upload_id: str, expected_checksum: str) -> str:
+    """Commit a staged binary upload."""
+    inp = VaultWriteBinaryCommitInput(upload_id=upload_id, expected_checksum=expected_checksum)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_write_binary_commit",
+        lambda: _vault_write_binary_commit(inp.upload_id, inp.expected_checksum),
+        upload_id=inp.upload_id,
+    )
+
+
+@mcp.tool(
+    name="vault_write_binary_abort",
+    description="Abort and discard a staged chunked binary upload.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_write_binary_abort(upload_id: str) -> str:
+    """Abort a staged binary upload."""
+    inp = VaultWriteBinaryAbortInput(upload_id=upload_id)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_write_binary_abort",
+        lambda: _vault_write_binary_abort(inp.upload_id),
+        upload_id=inp.upload_id,
     )
 
 
