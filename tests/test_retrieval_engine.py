@@ -86,6 +86,7 @@ def test_lifespan_registers_semantic_callback_only_when_enabled(monkeypatch):
 def test_mcp_tool_blocks_full_reindex_by_default(monkeypatch):
     """Full semantic rebuilds should not be triggerable by normal MCP clients by default."""
     monkeypatch.setattr(server.config, "RATE_LIMIT_WRITE", 999)
+    monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_REINDEX", False)
     monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_FULL_REINDEX", False)
     monkeypatch.setattr(server, "current_auth_principal", lambda: "test-token")
 
@@ -98,9 +99,26 @@ def test_mcp_tool_blocks_full_reindex_by_default(monkeypatch):
     assert calls == []
 
 
-def test_mcp_tool_allows_incremental_reindex(monkeypatch):
-    """Incremental semantic refreshes remain available through MCP."""
+def test_mcp_tool_blocks_incremental_reindex_by_default(monkeypatch):
+    """Incremental semantic refreshes are also blocked by default in live MCP operation."""
     monkeypatch.setattr(server.config, "RATE_LIMIT_WRITE", 999)
+    monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_REINDEX", False)
+    monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_FULL_REINDEX", False)
+    monkeypatch.setattr(server, "current_auth_principal", lambda: "test-token")
+
+    calls = []
+    monkeypatch.setattr(server, "_vault_reindex", lambda full: calls.append(full) or "{\"mode\": \"incremental\"}")
+
+    result = json.loads(server.vault_reindex(False))
+
+    assert "disabled" in result["error"].lower()
+    assert calls == []
+
+
+def test_mcp_tool_can_opt_in_to_incremental_reindex(monkeypatch):
+    """Operators can explicitly re-enable incremental MCP reindexing via config."""
+    monkeypatch.setattr(server.config, "RATE_LIMIT_WRITE", 999)
+    monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_REINDEX", True)
     monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_FULL_REINDEX", False)
     monkeypatch.setattr(server, "current_auth_principal", lambda: "test-token")
     monkeypatch.setattr(server, "_vault_reindex", lambda full: "{\"mode\": \"incremental\"}")
@@ -113,6 +131,7 @@ def test_mcp_tool_allows_incremental_reindex(monkeypatch):
 def test_mcp_tool_can_opt_in_to_full_reindex(monkeypatch):
     """Operators can explicitly re-enable MCP full rebuilds via config."""
     monkeypatch.setattr(server.config, "RATE_LIMIT_WRITE", 999)
+    monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_REINDEX", True)
     monkeypatch.setattr(server.config, "SEMANTIC_ALLOW_MCP_FULL_REINDEX", True)
     monkeypatch.setattr(server, "current_auth_principal", lambda: "test-token")
 

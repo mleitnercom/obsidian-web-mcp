@@ -107,7 +107,7 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
 | `vault_list` | List directory contents with recursion depth, glob filtering, and file/dir toggles |
 | `vault_tree` | Return a compact nested JSON tree of folders and files for quick orientation |
-| `vault_reindex` | Run incremental semantic refreshes; full rebuilds are blocked by default in live MCP operation unless explicitly re-enabled |
+| `vault_reindex` | Rebuild the semantic cache, but keep it disabled by default in live MCP operation because MCP-triggered refreshes can be long-running |
 | `vault_move` | Move or rename a file or directory within the vault |
 | `vault_delete` | Soft-delete a file by moving it to `.trash/` (requires explicit confirmation) |
 | `vault_delete_directory` | Soft-delete an empty directory by moving it to `.trash/` (requires explicit confirmation) |
@@ -234,7 +234,8 @@ All configuration is via environment variables:
 | `VAULT_SEMANTIC_MAX_RESULTS` | No | `20` | Hard semantic result cap |
 | `VAULT_SEMANTIC_AUTO_REINDEX` | No | `false` | Allow watcher-driven refreshes |
 | `VAULT_SEMANTIC_BUILD_ON_DEMAND` | No | `false` | Build cache on first semantic query |
-| `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX` | No | `false` | Allow `vault_reindex(full=true)` via MCP |
+| `VAULT_SEMANTIC_ALLOW_MCP_REINDEX` | No | `false` | Allow `vault_reindex(...)` via MCP |
+| `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX` | No | `false` | Allow `vault_reindex(full=true)` once MCP reindexing is enabled |
 | `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | No | `4` | Debounce for auto-updates |
 
 ### Limits and Rate Limits
@@ -417,7 +418,7 @@ Set `VAULT_SEMANTIC_EMBED_BACKEND` to control backend choice:
 Queries are answered with a hybrid score that blends semantic similarity with keyword relevance. The semantic index is persisted on disk so normal searches stay fast after restart.
 Semantic initialization is lazy: the index builds on first semantic-tool use, not during normal OAuth/tool discovery.
 
-`vault_reindex(full=true)` performs a full rebuild. `vault_reindex(full=false)` performs an incremental refresh based on changed/deleted files.
+`vault_reindex(full=true)` performs a full rebuild. `vault_reindex(full=false)` performs an incremental refresh based on changed/deleted files, but both paths are disabled by default for live MCP clients because the incremental path still triggers a long-running vector rebuild in practice.
 
 For production stability, this fork now defaults to a conservative semantic lifecycle:
 
@@ -425,12 +426,15 @@ For production stability, this fork now defaults to a conservative semantic life
 - the live MCP service does not auto-build a missing cache during normal tool requests
 - watcher-driven semantic auto-refresh is disabled by default
 - full rebuilds are expected to run manually or via the optional nightly timer
+- MCP-triggered `vault_reindex(...)` is disabled by default; prefer `vault-semantic reindex --mode incremental/full`
 
 If you explicitly want the older live-update behavior, enable it with:
 
 ```bash
 export VAULT_SEMANTIC_AUTO_REINDEX=1
 export VAULT_SEMANTIC_BUILD_ON_DEMAND=1
+export VAULT_SEMANTIC_ALLOW_MCP_REINDEX=true
+export VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX=true
 ```
 
 `vault_semantic_search` accepts `search_mode=hybrid` (default), `semantic`, or `keyword`.

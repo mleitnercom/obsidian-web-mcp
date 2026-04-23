@@ -3,6 +3,13 @@
 All notable changes to this fork will be documented in this file.
 This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
+## [Unreleased]
+
+### Reliability / Operator UX
+- Block `vault_reindex(full=false)` through the live MCP tool by default, not just full rebuilds, because incremental MCP-triggered refreshes still fan out into long-running vector-index rebuilds in practice.
+- Add `VAULT_SEMANTIC_ALLOW_MCP_REINDEX` as the explicit opt-in switch for any MCP-triggered semantic reindexing, while keeping full rebuilds behind the existing `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX` gate.
+- Update the README and operations runbook so live operators are pointed to `vault-semantic reindex --mode incremental/full` and the nightly job instead of the MCP reindex tool.
+
 ## [v0.6.0] - 2026-04-19
 
 ### Features

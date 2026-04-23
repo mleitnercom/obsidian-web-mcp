@@ -75,8 +75,10 @@ Recommended operator order:
 
 ## Reindex Discipline
 
-- Keep `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX=false` in normal live operation.
+- Keep `VAULT_SEMANTIC_ALLOW_MCP_REINDEX=false` in normal live operation.
+- Keep `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX=false` unless you intentionally also re-enable MCP reindexing.
 - Prefer `vault-semantic reindex --mode full` manually or via a nightly timer.
+- If you need an ad-hoc live refresh, prefer `vault-semantic reindex --mode incremental` over the MCP tool.
 - Leave `VAULT_SEMANTIC_AUTO_REINDEX=0` on stability-sensitive systems unless you explicitly want watcher-driven semantic refreshes.
 
 ## OAuth Client Registrations

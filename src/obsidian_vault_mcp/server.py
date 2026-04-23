@@ -760,7 +760,7 @@ def vault_tree(path: str = "", depth: int = 3) -> str:
 
 @mcp.tool(
     name="vault_reindex",
-    description="Rebuild the optional semantic-search cache from the current vault state.",
+    description="Rebuild the optional semantic-search cache from the current vault state. Disabled by default in live MCP operation unless explicitly re-enabled.",
     annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
 def vault_reindex(full: bool = True) -> str:
@@ -769,14 +769,27 @@ def vault_reindex(full: bool = True) -> str:
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
         return limited
+    if not config.SEMANTIC_ALLOW_MCP_REINDEX:
+        logger.warning("Blocked MCP-triggered semantic reindex", extra={"full": inp.full})
+        return vault_json_dumps(
+            {
+                "error": (
+                    "Semantic reindex via MCP tool is disabled in live operation because even "
+                    "incremental refreshes can trigger long-running vector rebuilds. Use "
+                    "vault-semantic reindex --mode incremental/full or the nightly rebuild job, "
+                    "or set VAULT_SEMANTIC_ALLOW_MCP_REINDEX=true to opt in."
+                )
+            }
+        )
     if inp.full and not config.SEMANTIC_ALLOW_MCP_FULL_REINDEX:
         logger.warning("Blocked MCP-triggered full semantic reindex")
         return vault_json_dumps(
             {
                 "error": (
                     "Full semantic reindex via MCP tool is disabled in live operation. "
-                    "Use vault-semantic reindex --mode full or the nightly rebuild job, "
-                    "or set VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX=true to opt in."
+                    "Set VAULT_SEMANTIC_ALLOW_MCP_REINDEX=true and "
+                    "VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX=true to opt in, or use "
+                    "vault-semantic reindex --mode full / the nightly rebuild job instead."
                 )
             }
         )
