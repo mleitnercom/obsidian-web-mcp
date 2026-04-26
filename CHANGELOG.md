@@ -7,6 +7,8 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [v0.6.1] - 2026-04-26
 
+This release hardens the fork for more realistic live operation: safer large-file ingestion, direct URL-based imports, and a real subtree-boundary model so operators can expose only the parts of a vault they actually want MCP clients to see.
+
 ### Features
 - Add a resumable binary upload flow with `vault_upload_init`, `vault_upload_part`, `vault_upload_status`, `vault_upload_commit`, and `vault_upload_abort` so larger LLM-generated files can recover from missing or retried chunks.
 - Add `vault_import_url` so the server can import allowed binary files directly from HTTP(S) URLs instead of forcing every byte through a tool-call argument.
