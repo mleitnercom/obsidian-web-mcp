@@ -97,6 +97,8 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_analytics_findings` | Return detailed findings for one analytics category such as broken wikilinks or encoding issues, including wikilink classification details |
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
 | `vault_write_binary` | Write an allowed binary file such as PNG, JPEG, WebP, GIF, SVG, or PDF from base64 input |
+| `vault_upload_init` / `vault_upload_part` / `vault_upload_status` / `vault_upload_commit` / `vault_upload_abort` | Resumable binary upload flow for larger LLM-generated files, with missing-part recovery and SHA-256 verification |
+| `vault_import_url` | Import an allowed binary file from an HTTP(S) URL by letting the server download and verify it |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content, preserving existing YAML formatting where possible |
 | `vault_str_replace` | Replace one exact string in a file without rewriting the whole note body in the request; optional `replace_all=true` supports file-local bulk normalization |
 | `vault_batch_replace` | Run exact string replacements across multiple files in one call |
@@ -244,6 +246,9 @@ All configuration is via environment variables:
 |----------|----------|---------|-------------|
 | `VAULT_MAX_CONTENT_SIZE` | No | `1000000` | Max bytes per text write |
 | `VAULT_MAX_BINARY_SIZE` | No | `10485760` | Max decoded bytes for `vault_write_binary` |
+| `VAULT_MAX_UPLOAD_PART_SIZE` | No | `524288` | Max decoded bytes per resumable upload part |
+| `VAULT_IMPORT_URL_TIMEOUT_SECONDS` | No | `30` | Timeout for server-side URL imports |
+| `VAULT_IMPORT_URL_ALLOW_PRIVATE` | No | `false` | Allow URL imports from private/local network addresses |
 | `VAULT_MAX_BATCH_SIZE` | No | `20` | Max files in batch operations |
 | `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard search result cap |
 | `VAULT_DEFAULT_SEARCH_RESULTS` | No | `20` | Default search result count |

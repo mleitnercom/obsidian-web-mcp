@@ -1,6 +1,7 @@
 """Integration tests for tool functions."""
 
 import base64
+import hashlib
 import json
 import os
 from datetime import date, datetime
@@ -14,11 +15,17 @@ from obsidian_vault_mcp.tools.write import (
     vault_append,
     vault_batch_replace,
     vault_batch_frontmatter_update,
+    vault_import_url,
     vault_patch,
     vault_str_replace,
+    vault_upload_commit,
+    vault_upload_init,
+    vault_upload_part,
+    vault_upload_status,
     vault_write,
     vault_write_binary,
 )
+import obsidian_vault_mcp.tools.write as write_tools
 from obsidian_vault_mcp.tools.analytics import vault_analytics_findings, vault_analytics_summary
 from obsidian_vault_mcp.tools.search import vault_search
 from obsidian_vault_mcp.tools.manage import vault_delete, vault_delete_directory, vault_list, vault_tree
@@ -192,6 +199,99 @@ def test_vault_write_binary_requires_overwrite_opt_in(vault_dir):
     assert "error" in result
     assert "overwrite=true" in result["error"]
     assert (vault_dir / "assets" / "visual.png").read_bytes() == b"old"
+
+
+def test_resumable_upload_supports_status_retry_and_commit(vault_dir, monkeypatch):
+    """Resumable uploads should tolerate out-of-order parts and duplicate retries."""
+    monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    content = b"abcdefghijklmnopqrstuvwxyz"
+    checksum = hashlib.sha256(content).hexdigest()
+
+    init = json.loads(
+        vault_upload_init(
+            "assets/blob.pdf",
+            "application/pdf",
+            total_size=len(content),
+            part_size=10,
+        )
+    )
+
+    assert "error" not in init
+    upload_id = init["upload_id"]
+    assert init["missing_parts"] == [0, 1, 2]
+
+    part_1 = base64.b64encode(content[10:20]).decode("ascii")
+    result = json.loads(vault_upload_part(upload_id, 1, part_1))
+    assert result["missing_parts"] == [0, 2]
+
+    duplicate = json.loads(vault_upload_part(upload_id, 1, part_1))
+    assert duplicate["duplicate"] is True
+    assert duplicate["missing_parts"] == [0, 2]
+
+    json.loads(vault_upload_part(upload_id, 0, base64.b64encode(content[:10]).decode("ascii")))
+    status = json.loads(vault_upload_status(upload_id))
+    assert status["missing_parts"] == [2]
+
+    json.loads(vault_upload_part(upload_id, 2, base64.b64encode(content[20:]).decode("ascii")))
+    commit = json.loads(vault_upload_commit(upload_id, checksum))
+
+    assert "error" not in commit
+    assert commit["sha256"] == checksum
+    assert (vault_dir / "assets" / "blob.pdf").read_bytes() == content
+    assert "error" in json.loads(vault_upload_status(upload_id))
+
+
+def test_resumable_upload_rejects_wrong_duplicate_part(vault_dir, monkeypatch):
+    """A repeated part number with different bytes should be rejected."""
+    monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    init = json.loads(vault_upload_init("assets/blob.png", "image/png", total_size=4, part_size=4))
+    upload_id = init["upload_id"]
+
+    json.loads(vault_upload_part(upload_id, 0, base64.b64encode(b"aaaa").decode("ascii")))
+    result = json.loads(vault_upload_part(upload_id, 0, base64.b64encode(b"bbbb").decode("ascii")))
+
+    assert "different checksum" in result["error"]
+
+
+def test_vault_import_url_downloads_and_writes_binary(vault_dir, monkeypatch):
+    """URL imports should let the server download and atomically write an allowed binary."""
+    content = b"%PDF fake content"
+    checksum = hashlib.sha256(content).hexdigest()
+
+    class FakeHeaders:
+        def get(self, name, default=None):
+            return "application/pdf" if name.lower() == "content-type" else default
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __init__(self):
+            self._chunks = [content, b""]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size):
+            return self._chunks.pop(0)
+
+    monkeypatch.setattr(write_tools, "_validate_import_url", lambda url: None)
+    monkeypatch.setattr(write_tools, "urlopen", lambda request, timeout: FakeResponse())
+
+    result = json.loads(
+        vault_import_url(
+            "imports/file.pdf",
+            "https://example.invalid/file.pdf",
+            "application/pdf",
+            expected_sha256=checksum,
+        )
+    )
+
+    assert "error" not in result
+    assert result["sha256"] == checksum
+    assert (vault_dir / "imports" / "file.pdf").read_bytes() == content
 
 
 def test_vault_str_replace_updates_unique_match(vault_dir):

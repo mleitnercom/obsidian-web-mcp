@@ -12,6 +12,7 @@ from .config import (
     MAX_CONTENT_SIZE,
     MAX_LIST_DEPTH,
     MAX_SEARCH_RESULTS,
+    MAX_UPLOAD_PART_SIZE,
     SEMANTIC_MAX_RESULTS,
     MAX_TREE_DEPTH,
 )
@@ -92,6 +93,82 @@ class VaultWriteBinaryInput(BaseModel):
         default=True,
         description="Create parent directories if they don't exist",
     )
+
+
+class VaultUploadInitInput(BaseModel):
+    """Initialize a resumable binary upload session."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(..., description="Relative path from vault root including filename and extension", min_length=1, max_length=500)
+    media_type: Literal[
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "image/svg+xml",
+        "application/pdf",
+    ] = Field(..., description="MIME type of the binary content")
+    total_size: int = Field(..., ge=1, le=MAX_BINARY_SIZE, description="Total decoded byte size of the complete file")
+    part_size: int | None = Field(default=None, ge=1, le=MAX_UPLOAD_PART_SIZE, description="Optional decoded byte size per part")
+    overwrite: bool = Field(default=False, description="If true, allow replacing an existing file on commit")
+    create_dirs: bool = Field(default=True, description="Create parent directories on commit if they do not exist")
+
+
+class VaultUploadPartInput(BaseModel):
+    """Upload one part for a resumable binary upload session."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    upload_id: str = Field(..., description="Upload session id returned by vault_upload_init", min_length=1, max_length=80)
+    part_number: int = Field(..., ge=0, description="Zero-based part number")
+    data: str = Field(..., description="Base64-encoded decoded part bytes", min_length=1, max_length=((MAX_UPLOAD_PART_SIZE + 2) // 3) * 4 + 1024)
+    part_sha256: str | None = Field(default=None, description="Optional SHA-256 checksum of the decoded part", min_length=64, max_length=64)
+
+
+class VaultUploadStatusInput(BaseModel):
+    """Inspect progress for a resumable binary upload session."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    upload_id: str = Field(..., description="Upload session id returned by vault_upload_init", min_length=1, max_length=80)
+
+
+class VaultUploadCommitInput(BaseModel):
+    """Commit a complete resumable binary upload session."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    upload_id: str = Field(..., description="Upload session id returned by vault_upload_init", min_length=1, max_length=80)
+    expected_sha256: str = Field(..., description="SHA-256 checksum of the complete decoded file", min_length=64, max_length=64)
+
+
+class VaultUploadAbortInput(BaseModel):
+    """Abort a resumable binary upload session."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    upload_id: str = Field(..., description="Upload session id returned by vault_upload_init", min_length=1, max_length=80)
+
+
+class VaultImportUrlInput(BaseModel):
+    """Import an allowed binary file from a URL."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(..., description="Relative path from vault root including filename and extension", min_length=1, max_length=500)
+    url: str = Field(..., description="HTTP or HTTPS URL to download from", min_length=1, max_length=2000)
+    media_type: Literal[
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "image/svg+xml",
+        "application/pdf",
+    ] = Field(..., description="Expected MIME type of the downloaded content")
+    overwrite: bool = Field(default=False, description="If true, allow replacing an existing file")
+    create_dirs: bool = Field(default=True, description="Create parent directories if they do not exist")
+    expected_sha256: str | None = Field(default=None, description="Optional SHA-256 checksum of the downloaded content", min_length=64, max_length=64)
 
 
 class VaultStrReplaceInput(BaseModel):

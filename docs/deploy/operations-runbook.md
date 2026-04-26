@@ -172,6 +172,20 @@ Broken-link findings now separate:
 - Other known binary formats remain intentionally blocked with a clear error.
 - If a PDF is image-only or otherwise has no extractable text layer, the read call may return empty content while still reporting PDF metadata such as page count.
 
+## Binary Ingestion
+
+Use the smallest transfer path that fits the source:
+
+- `vault_write_binary` for small files where one base64 payload is reliable enough.
+- `vault_upload_init` / `vault_upload_part` / `vault_upload_status` / `vault_upload_commit` for larger files produced from LLM context. Parts are idempotent, can arrive out of order, and `status` reports missing part numbers after interruptions.
+- `vault_import_url` when the file is reachable through HTTP(S). The server downloads the file directly, verifies the requested media type, enforces `VAULT_MAX_BINARY_SIZE`, and can verify an expected SHA-256 checksum.
+
+Security notes:
+
+- URL imports block private, loopback, link-local, reserved, and multicast addresses by default.
+- Set `VAULT_IMPORT_URL_ALLOW_PRIVATE=true` only for trusted single-user deployments where importing from internal URLs is intentional.
+- Keep `VAULT_MAX_UPLOAD_PART_SIZE` modest enough for ChatGPT/Claude tool-call limits; the default is `524288` decoded bytes.
+
 ## Release Baseline
 
 The current operator baseline assumes:

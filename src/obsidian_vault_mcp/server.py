@@ -325,6 +325,12 @@ from .tools.write import (
     vault_batch_frontmatter_update as _vault_batch_frontmatter_update,
     vault_patch as _vault_patch,
     vault_str_replace as _vault_str_replace,
+    vault_import_url as _vault_import_url,
+    vault_upload_abort as _vault_upload_abort,
+    vault_upload_commit as _vault_upload_commit,
+    vault_upload_init as _vault_upload_init,
+    vault_upload_part as _vault_upload_part,
+    vault_upload_status as _vault_upload_status,
     vault_write as _vault_write,
     vault_write_binary as _vault_write_binary,
 )
@@ -349,6 +355,12 @@ from .models import (
     VaultReadInput,
     VaultPatchInput,
     VaultStrReplaceInput,
+    VaultImportUrlInput,
+    VaultUploadAbortInput,
+    VaultUploadCommitInput,
+    VaultUploadInitInput,
+    VaultUploadPartInput,
+    VaultUploadStatusInput,
     VaultWriteInput,
     VaultWriteBinaryInput,
     VaultBatchReadInput,
@@ -516,6 +528,162 @@ def vault_write_binary(
         overwrite=inp.overwrite,
         create_dirs=inp.create_dirs,
         base64_bytes=len(inp.data),
+    )
+
+
+@mcp.tool(
+    name="vault_upload_init",
+    description="Start a resumable binary upload session for larger files. Use status to resume missing parts and commit with a full-file SHA-256 checksum.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_upload_init(
+    path: str,
+    media_type: str,
+    total_size: int,
+    part_size: int | None = None,
+    overwrite: bool = False,
+    create_dirs: bool = True,
+) -> str:
+    """Initialize a resumable binary upload session."""
+    inp = VaultUploadInitInput(
+        path=path,
+        media_type=media_type,
+        total_size=total_size,
+        part_size=part_size,
+        overwrite=overwrite,
+        create_dirs=create_dirs,
+    )
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_upload_init",
+        lambda: _vault_upload_init(inp.path, inp.media_type, inp.total_size, inp.part_size, inp.overwrite, inp.create_dirs),
+        path=inp.path,
+        media_type=inp.media_type,
+        total_size=inp.total_size,
+        part_size=inp.part_size,
+        overwrite=inp.overwrite,
+    )
+
+
+@mcp.tool(
+    name="vault_upload_part",
+    description="Upload one idempotent base64 part for a resumable binary upload. Parts are zero-based and may be retried safely with the same bytes.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_upload_part(
+    upload_id: str,
+    part_number: int,
+    data: str,
+    part_sha256: str | None = None,
+) -> str:
+    """Upload one resumable binary part."""
+    inp = VaultUploadPartInput(
+        upload_id=upload_id,
+        part_number=part_number,
+        data=data,
+        part_sha256=part_sha256,
+    )
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_upload_part",
+        lambda: _vault_upload_part(inp.upload_id, inp.part_number, inp.data, inp.part_sha256),
+        upload_id=inp.upload_id,
+        part_number=inp.part_number,
+        base64_bytes=len(inp.data),
+        has_part_sha256=bool(inp.part_sha256),
+    )
+
+
+@mcp.tool(
+    name="vault_upload_status",
+    description="Return resumable binary upload progress, including received and missing part numbers.",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_upload_status(upload_id: str) -> str:
+    """Return resumable upload progress."""
+    inp = VaultUploadStatusInput(upload_id=upload_id)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_upload_status",
+        lambda: _vault_upload_status(inp.upload_id),
+        upload_id=inp.upload_id,
+    )
+
+
+@mcp.tool(
+    name="vault_upload_commit",
+    description="Commit a complete resumable binary upload after verifying total size and SHA-256 checksum.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_upload_commit(upload_id: str, expected_sha256: str) -> str:
+    """Commit a complete resumable upload."""
+    inp = VaultUploadCommitInput(upload_id=upload_id, expected_sha256=expected_sha256)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_upload_commit",
+        lambda: _vault_upload_commit(inp.upload_id, inp.expected_sha256),
+        upload_id=inp.upload_id,
+    )
+
+
+@mcp.tool(
+    name="vault_upload_abort",
+    description="Abort and remove a staged resumable binary upload session.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_upload_abort(upload_id: str) -> str:
+    """Abort a resumable upload."""
+    inp = VaultUploadAbortInput(upload_id=upload_id)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_upload_abort",
+        lambda: _vault_upload_abort(inp.upload_id),
+        upload_id=inp.upload_id,
+    )
+
+
+@mcp.tool(
+    name="vault_import_url",
+    description="Import an allowed binary file from an HTTP(S) URL. The server downloads the file, validates media type and optional SHA-256, then writes atomically.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+)
+def vault_import_url(
+    path: str,
+    url: str,
+    media_type: str,
+    overwrite: bool = False,
+    create_dirs: bool = True,
+    expected_sha256: str | None = None,
+) -> str:
+    """Import a binary file from a URL."""
+    inp = VaultImportUrlInput(
+        path=path,
+        url=url,
+        media_type=media_type,
+        overwrite=overwrite,
+        create_dirs=create_dirs,
+        expected_sha256=expected_sha256,
+    )
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_import_url",
+        lambda: _vault_import_url(inp.path, inp.url, inp.media_type, inp.overwrite, inp.create_dirs, inp.expected_sha256),
+        path=inp.path,
+        media_type=inp.media_type,
+        overwrite=inp.overwrite,
+        has_expected_sha256=bool(inp.expected_sha256),
     )
 
 
