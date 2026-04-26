@@ -71,6 +71,8 @@ This is a server that provides network access to your personal notes. Security i
 
 **Path traversal is blocked at the filesystem layer.** Every file operation resolves paths against the vault root directory and rejects any attempt to escape it -- `..` traversal, symlink following, null byte injection, and dotfile access (`.obsidian`, `.git`, `.trash`) are all caught before they reach the filesystem. The server will never read or write outside your vault directory.
 
+**Vault exposure can be scoped intentionally.** `VAULT_INCLUDED_ROOTS` can restrict MCP access to specific subtrees inside the vault, while `VAULT_EXCLUDED_PATH_PREFIXES` can carve out scratch or machinery folders under otherwise allowed roots. These checks apply to reads, writes, listing, search, indexing, analytics, and semantic retrieval so they act as a real boundary, not just a UI filter.
+
 **Reverse-proxy trust is explicit.** Forwarded headers are only trusted from IPs in `VAULT_TRUSTED_PROXY_IPS` (default `127.0.0.1,::1`) instead of trusting all upstreams.
 
 **Writes are atomic.** Every file write goes to a temporary file first, then atomically replaces the target via `os.replace()`. This guarantees that neither Obsidian nor Obsidian Sync ever sees a partially-written file -- the operation either completes fully or doesn't happen at all.
@@ -190,6 +192,13 @@ All configuration is via environment variables:
 | `VAULT_MCP_TOKEN` | Yes | (none) | Bearer token for MCP requests |
 | `VAULT_MCP_PORT` | No | `8420` | HTTP listen port |
 
+### Vault Scope Policy
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VAULT_INCLUDED_ROOTS` | No | `.` | Comma-separated allowlist of vault subtrees exposed through MCP; `.` keeps full-vault behavior |
+| `VAULT_EXCLUDED_PATH_PREFIXES` | No | (empty) | Comma-separated relative path prefixes excluded even when they sit under an included root |
+
 ### OAuth and Connector State
 
 | Variable | Required | Default | Description |
@@ -262,6 +271,19 @@ All configuration is via environment variables:
 | `VAULT_RATE_LIMIT_OAUTH_REGISTER` | No | `10` | `/oauth/register` per IP per minute |
 
 Generate tokens with: `python -c "import secrets; print(secrets.token_hex(32))"`
+
+If you want to expose only part of a larger vault, for example:
+
+```bash
+export VAULT_INCLUDED_ROOTS="notes,projects"
+export VAULT_EXCLUDED_PATH_PREFIXES="notes/_tmp/,projects/archive/"
+```
+
+With that configuration:
+
+- `vault_list("")` shows only `notes/` and `projects/`
+- reads/writes/searches outside those roots are rejected
+- excluded prefixes stay hidden from list/search/indexing even when they live under an allowed root
 
 ## Connecting Clients
 

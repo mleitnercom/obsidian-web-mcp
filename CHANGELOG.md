@@ -8,12 +8,18 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 ### Features
 - Add a resumable binary upload flow with `vault_upload_init`, `vault_upload_part`, `vault_upload_status`, `vault_upload_commit`, and `vault_upload_abort` so larger LLM-generated files can recover from missing or retried chunks.
 - Add `vault_import_url` so the server can import allowed binary files directly from HTTP(S) URLs instead of forcing every byte through a tool-call argument.
+- Add `VAULT_INCLUDED_ROOTS` and `VAULT_EXCLUDED_PATH_PREFIXES` so operators can expose only selected vault subtrees and carve out scratch/machinery paths underneath them.
 
 ### Reliability / Operator UX
 - Block `vault_reindex(full=false)` through the live MCP tool by default, not just full rebuilds, because incremental MCP-triggered refreshes still fan out into long-running vector-index rebuilds in practice.
 - Add `VAULT_SEMANTIC_ALLOW_MCP_REINDEX` as the explicit opt-in switch for any MCP-triggered semantic reindexing, while keeping full rebuilds behind the existing `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX` gate.
 - Update the README and operations runbook so live operators are pointed to `vault-semantic reindex --mode incremental/full` and the nightly job instead of the MCP reindex tool.
 - Protect URL imports against private/local address SSRF by default, with `VAULT_IMPORT_URL_ALLOW_PRIVATE=true` as an explicit trusted-deployment opt-in.
+- Enforce vault subtree policy consistently across path resolution, listing, search, analytics, frontmatter indexing, and semantic indexing so allowlists act as a real no-leak boundary.
+
+### Docs / Tests
+- Document subtree allowlisting and excluded prefixes in the README with operator examples.
+- Add focused regression coverage for allowlisted-root and excluded-prefix behavior.
 
 ## [v0.6.0] - 2026-04-19
 

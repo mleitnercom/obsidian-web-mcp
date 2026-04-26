@@ -58,6 +58,84 @@ def vault_json_dumps(obj: object, **kwargs) -> str:
     return json.dumps(obj, cls=_DateAwareEncoder, **kwargs)
 
 
+def _included_root_paths() -> list[Path]:
+    """Return resolved subtree roots that MCP is allowed to access."""
+    vault_root = config.VAULT_PATH.resolve()
+    roots: list[Path] = []
+    for root in config.INCLUDED_ROOTS:
+        candidate = vault_root if root in {"", "."} else (vault_root / root).resolve()
+        if candidate not in roots:
+            roots.append(candidate)
+    return roots or [vault_root]
+
+
+def allowed_root_paths() -> list[Path]:
+    """Return resolved vault subtree roots that are visible to MCP."""
+    return list(_included_root_paths())
+
+
+def _is_within_path(child: Path, parent: Path) -> bool:
+    """Return whether *child* equals or is inside *parent*."""
+    return child == parent or parent in child.parents
+
+
+def _relative_to_vault_root(path: Path) -> str:
+    """Return a normalized POSIX-style path relative to the vault root."""
+    return path.relative_to(config.VAULT_PATH.resolve()).as_posix()
+
+
+def _matches_excluded_prefix(rel_path: str) -> bool:
+    """Return whether a relative path falls under an excluded prefix."""
+    normalized = rel_path.strip("/")
+    if not normalized:
+        return False
+
+    for prefix in config.EXCLUDED_PATH_PREFIXES:
+        candidate = prefix.strip().strip("/")
+        if not candidate:
+            continue
+        if normalized == candidate or normalized.startswith(f"{candidate}/"):
+            return True
+    return False
+
+
+def _vault_policy_error(resolved: Path, vault_root: Path | None = None) -> str | None:
+    """Return a policy error string for a resolved path, or None when allowed."""
+    vault_root = vault_root or config.VAULT_PATH.resolve()
+
+    if not _is_within_path(resolved, vault_root):
+        return "Path resolves outside the vault root"
+
+    rel = resolved.relative_to(vault_root)
+    for part in rel.parts:
+        if part.startswith("."):
+            return (
+                f"Path component '{part}' starts with '.'; dotfiles and hidden directories are not allowed"
+            )
+
+    if rel.parts and rel.parts[0] in config.EXCLUDED_DIRS:
+        return f"Path is under an excluded directory: {rel.parts[0]}"
+
+    rel_path = rel.as_posix()
+    if _matches_excluded_prefix(rel_path):
+        return f"Path is under an excluded prefix: {rel_path}"
+
+    included_roots = _included_root_paths()
+    if not any(_is_within_path(resolved, root) for root in included_roots):
+        return "Path is outside the allowlisted vault subtrees (VAULT_INCLUDED_ROOTS)"
+
+    return None
+
+
+def is_vault_path_allowed(path: Path) -> bool:
+    """Return whether a path passes the configured vault access policy."""
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    return _vault_policy_error(resolved) is None
+
+
 def resolve_vault_path(relative_path: str) -> Path:
     """Resolve a relative path against the vault root, with safety checks.
 
@@ -77,9 +155,9 @@ def resolve_vault_path(relative_path: str) -> Path:
 
     resolved = (config.VAULT_PATH / relative_path).resolve()
     vault_root = config.VAULT_PATH.resolve()
-
-    if not str(resolved).startswith(str(vault_root) + os.sep) and resolved != vault_root:
-        raise ValueError("Path resolves outside the vault root")
+    error = _vault_policy_error(resolved, vault_root)
+    if error is not None:
+        raise ValueError(error)
 
     return resolved
 
@@ -312,12 +390,36 @@ def list_directory(
     type ("file" or "dir"), size, modified.
     """
     depth = min(depth, config.MAX_LIST_DEPTH)
+    vault_root = config.VAULT_PATH.resolve()
+
+    if relative_path in {"", "."} and config.INCLUDED_ROOTS != ["."]:
+        results: list[dict] = []
+        seen: set[str] = set()
+        for root in _included_root_paths():
+            if not root.exists() or not root.is_dir():
+                continue
+            if _vault_policy_error(root, vault_root) is not None:
+                continue
+
+            rel = _relative_to_vault_root(root)
+            if rel in seen:
+                continue
+            seen.add(rel)
+
+            stat = root.stat()
+            results.append({
+                "name": root.name,
+                "path": rel,
+                "type": "dir",
+                "size": stat.st_size,
+                "modified": _iso_timestamp(stat.st_mtime),
+            })
+        return results
 
     root = resolve_vault_path(relative_path)
     if not root.is_dir():
         raise NotADirectoryError(f"Not a directory: {relative_path}")
 
-    vault_root = config.VAULT_PATH.resolve()
     results: list[dict] = []
 
     def _walk(dir_path: Path, current_depth: int) -> None:
@@ -334,6 +436,8 @@ def list_directory(
             if entry.name in config.EXCLUDED_DIRS:
                 continue
             if entry.is_symlink():
+                continue
+            if not is_vault_path_allowed(entry):
                 continue
 
             is_dir = entry.is_dir()
@@ -357,7 +461,7 @@ def list_directory(
             except OSError:
                 continue
 
-            rel = str(entry.relative_to(vault_root))
+            rel = _relative_to_vault_root(entry)
 
             results.append({
                 "name": entry.name,
@@ -379,30 +483,38 @@ def scan_markdown_encoding_issues(
     max_results: int = 100,
 ) -> list[dict]:
     """Return markdown files under the vault that are not valid UTF-8."""
-    root = resolve_vault_path(relative_path) if relative_path else config.VAULT_PATH.resolve()
-    if not root.is_dir():
-        raise NotADirectoryError(f"Not a directory: {relative_path}")
-
     vault_root = config.VAULT_PATH.resolve()
     issues: list[dict] = []
 
-    for path in root.rglob("*.md"):
-        if any(part in config.EXCLUDED_DIRS for part in path.parts):
-            continue
-        if path.is_symlink() or not path.is_file():
-            continue
-        try:
-            path.read_text(encoding="utf-8")
-        except UnicodeDecodeError as e:
-            issues.append(
-                {
-                    "path": str(path.relative_to(vault_root)),
-                    "position": e.start,
-                    "reason": e.reason,
-                }
-            )
-            if len(issues) >= max_results:
-                break
+    roots = [resolve_vault_path(relative_path)] if relative_path else [
+        root for root in _included_root_paths() if root.exists() and root.is_dir()
+    ]
+    if not roots:
+        return issues
+
+    for root in roots:
+        if not root.is_dir():
+            raise NotADirectoryError(f"Not a directory: {relative_path}")
+
+        for path in root.rglob("*.md"):
+            if any(part in config.EXCLUDED_DIRS for part in path.parts):
+                continue
+            if path.is_symlink() or not path.is_file():
+                continue
+            if not is_vault_path_allowed(path):
+                continue
+            try:
+                path.read_text(encoding="utf-8")
+            except UnicodeDecodeError as e:
+                issues.append(
+                    {
+                        "path": _relative_to_vault_root(path),
+                        "position": e.start,
+                        "reason": e.reason,
+                    }
+                )
+                if len(issues) >= max_results:
+                    return issues
 
     return issues
 
@@ -414,53 +526,79 @@ def repair_markdown_encoding_issues(
     dry_run: bool = False,
 ) -> dict:
     """Repair markdown files that are not valid UTF-8 using a chosen source encoding."""
-    root = resolve_vault_path(relative_path) if relative_path else config.VAULT_PATH.resolve()
-    if not root.is_dir():
-        raise NotADirectoryError(f"Not a directory: {relative_path}")
-
     vault_root = config.VAULT_PATH.resolve()
     repaired: list[dict] = []
     failed: list[dict] = []
 
-    for path in root.rglob("*.md"):
-        if any(part in config.EXCLUDED_DIRS for part in path.parts):
-            continue
-        if path.is_symlink() or not path.is_file():
-            continue
+    roots = [resolve_vault_path(relative_path)] if relative_path else [
+        root for root in _included_root_paths() if root.exists() and root.is_dir()
+    ]
+    if not roots:
+        return {
+            "path_prefix": relative_path,
+            "source_encoding": source_encoding,
+            "dry_run": dry_run,
+            "repaired_count": 0,
+            "failed_count": 0,
+            "repaired": [],
+            "failed": [],
+            "truncated": False,
+        }
 
-        raw = path.read_bytes()
-        try:
-            raw.decode("utf-8")
-            continue
-        except UnicodeDecodeError:
-            pass
+    for root in roots:
+        if not root.is_dir():
+            raise NotADirectoryError(f"Not a directory: {relative_path}")
 
-        rel = str(path.relative_to(vault_root))
-        try:
-            decoded = raw.decode(source_encoding)
-            if not dry_run:
-                path.write_text(decoded, encoding="utf-8")
-            repaired.append(
-                {
-                    "path": rel,
+        for path in root.rglob("*.md"):
+            if any(part in config.EXCLUDED_DIRS for part in path.parts):
+                continue
+            if path.is_symlink() or not path.is_file():
+                continue
+            if not is_vault_path_allowed(path):
+                continue
+
+            raw = path.read_bytes()
+            try:
+                raw.decode("utf-8")
+                continue
+            except UnicodeDecodeError:
+                pass
+
+            rel = _relative_to_vault_root(path)
+            try:
+                decoded = raw.decode(source_encoding)
+                if not dry_run:
+                    path.write_text(decoded, encoding="utf-8")
+                repaired.append(
+                    {
+                        "path": rel,
+                        "source_encoding": source_encoding,
+                        "bytes_before": len(raw),
+                        "bytes_after": len(decoded.encode("utf-8")),
+                        "changed": not dry_run,
+                    }
+                )
+            except UnicodeDecodeError as e:
+                failed.append(
+                    {
+                        "path": rel,
+                        "source_encoding": source_encoding,
+                        "position": e.start,
+                        "reason": e.reason,
+                    }
+                )
+
+            if len(repaired) + len(failed) >= max_files:
+                return {
+                    "path_prefix": relative_path,
                     "source_encoding": source_encoding,
-                    "bytes_before": len(raw),
-                    "bytes_after": len(decoded.encode("utf-8")),
-                    "changed": not dry_run,
+                    "dry_run": dry_run,
+                    "repaired_count": len(repaired),
+                    "failed_count": len(failed),
+                    "repaired": repaired,
+                    "failed": failed,
+                    "truncated": True,
                 }
-            )
-        except UnicodeDecodeError as e:
-            failed.append(
-                {
-                    "path": rel,
-                    "source_encoding": source_encoding,
-                    "position": e.start,
-                    "reason": e.reason,
-                }
-            )
-
-        if len(repaired) + len(failed) >= max_files:
-            break
 
     return {
         "path_prefix": relative_path,

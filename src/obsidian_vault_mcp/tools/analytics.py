@@ -8,24 +8,38 @@ from pathlib import Path
 import frontmatter
 
 from .. import config
-from ..vault import resolve_vault_path, scan_markdown_encoding_issues, vault_json_dumps
+from ..vault import (
+    allowed_root_paths,
+    is_vault_path_allowed,
+    resolve_vault_path,
+    scan_markdown_encoding_issues,
+    vault_json_dumps,
+)
 
 WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 
 def _iter_markdown_files(path_prefix: str = "") -> tuple[Path, list[Path]]:
-    root = resolve_vault_path(path_prefix) if path_prefix else config.VAULT_PATH.resolve()
-    if not root.is_dir():
-        raise NotADirectoryError(f"Not a directory: {path_prefix}")
+    if path_prefix:
+        roots = [resolve_vault_path(path_prefix)]
+    else:
+        roots = [root for root in allowed_root_paths() if root.exists() and root.is_dir()]
+        if not roots:
+            raise ValueError("No allowlisted analytics roots exist on disk for VAULT_INCLUDED_ROOTS")
 
     files: list[Path] = []
-    for path in root.rglob("*.md"):
-        if any(part in config.EXCLUDED_DIRS for part in path.parts):
-            continue
-        if path.is_symlink() or not path.is_file():
-            continue
-        files.append(path)
-    return root, files
+    for root in roots:
+        if not root.is_dir():
+            raise NotADirectoryError(f"Not a directory: {path_prefix}")
+        for path in root.rglob("*.md"):
+            if any(part in config.EXCLUDED_DIRS for part in path.parts):
+                continue
+            if path.is_symlink() or not path.is_file():
+                continue
+            if not is_vault_path_allowed(path):
+                continue
+            files.append(path)
+    return (roots[0] if len(roots) == 1 else config.VAULT_PATH.resolve()), files
 
 
 def _load_posts(path_prefix: str = "") -> tuple[list[dict], dict[str, list[str]], dict[str, str]]:

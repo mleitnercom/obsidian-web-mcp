@@ -10,6 +10,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from . import config
+from .vault import is_vault_path_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,10 @@ class FrontmatterIndex:
 
     def _is_excluded(self, path: Path) -> bool:
         """Check whether any path component is in config.EXCLUDED_DIRS."""
-        return bool(config.EXCLUDED_DIRS & set(path.relative_to(config.VAULT_PATH).parts))
+        rel_parts = path.relative_to(config.VAULT_PATH).parts
+        if bool(config.EXCLUDED_DIRS & set(rel_parts)):
+            return True
+        return not is_vault_path_allowed(path)
 
     def _parse_frontmatter(self, path: Path) -> dict | None:
         """Parse YAML frontmatter from a markdown file. Returns None on failure."""
@@ -154,6 +158,15 @@ class FrontmatterIndex:
             if abs_path.is_symlink():
                 with self._lock:
                     self._index.pop(abs_path.relative_to(config.VAULT_PATH).as_posix(), None)
+                continue
+            if not is_vault_path_allowed(abs_path):
+                with self._lock:
+                    try:
+                        rel = abs_path.relative_to(config.VAULT_PATH).as_posix()
+                    except ValueError:
+                        rel = None
+                    if rel is not None:
+                        self._index.pop(rel, None)
                 continue
             rel = abs_path.relative_to(config.VAULT_PATH).as_posix()
             if abs_path.exists():

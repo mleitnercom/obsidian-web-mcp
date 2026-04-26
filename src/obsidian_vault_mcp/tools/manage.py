@@ -7,6 +7,7 @@ from ..hooks import fire_post_write
 from ..vault import (
     delete_directory_path,
     delete_path,
+    is_vault_path_allowed,
     list_directory,
     move_path,
     resolve_vault_path,
@@ -77,6 +78,8 @@ def vault_tree(path: str = "", depth: int = 3) -> str:
                 if entry.name in config.EXCLUDED_DIRS:
                     continue
                 if entry.is_symlink():
+                    continue
+                if not is_vault_path_allowed(entry):
                     continue
                 if entry.is_file():
                     node["files"].append(entry.name)

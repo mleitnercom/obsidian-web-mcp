@@ -56,6 +56,8 @@ ALLOWED_HOSTS = _env_csv(
     "VAULT_ALLOWED_HOSTS",
     ["127.0.0.1:*", "localhost:*", "[::1]:*"],
 )
+INCLUDED_ROOTS = _env_csv("VAULT_INCLUDED_ROOTS", ["."])
+EXCLUDED_PATH_PREFIXES = _env_csv("VAULT_EXCLUDED_PATH_PREFIXES", [])
 
 # Optional semantic search
 SEMANTIC_SEARCH_ENABLED = os.environ.get("VAULT_SEMANTIC_SEARCH_ENABLED", "").lower() in {

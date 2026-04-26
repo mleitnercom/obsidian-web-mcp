@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from .. import config
+from ..vault import is_vault_path_allowed
 from .chunker import chunk_markdown_file
 from .models import Chunk
 
@@ -673,4 +674,6 @@ class SemanticSearchEngine:
         if not rel_path.endswith(".md"):
             return False
         parts = Path(rel_path).parts
-        return not bool(set(parts) & config.EXCLUDED_DIRS)
+        if bool(set(parts) & config.EXCLUDED_DIRS):
+            return False
+        return is_vault_path_allowed(config.VAULT_PATH / rel_path)

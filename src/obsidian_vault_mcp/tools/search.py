@@ -10,7 +10,7 @@ from pathlib import Path
 import frontmatter
 
 from .. import config
-from ..vault import resolve_vault_path, vault_json_dumps
+from ..vault import allowed_root_paths, is_vault_path_allowed, resolve_vault_path, vault_json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,8 @@ def _search_ripgrep(
             file_path = match_data["path"]["text"]
             try:
                 resolved_file = Path(file_path).resolve()
+                if not is_vault_path_allowed(resolved_file):
+                    continue
                 rel_path = resolved_file.relative_to(config.VAULT_PATH.resolve()).as_posix()
             except ValueError:
                 continue
@@ -113,6 +115,8 @@ def _search_python(
 
             try:
                 resolved_path = file_path.resolve()
+                if not is_vault_path_allowed(resolved_path):
+                    continue
                 rel_path = resolved_path.relative_to(vault_root).as_posix()
             except ValueError:
                 continue
@@ -139,6 +143,30 @@ def _search_python(
                         return matches
 
     return matches
+
+
+def _search_multiple_roots(
+    query: str,
+    roots: list[Path],
+    file_pattern: str,
+    max_results: int,
+    context_lines: int,
+) -> list[dict]:
+    """Search across multiple allowlisted roots without leaking other vault paths."""
+    matches: list[dict] = []
+    for root in roots:
+        remaining = max_results - len(matches)
+        if remaining <= 0:
+            break
+
+        if shutil.which("rg"):
+            root_matches = _search_ripgrep(query, root, file_pattern, remaining, context_lines)
+        else:
+            root_matches = None
+        if root_matches is None:
+            root_matches = _search_python(query, root, file_pattern, remaining, context_lines)
+        matches.extend(root_matches)
+    return matches[:max_results]
 
 
 def _get_frontmatter_excerpt(file_path: Path, max_keys: int = 3) -> dict | None:
@@ -168,18 +196,29 @@ def vault_search(
         if path_prefix:
             search_path = resolve_vault_path(path_prefix)
         else:
-            search_path = config.VAULT_PATH
+            search_path = None
+            search_roots = [root for root in allowed_root_paths() if root.exists() and root.is_dir()]
+            if not search_roots:
+                return vault_json_dumps({
+                    "error": "No allowlisted search roots exist on disk for VAULT_INCLUDED_ROOTS",
+                    "results": [],
+                    "total_matches": 0,
+                    "truncated": False,
+                })
 
-        if not search_path.is_dir():
+        if search_path is not None and not search_path.is_dir():
             return vault_json_dumps({"error": f"Search path is not a directory: {path_prefix}"})
 
-        if shutil.which("rg"):
-            matches = _search_ripgrep(query, search_path, file_pattern, max_results, context_lines)
+        if search_path is None:
+            matches = _search_multiple_roots(query, search_roots, file_pattern, max_results, context_lines)
         else:
-            matches = None
+            if shutil.which("rg"):
+                matches = _search_ripgrep(query, search_path, file_pattern, max_results, context_lines)
+            else:
+                matches = None
 
-        if matches is None:
-            matches = _search_python(query, search_path, file_pattern, max_results, context_lines)
+            if matches is None:
+                matches = _search_python(query, search_path, file_pattern, max_results, context_lines)
 
         for match in matches:
             file_full_path = config.VAULT_PATH / match["path"]
