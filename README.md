@@ -4,7 +4,7 @@ Production-hardened fork of `obsidian-web-mcp` for MCP access to an Obsidian vau
 
 ## Release
 
-Latest: [v0.6.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.0) (2026-04-19).
+Latest: [v0.6.1](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.1) (2026-04-26).
 
 ## Status
 
@@ -98,8 +98,9 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_analytics_summary` | Return a compact hygiene summary covering frontmatter, wikilinks, tags, and encoding issues, including a broken-link breakdown |
 | `vault_analytics_findings` | Return detailed findings for one analytics category such as broken wikilinks or encoding issues, including wikilink classification details |
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
-| `vault_write_binary` | Write an allowed binary file such as PNG, JPEG, WebP, GIF, SVG, or PDF from base64 input |
+| `vault_write_binary` | Write an allowed binary file such as PNG, JPEG, WebP, GIF, SVG, PDF, or configured extra media types from base64 input |
 | `vault_upload_init` / `vault_upload_part` / `vault_upload_status` / `vault_upload_commit` / `vault_upload_abort` | Resumable binary upload flow for larger LLM-generated files, with missing-part recovery and SHA-256 verification |
+| `vault_import_file` | Import an allowed binary file from a local allowlisted filesystem path without base64-wrapping it into the tool call |
 | `vault_import_url` | Import an allowed binary file from an HTTP(S) URL by letting the server download and verify it |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content, preserving existing YAML formatting where possible |
 | `vault_str_replace` | Replace one exact string in a file without rewriting the whole note body in the request; optional `replace_all=true` supports file-local bulk normalization |
@@ -167,6 +168,12 @@ python -m pip install -e .[semantic-sentence]
 The server starts on port 8420 by default. It serves MCP over Streamable HTTP at `/mcp/`.
 
 `vault_read` supports normal text/markdown files and also extracts text from `.pdf` files via `pypdf`. Other known binary formats are still rejected with a clear error instead of a misleading UTF-8 decode failure.
+
+For binary ingestion there are now three practical paths:
+
+- `vault_write_binary` for smaller files that comfortably fit into one tool call
+- `vault_upload_*` for larger payloads where base64 size or tool-call limits become fragile
+- `vault_import_file` for files that already exist on a mounted or local filesystem path visible to the MCP server
 
 Frontmatter-aware write paths now preserve formatting much better than the older PyYAML-style rewrite flow. `vault_write(merge_frontmatter=true)` and `vault_batch_frontmatter_update` keep quote styles, key order, inline comments, and flow-style lists where possible by round-tripping YAML with `ruamel.yaml`.
 
@@ -258,6 +265,15 @@ All configuration is via environment variables:
 | `VAULT_MAX_UPLOAD_PART_SIZE` | No | `524288` | Max decoded bytes per resumable upload part |
 | `VAULT_IMPORT_URL_TIMEOUT_SECONDS` | No | `30` | Timeout for server-side URL imports |
 | `VAULT_IMPORT_URL_ALLOW_PRIVATE` | No | `false` | Allow URL imports from private/local network addresses |
+| `VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON` | No | (empty) | JSON object mapping extra MIME types to allowed file extensions, merged into the built-in binary allowlist |
+| `VAULT_IMPORT_FILE_ALLOWED_ROOTS` | No | (empty) | Comma-separated absolute source roots that `vault_import_file` may read from |
+
+Example operator extensions:
+
+```bash
+export VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON='{"application/vnd.openxmlformats-officedocument.wordprocessingml.document":[".docx"],"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"],"application/vnd.openxmlformats-officedocument.presentationml.presentation":[".pptx"]}'
+export VAULT_IMPORT_FILE_ALLOWED_ROOTS="/sessions/shared/uploads,/srv/obsidian-imports"
+```
 | `VAULT_MAX_BATCH_SIZE` | No | `20` | Max files in batch operations |
 | `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard search result cap |
 | `VAULT_DEFAULT_SEARCH_RESULTS` | No | `20` | Default search result count |

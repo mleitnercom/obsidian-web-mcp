@@ -28,7 +28,7 @@ from ..vault import (
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_BINARY_MEDIA_TYPES = {
+DEFAULT_ALLOWED_BINARY_MEDIA_TYPES = {
     "image/png": {".png"},
     "image/jpeg": {".jpg", ".jpeg"},
     "image/webp": {".webp"},
@@ -43,7 +43,43 @@ UPLOAD_EXPIRY_SECONDS = 24 * 60 * 60
 
 def _allowed_binary_extensions_for(media_type: str) -> set[str] | None:
     """Return the allowed file extensions for one binary media type."""
-    return ALLOWED_BINARY_MEDIA_TYPES.get(media_type)
+    return allowed_binary_media_types().get(media_type.strip().lower())
+
+
+def allowed_binary_media_types() -> dict[str, set[str]]:
+    """Return the merged default and operator-configured binary allowlist."""
+    merged = {media_type: set(extensions) for media_type, extensions in DEFAULT_ALLOWED_BINARY_MEDIA_TYPES.items()}
+    for media_type, extensions in config.EXTRA_BINARY_MEDIA_TYPES.items():
+        merged.setdefault(media_type, set()).update(extensions)
+    return merged
+
+
+def _import_file_source_roots() -> list[Path]:
+    """Return normalized local source roots allowed for vault_import_file."""
+    roots: list[Path] = []
+    for raw_root in config.IMPORT_FILE_ALLOWED_ROOTS:
+        root = Path(raw_root).expanduser().resolve()
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _validate_import_file_source(source_path: str) -> Path:
+    """Validate that a local source path is readable and explicitly allowlisted."""
+    allowed_roots = _import_file_source_roots()
+    if not allowed_roots:
+        raise ValueError(
+            "vault_import_file is disabled until VAULT_IMPORT_FILE_ALLOWED_ROOTS is configured"
+        )
+
+    source = Path(source_path).expanduser().resolve()
+    if not source.exists():
+        raise ValueError(f"Source file not found: {source_path}")
+    if not source.is_file():
+        raise ValueError(f"Source path is not a file: {source_path}")
+    if not any(source == root or root in source.parents for root in allowed_roots):
+        raise ValueError("Source path is outside VAULT_IMPORT_FILE_ALLOWED_ROOTS")
+    return source
 
 
 def _validate_binary_target(path: str, media_type: str) -> Path:
@@ -552,6 +588,72 @@ def vault_import_url(
     except Exception as e:
         logger.error(f"vault_import_url error for {path}: {e}")
         return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type, "url": url})
+
+
+def vault_import_file(
+    path: str,
+    source_path: str,
+    media_type: str,
+    overwrite: bool = False,
+    create_dirs: bool = True,
+    expected_sha256: str | None = None,
+) -> str:
+    """Import an allowed binary file from a local allowlisted source path."""
+    try:
+        resolved = _validate_binary_target(path, media_type)
+        source = _validate_import_file_source(source_path)
+        if resolved.exists() and not overwrite:
+            return vault_json_dumps(
+                {
+                    "error": f"File already exists: {path}. Set overwrite=true to replace it.",
+                    "path": path,
+                    "media_type": media_type,
+                    "source_path": source_path,
+                }
+            )
+
+        size = source.stat().st_size
+        if size > config.MAX_BINARY_SIZE:
+            return vault_json_dumps(
+                {
+                    "error": f"Source file exceeds limit of {config.MAX_BINARY_SIZE} bytes",
+                    "path": path,
+                    "media_type": media_type,
+                    "source_path": source_path,
+                    "size": size,
+                }
+            )
+
+        content = source.read_bytes()
+        actual_sha256 = _sha256_bytes(content)
+        if expected_sha256 and actual_sha256.lower() != expected_sha256.lower():
+            return vault_json_dumps(
+                {
+                    "error": "Source file checksum mismatch",
+                    "path": path,
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": actual_sha256,
+                    "source_path": source_path,
+                }
+            )
+
+        is_new, written_size = write_bytes_atomic(path, content, create_dirs=create_dirs, overwrite=overwrite)
+        fire_post_write("created" if is_new else "updated", [path])
+        return vault_json_dumps(
+            {
+                "path": path,
+                "created": is_new,
+                "size": written_size,
+                "media_type": media_type,
+                "sha256": actual_sha256,
+                "source_path": str(source),
+            }
+        )
+    except ValueError as e:
+        return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type, "source_path": source_path})
+    except Exception as e:
+        logger.error(f"vault_import_file error for {path}: {e}")
+        return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type, "source_path": source_path})
 
 
 def _replace_in_content(

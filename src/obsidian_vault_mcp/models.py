@@ -1,7 +1,5 @@
 """Pydantic input models for obsidian-vault-mcp tool endpoints."""
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .config import (
@@ -74,16 +72,11 @@ class VaultWriteBinaryInput(BaseModel):
         min_length=1,
         max_length=((MAX_BINARY_SIZE + 2) // 3) * 4 + 1024,
     )
-    media_type: Literal[
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-        "image/gif",
-        "image/svg+xml",
-        "application/pdf",
-    ] = Field(
+    media_type: str = Field(
         ...,
         description="MIME type of the binary content",
+        min_length=3,
+        max_length=200,
     )
     overwrite: bool = Field(
         default=False,
@@ -101,14 +94,7 @@ class VaultUploadInitInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     path: str = Field(..., description="Relative path from vault root including filename and extension", min_length=1, max_length=500)
-    media_type: Literal[
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-        "image/gif",
-        "image/svg+xml",
-        "application/pdf",
-    ] = Field(..., description="MIME type of the binary content")
+    media_type: str = Field(..., description="MIME type of the binary content", min_length=3, max_length=200)
     total_size: int = Field(..., ge=1, le=MAX_BINARY_SIZE, description="Total decoded byte size of the complete file")
     part_size: int | None = Field(default=None, ge=1, le=MAX_UPLOAD_PART_SIZE, description="Optional decoded byte size per part")
     overwrite: bool = Field(default=False, description="If true, allow replacing an existing file on commit")
@@ -158,17 +144,23 @@ class VaultImportUrlInput(BaseModel):
 
     path: str = Field(..., description="Relative path from vault root including filename and extension", min_length=1, max_length=500)
     url: str = Field(..., description="HTTP or HTTPS URL to download from", min_length=1, max_length=2000)
-    media_type: Literal[
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-        "image/gif",
-        "image/svg+xml",
-        "application/pdf",
-    ] = Field(..., description="Expected MIME type of the downloaded content")
+    media_type: str = Field(..., description="Expected MIME type of the downloaded content", min_length=3, max_length=200)
     overwrite: bool = Field(default=False, description="If true, allow replacing an existing file")
     create_dirs: bool = Field(default=True, description="Create parent directories if they do not exist")
     expected_sha256: str | None = Field(default=None, description="Optional SHA-256 checksum of the downloaded content", min_length=64, max_length=64)
+
+
+class VaultImportFileInput(BaseModel):
+    """Import an allowed binary file from a local source path."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(..., description="Relative path from vault root including filename and extension", min_length=1, max_length=500)
+    source_path: str = Field(..., description="Absolute or mounted local filesystem path to import from", min_length=1, max_length=2000)
+    media_type: str = Field(..., description="Expected MIME type of the source file", min_length=3, max_length=200)
+    overwrite: bool = Field(default=False, description="If true, allow replacing an existing file")
+    create_dirs: bool = Field(default=True, description="Create parent directories if they do not exist")
+    expected_sha256: str | None = Field(default=None, description="Optional SHA-256 checksum of the source file", min_length=64, max_length=64)
 
 
 class VaultStrReplaceInput(BaseModel):

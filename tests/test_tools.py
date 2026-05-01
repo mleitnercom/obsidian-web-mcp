@@ -15,6 +15,7 @@ from obsidian_vault_mcp.tools.write import (
     vault_append,
     vault_batch_replace,
     vault_batch_frontmatter_update,
+    vault_import_file,
     vault_import_url,
     vault_patch,
     vault_str_replace,
@@ -201,6 +202,29 @@ def test_vault_write_binary_requires_overwrite_opt_in(vault_dir):
     assert (vault_dir / "assets" / "visual.png").read_bytes() == b"old"
 
 
+def test_vault_write_binary_accepts_operator_configured_extra_media_type(vault_dir, monkeypatch):
+    """vault_write_binary should honor additive operator-configured media types."""
+    monkeypatch.setattr(
+        write_tools.config,
+        "EXTRA_BINARY_MEDIA_TYPES",
+        {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {".xlsx"},
+        },
+    )
+    content = b"PK\x03\x04fake-xlsx"
+    result = json.loads(
+        vault_write_binary(
+            "imports/report.xlsx",
+            base64.b64encode(content).decode("ascii"),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    )
+
+    assert "error" not in result
+    assert result["media_type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert (vault_dir / "imports" / "report.xlsx").read_bytes() == content
+
+
 def test_resumable_upload_supports_status_retry_and_commit(vault_dir, monkeypatch):
     """Resumable uploads should tolerate out-of-order parts and duplicate retries."""
     monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
@@ -292,6 +316,57 @@ def test_vault_import_url_downloads_and_writes_binary(vault_dir, monkeypatch):
     assert "error" not in result
     assert result["sha256"] == checksum
     assert (vault_dir / "imports" / "file.pdf").read_bytes() == content
+
+
+def test_vault_import_file_copies_from_allowlisted_source_root(vault_dir, monkeypatch, tmp_path):
+    """vault_import_file should import local files from configured source roots."""
+    monkeypatch.setattr(write_tools.config, "IMPORT_FILE_ALLOWED_ROOTS", [str(tmp_path)])
+    monkeypatch.setattr(
+        write_tools.config,
+        "EXTRA_BINARY_MEDIA_TYPES",
+        {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {".docx"},
+        },
+    )
+    source = tmp_path / "draft.docx"
+    content = b"PK\x03\x04fake-docx"
+    source.write_bytes(content)
+    checksum = hashlib.sha256(content).hexdigest()
+
+    result = json.loads(
+        vault_import_file(
+            "imports/draft.docx",
+            str(source),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            expected_sha256=checksum,
+        )
+    )
+
+    assert "error" not in result
+    assert result["sha256"] == checksum
+    assert (vault_dir / "imports" / "draft.docx").read_bytes() == content
+
+
+def test_vault_import_file_rejects_source_outside_allowlist(vault_dir, monkeypatch, tmp_path):
+    """vault_import_file should fail closed when the source root is not allowlisted."""
+    allowed = tmp_path / "allowed"
+    blocked = tmp_path / "blocked"
+    allowed.mkdir()
+    blocked.mkdir()
+    monkeypatch.setattr(write_tools.config, "IMPORT_FILE_ALLOWED_ROOTS", [str(allowed)])
+    source = blocked / "report.pdf"
+    source.write_bytes(b"%PDF blocked")
+
+    result = json.loads(
+        vault_import_file(
+            "imports/report.pdf",
+            str(source),
+            "application/pdf",
+        )
+    )
+
+    assert "error" in result
+    assert "outside VAULT_IMPORT_FILE_ALLOWED_ROOTS" in result["error"]
 
 
 def test_vault_str_replace_updates_unique_match(vault_dir):

@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -33,6 +34,36 @@ def _env_csv(name: str, default: list[str]) -> list[str]:
         return default
     return [item.strip() for item in raw.split(",") if item.strip()]
 
+
+def _env_binary_media_type_map(name: str) -> dict[str, set[str]]:
+    """Parse a JSON object mapping MIME types to allowed file extensions."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{name} must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{name} must be a JSON object mapping media types to extension lists")
+
+    normalized: dict[str, set[str]] = {}
+    for media_type, extensions in payload.items():
+        if not isinstance(media_type, str) or not media_type.strip():
+            raise ValueError(f"{name} contains an invalid media type key")
+        if not isinstance(extensions, list) or not extensions:
+            raise ValueError(f"{name} entry for {media_type!r} must be a non-empty list of extensions")
+        cleaned: set[str] = set()
+        for extension in extensions:
+            if not isinstance(extension, str) or not extension.strip():
+                raise ValueError(f"{name} entry for {media_type!r} contains an invalid extension")
+            normalized_extension = extension.strip().lower()
+            if not normalized_extension.startswith(".") or normalized_extension == ".":
+                raise ValueError(f"{name} extension {extension!r} must start with '.'")
+            cleaned.add(normalized_extension)
+        normalized[media_type.strip().lower()] = cleaned
+    return normalized
+
 # Vault configuration
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", os.path.expanduser("~/Obsidian/MyVault")))
 VAULT_MCP_TOKEN = os.environ.get("VAULT_MCP_TOKEN", "")
@@ -58,6 +89,8 @@ ALLOWED_HOSTS = _env_csv(
 )
 INCLUDED_ROOTS = _env_csv("VAULT_INCLUDED_ROOTS", ["."])
 EXCLUDED_PATH_PREFIXES = _env_csv("VAULT_EXCLUDED_PATH_PREFIXES", [])
+EXTRA_BINARY_MEDIA_TYPES = _env_binary_media_type_map("VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON")
+IMPORT_FILE_ALLOWED_ROOTS = _env_csv("VAULT_IMPORT_FILE_ALLOWED_ROOTS", [])
 
 # Optional semantic search
 SEMANTIC_SEARCH_ENABLED = os.environ.get("VAULT_SEMANTIC_SEARCH_ENABLED", "").lower() in {

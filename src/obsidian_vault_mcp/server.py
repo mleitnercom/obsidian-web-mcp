@@ -323,6 +323,7 @@ from .tools.write import (
     vault_append as _vault_append,
     vault_batch_replace as _vault_batch_replace,
     vault_batch_frontmatter_update as _vault_batch_frontmatter_update,
+    vault_import_file as _vault_import_file,
     vault_patch as _vault_patch,
     vault_str_replace as _vault_str_replace,
     vault_import_url as _vault_import_url,
@@ -353,6 +354,7 @@ from .models import (
     VaultAppendInput,
     VaultBatchReplaceInput,
     VaultReadInput,
+    VaultImportFileInput,
     VaultPatchInput,
     VaultStrReplaceInput,
     VaultImportUrlInput,
@@ -499,7 +501,7 @@ def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontma
 
 @mcp.tool(
     name="vault_write_binary",
-    description="Write a binary file such as an image, SVG, or PDF to the Obsidian vault. Data must be base64-encoded and match an allowed media type.",
+    description="Write a binary file such as an image, SVG, PDF, or configured extra media type to the Obsidian vault. Data must be base64-encoded and match an allowed media type. For larger files or response-limit issues, use vault_upload_init plus vault_upload_part and vault_upload_commit instead.",
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
 )
 def vault_write_binary(
@@ -533,7 +535,7 @@ def vault_write_binary(
 
 @mcp.tool(
     name="vault_upload_init",
-    description="Start a resumable binary upload session for larger files. Use status to resume missing parts and commit with a full-file SHA-256 checksum.",
+    description="Start a resumable binary upload session for larger files. Use status to resume missing parts and commit with a full-file SHA-256 checksum. For smaller files that fit in one tool call, prefer vault_write_binary.",
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
 )
 def vault_upload_init(
@@ -681,6 +683,49 @@ def vault_import_url(
         "vault_import_url",
         lambda: _vault_import_url(inp.path, inp.url, inp.media_type, inp.overwrite, inp.create_dirs, inp.expected_sha256),
         path=inp.path,
+        media_type=inp.media_type,
+        overwrite=inp.overwrite,
+        has_expected_sha256=bool(inp.expected_sha256),
+    )
+
+
+@mcp.tool(
+    name="vault_import_file",
+    description="Import an allowed binary file from a local allowlisted filesystem path. Use this for uploaded or mounted files that already exist on disk, without base64-encoding them into the tool call.",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_import_file(
+    path: str,
+    source_path: str,
+    media_type: str,
+    overwrite: bool = False,
+    create_dirs: bool = True,
+    expected_sha256: str | None = None,
+) -> str:
+    """Import a binary file from a local allowlisted filesystem path."""
+    inp = VaultImportFileInput(
+        path=path,
+        source_path=source_path,
+        media_type=media_type,
+        overwrite=overwrite,
+        create_dirs=create_dirs,
+        expected_sha256=expected_sha256,
+    )
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_import_file",
+        lambda: _vault_import_file(
+            inp.path,
+            inp.source_path,
+            inp.media_type,
+            inp.overwrite,
+            inp.create_dirs,
+            inp.expected_sha256,
+        ),
+        path=inp.path,
+        source_path=inp.source_path,
         media_type=inp.media_type,
         overwrite=inp.overwrite,
         has_expected_sha256=bool(inp.expected_sha256),

@@ -5,6 +5,17 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+### Features
+- Add `vault_import_file` so mounted or local files can be copied into the vault without base64-wrapping them into the tool call first.
+- Allow operators to extend the binary media-type allowlist via `VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON` instead of forcing every practical file type into the default set.
+
+### Reliability / Operator UX
+- Cross-reference `vault_write_binary` and `vault_upload_*` in the tool descriptions so LLM clients discover the single-call vs. resumable path more reliably.
+
+### Docs / Tests
+- Document additive binary media-type config and local file imports in the README.
+- Add regression coverage for extra binary media types and allowlisted local file imports.
+
 ## [v0.6.1] - 2026-04-26
 
 This release hardens the fork for more realistic live operation: safer large-file ingestion, direct URL-based imports, and a real subtree-boundary model so operators can expose only the parts of a vault they actually want MCP clients to see.
