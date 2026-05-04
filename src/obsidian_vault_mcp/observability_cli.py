@@ -60,6 +60,29 @@ def parse_tool_start_line(line: str) -> dict[str, Any] | None:
     }
 
 
+def _coalesce_tool_start_messages(lines: list[str]) -> list[str]:
+    messages: list[str] = []
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if "Tool start:" not in line:
+            messages.append(line)
+            idx += 1
+            continue
+
+        parts = [line]
+        balance = line.count("(") - line.count(")")
+        idx += 1
+        continuation = balance > 0 or (idx < len(lines) and lines[idx].lstrip().startswith("("))
+        while idx < len(lines) and continuation:
+            parts.append(lines[idx])
+            balance += lines[idx].count("(") - lines[idx].count(")")
+            idx += 1
+            continuation = balance > 0
+        messages.append(" ".join(part.strip() for part in parts if part.strip()))
+    return messages
+
+
 def _read_log_messages(args: argparse.Namespace) -> list[str]:
     if args.log_file:
         return Path(args.log_file).read_text(encoding="utf-8").splitlines()
@@ -71,23 +94,12 @@ def _read_log_messages(args: argparse.Namespace) -> list[str]:
         "--since",
         args.since,
         "-o",
-        "json",
+        "cat",
         "--no-pager",
     ]
     output = subprocess.check_output(cmd, text=True, encoding="utf-8", errors="replace")
-    messages: list[str] = []
-    for raw_line in output.splitlines():
-        raw_line = raw_line.strip()
-        if not raw_line:
-            continue
-        try:
-            payload = json.loads(raw_line)
-        except json.JSONDecodeError:
-            continue
-        message = payload.get("MESSAGE")
-        if isinstance(message, str) and message.strip():
-            messages.append(message)
-    return messages
+    raw_lines = [line for line in output.splitlines() if line.strip()]
+    return _coalesce_tool_start_messages(raw_lines)
 
 
 def _usage_summary(events: list[dict[str, Any]], limit: int) -> dict[str, Any]:

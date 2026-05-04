@@ -1,6 +1,6 @@
 """Tests for MCP tool-usage observability parsing and summarization."""
 
-from obsidian_vault_mcp.observability_cli import parse_tool_start_line, _usage_summary
+from obsidian_vault_mcp.observability_cli import _coalesce_tool_start_messages, parse_tool_start_line, _usage_summary
 
 
 def test_parse_tool_start_line_extracts_client_metadata():
@@ -58,3 +58,19 @@ def test_usage_summary_groups_by_tool_and_client_family():
     assert summary["tool_by_client_family"]["vault_search"]["chatgpt"] == 1
     assert summary["semantic_search_count"] == 1
     assert summary["semantic_search_clients"]["claude"] == 1
+
+
+def test_coalesce_tool_start_messages_joins_wrapped_context_lines():
+    lines = [
+        "INFO Tool start: vault_read",
+        "(client_family='claude',",
+        "client_ip='160.79.106.35',",
+        "request_path='/mcp',",
+        "path='x.md')",
+        "INFO Tool complete: vault_read in 0.002s",
+    ]
+
+    merged = _coalesce_tool_start_messages(lines)
+
+    assert merged[0] == "INFO Tool start: vault_read (client_family='claude', client_ip='160.79.106.35', request_path='/mcp', path='x.md')"
+    assert merged[1] == "INFO Tool complete: vault_read in 0.002s"
