@@ -16,7 +16,12 @@ import obsidian_vault_mcp.oauth as oauth
 import obsidian_vault_mcp.server as server
 from obsidian_vault_mcp import config
 from obsidian_vault_mcp.auth import BearerAuthMiddleware
-from obsidian_vault_mcp.rate_limit import reset_rate_limits, reset_current_auth_principal, set_current_auth_principal
+from obsidian_vault_mcp.rate_limit import (
+    current_request_metadata,
+    reset_rate_limits,
+    reset_current_auth_principal,
+    set_current_auth_principal,
+)
 
 
 async def _protected(_request):
@@ -37,6 +42,39 @@ def test_bearer_auth_accepts_valid_token(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
+
+
+def test_bearer_auth_binds_request_metadata_for_observability(monkeypatch):
+    """Authenticated requests should carry client metadata into the request context."""
+    reset_rate_limits()
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+
+    async def _inspect(_request):
+        return JSONResponse(current_request_metadata())
+
+    app = Starlette(
+        routes=[Route("/protected", _inspect)],
+        middleware=[Middleware(BearerAuthMiddleware)],
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/protected",
+            headers={
+                "Authorization": "Bearer test-token-12345",
+                "User-Agent": "Claude-Connector/1.0",
+                "X-Forwarded-For": "203.0.113.11",
+                "MCP-Protocol-Version": "2025-06-18",
+            },
+        )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["client_family"] == "claude"
+    assert body["client_ip"] == "203.0.113.11"
+    assert body["mcp_protocol_version"] == "2025-06-18"
+    assert body["request_path"] == "/protected"
+    assert body["request_method"] == "GET"
 
 
 def test_bearer_auth_rejects_invalid_token(monkeypatch):

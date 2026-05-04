@@ -3,10 +3,12 @@
 from collections import deque
 from contextvars import ContextVar, Token
 import time
+from typing import Any
 
 
 _WINDOW_SECONDS = 60.0
 _current_auth_principal: ContextVar[str | None] = ContextVar("current_auth_principal", default=None)
+_current_request_metadata: ContextVar[dict[str, Any] | None] = ContextVar("current_request_metadata", default=None)
 _rate_buckets: dict[tuple[str, str], deque[float]] = {}
 
 
@@ -23,6 +25,21 @@ def reset_current_auth_principal(token: Token) -> None:
 def current_auth_principal() -> str | None:
     """Return the current authenticated principal, if any."""
     return _current_auth_principal.get()
+
+
+def set_current_request_metadata(metadata: dict[str, Any]) -> Token:
+    """Bind current request metadata for observability and debugging."""
+    return _current_request_metadata.set(metadata)
+
+
+def reset_current_request_metadata(token: Token) -> None:
+    """Restore the previous request metadata in the current context."""
+    _current_request_metadata.reset(token)
+
+
+def current_request_metadata() -> dict[str, Any] | None:
+    """Return metadata about the current authenticated request, if any."""
+    return _current_request_metadata.get()
 
 
 def reset_rate_limits() -> None:

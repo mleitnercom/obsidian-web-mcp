@@ -2,6 +2,7 @@
 
 import json
 import hmac
+from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -9,7 +10,12 @@ from starlette.responses import JSONResponse
 
 from . import config
 from .config import VAULT_MCP_TOKEN
-from .rate_limit import reset_current_auth_principal, set_current_auth_principal
+from .rate_limit import (
+    reset_current_auth_principal,
+    reset_current_request_metadata,
+    set_current_auth_principal,
+    set_current_request_metadata,
+)
 
 # Paths that don't require bearer auth (OAuth flow + health)
 _AUTH_EXEMPT_PATHS = {
@@ -86,6 +92,55 @@ def _challenge_header(request: Request, error: str) -> str:
     )
 
 
+def _request_client_ip(request: Request) -> str:
+    """Return the most useful client IP signal for operator logs."""
+    forwarded_for = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+    if forwarded_for:
+        return forwarded_for
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    if real_ip:
+        return real_ip
+    cf_ip = request.headers.get("cf-connecting-ip", "").strip()
+    if cf_ip:
+        return cf_ip
+    return getattr(request.client, "host", "") or ""
+
+
+def _classify_client_family(user_agent: str, referer: str, origin: str) -> str:
+    """Best-effort classification of the MCP client family."""
+    combined = " ".join(part for part in (user_agent, referer, origin) if part).lower()
+    if not combined:
+        return "unknown"
+    if "chatgpt" in combined or "openai" in combined:
+        return "chatgpt"
+    if "claude" in combined or "anthropic" in combined:
+        return "claude"
+    if "curl" in combined:
+        return "curl"
+    if "python" in combined or "httpx" in combined:
+        return "python"
+    return "other"
+
+
+def _request_metadata(request: Request) -> dict[str, Any]:
+    """Collect request metadata that helps explain tool usage patterns."""
+    user_agent = request.headers.get("user-agent", "").strip()
+    referer = request.headers.get("referer", "").strip()
+    origin = request.headers.get("origin", "").strip()
+    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+    return {
+        "client_family": _classify_client_family(user_agent, referer, origin),
+        "client_ip": _request_client_ip(request),
+        "forwarded_for": forwarded_for or None,
+        "user_agent": user_agent or None,
+        "referer": referer or None,
+        "origin": origin or None,
+        "mcp_protocol_version": request.headers.get("mcp-protocol-version", "").strip() or None,
+        "request_path": request.url.path,
+        "request_method": request.method,
+    }
+
+
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     """Validates Bearer tokens on all requests except OAuth and health endpoints."""
 
@@ -122,7 +177,9 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
             )
 
         context_token = set_current_auth_principal(token)
+        metadata_token = set_current_request_metadata(_request_metadata(request))
         try:
             return await call_next(request)
         finally:
+            reset_current_request_metadata(metadata_token)
             reset_current_auth_principal(context_token)

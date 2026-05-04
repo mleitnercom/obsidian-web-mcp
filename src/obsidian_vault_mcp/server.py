@@ -23,7 +23,7 @@ from starlette.routing import Route
 from . import config
 from .config import VAULT_MCP_PORT, VAULT_MCP_TOKEN, VAULT_PATH
 from .frontmatter_index import FrontmatterIndex
-from .rate_limit import check_rate_limit, current_auth_principal
+from .rate_limit import check_rate_limit, current_auth_principal, current_request_metadata
 from .retrieval import SemanticSearchEngine
 from .vault import vault_json_dumps
 
@@ -155,9 +155,16 @@ def _log_oauth_runtime_summary() -> None:
 def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
     """Run one MCP tool call with consistent start/end/error logging."""
     started = time.monotonic()
+    request_metadata = current_request_metadata() or {}
+    merged_context: dict[str, Any] = {}
+    for key in ("client_family", "client_ip", "mcp_protocol_version", "user_agent", "request_path"):
+        value = request_metadata.get(key)
+        if value is not None:
+            merged_context[key] = value
+    merged_context.update(context)
     context_str = ", ".join(
         f"{key}={_truncate_log_value(value)}"
-        for key, value in context.items()
+        for key, value in merged_context.items()
         if value is not None
     )
     if context_str:
