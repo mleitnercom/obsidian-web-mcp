@@ -22,6 +22,26 @@ def test_parse_tool_start_line_extracts_client_metadata():
     assert parsed["request_path"] == "/mcp"
 
 
+def test_parse_tool_start_line_handles_wrapped_journal_message():
+    line = """INFO Tool start: vault_read
+    (client_family='claude',
+    client_ip='160.79.106.35',
+    mcp_protocol_version='2025-11-25',
+    user_agent='Claude-User',
+    request_path='/mcp',
+    path='99_meta/Task-OS/Projekt-Register.md')"""
+
+    parsed = parse_tool_start_line(line)
+
+    assert parsed is not None
+    assert parsed["tool"] == "vault_read"
+    assert parsed["client_family"] == "claude"
+    assert parsed["client_ip"] == "160.79.106.35"
+    assert parsed["mcp_protocol_version"] == "2025-11-25"
+    assert parsed["user_agent"] == "Claude-User"
+    assert parsed["request_path"] == "/mcp"
+
+
 def test_usage_summary_groups_by_tool_and_client_family():
     events = [
         {"tool": "vault_search", "client_family": "claude", "user_agent": "Claude", "client_ip": "", "mcp_protocol_version": "", "request_path": ""},

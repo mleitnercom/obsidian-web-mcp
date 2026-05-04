@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-_TOOL_START_RE = re.compile(r"Tool start:\s+(vault_[a-z_]+)(?:\s+\((.*)\))?")
+_TOOL_START_RE = re.compile(r"Tool start:\s+(vault_[a-z_]+)(?:\s+\((.*)\))?", re.DOTALL)
 _CONTEXT_RE = re.compile(r"([a-z_]+)=('(?:[^'\\]|\\.)*'|[^,]+)")
 
 
@@ -42,7 +42,8 @@ def _parse_context(context_blob: str) -> dict[str, str]:
 
 def parse_tool_start_line(line: str) -> dict[str, Any] | None:
     """Parse one Tool start log line into structured fields."""
-    match = _TOOL_START_RE.search(line)
+    normalized = " ".join(line.split())
+    match = _TOOL_START_RE.search(normalized)
     if not match:
         return None
     tool_name = match.group(1)
@@ -55,11 +56,11 @@ def parse_tool_start_line(line: str) -> dict[str, Any] | None:
         "user_agent": context.get("user_agent", ""),
         "mcp_protocol_version": context.get("mcp_protocol_version", ""),
         "request_path": context.get("request_path", ""),
-        "raw": line.rstrip("\n"),
+        "raw": normalized,
     }
 
 
-def _read_log_lines(args: argparse.Namespace) -> list[str]:
+def _read_log_messages(args: argparse.Namespace) -> list[str]:
     if args.log_file:
         return Path(args.log_file).read_text(encoding="utf-8").splitlines()
 
@@ -69,10 +70,24 @@ def _read_log_lines(args: argparse.Namespace) -> list[str]:
         args.unit,
         "--since",
         args.since,
+        "-o",
+        "json",
         "--no-pager",
     ]
     output = subprocess.check_output(cmd, text=True, encoding="utf-8", errors="replace")
-    return output.splitlines()
+    messages: list[str] = []
+    for raw_line in output.splitlines():
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            payload = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        message = payload.get("MESSAGE")
+        if isinstance(message, str) and message.strip():
+            messages.append(message)
+    return messages
 
 
 def _usage_summary(events: list[dict[str, Any]], limit: int) -> dict[str, Any]:
@@ -112,8 +127,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "tool-usage":
-        lines = _read_log_lines(args)
-        events = [parsed for line in lines if (parsed := parse_tool_start_line(line))]
+        messages = _read_log_messages(args)
+        events = [parsed for message in messages if (parsed := parse_tool_start_line(message))]
         print(json.dumps(_usage_summary(events, args.limit), indent=2, ensure_ascii=False))
         return
 
