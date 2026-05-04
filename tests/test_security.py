@@ -764,6 +764,13 @@ def test_build_app_exposes_detailed_health_without_bearer_for_local_requests(vau
     monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
     monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
     monkeypatch.setattr(server.frontmatter_index, "_observer", None)
+    monkeypatch.setattr(server.frontmatter_index, "_parse_warning_count", 2)
+    monkeypatch.setattr(server.frontmatter_index, "_last_parse_warning_at", 1_746_387_200.0)
+    monkeypatch.setattr(
+        server.frontmatter_index,
+        "_last_parse_warning_path",
+        str(vault_dir / "broken.md"),
+    )
 
     app = server.build_app()
     with TestClient(app) as client:
@@ -774,6 +781,9 @@ def test_build_app_exposes_detailed_health_without_bearer_for_local_requests(vau
     assert body["status"] == "ok"
     assert body["vault"]["exists"] is True
     assert body["frontmatter_index"]["observer_alive"] is False
+    assert body["frontmatter_index"]["parse_warning_count"] == 2
+    assert body["frontmatter_index"]["last_parse_warning_at"] == "2025-05-04T19:33:20Z"
+    assert body["frontmatter_index"]["last_parse_warning_path"] == str(vault_dir / "broken.md")
     assert body["oauth"]["registered_client_persistence_enabled"] is True
     assert "restart_stable_reconnects" in body["oauth"]
     assert "registered_client_count" in body["oauth"]
@@ -800,6 +810,7 @@ def test_build_app_exposes_minimal_health_for_proxied_requests(vault_dir, monkey
     assert "checked_at" in body
     assert "uptime_seconds" in body
     assert "vault" not in body
+    assert "frontmatter_index" not in body
     assert "oauth" not in body
     assert "semantic" not in body
     assert "heartbeat" not in body

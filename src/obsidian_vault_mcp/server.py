@@ -228,6 +228,7 @@ def _health_payload() -> dict:
     vault_exists = VAULT_PATH.exists()
     vault_is_dir = VAULT_PATH.is_dir()
     observer = frontmatter_index._observer
+    frontmatter_warning_status = frontmatter_index.parse_warning_status
     if semantic_engine.enabled and not semantic_engine.status["initialized"]:
         can_probe_without_build = (
             semantic_engine._cache_files_exist() or not config.SEMANTIC_BUILD_ON_DEMAND
@@ -250,6 +251,7 @@ def _health_payload() -> dict:
             "active": observer is not None,
             "observer_alive": bool(observer and observer.is_alive()),
             "file_count": frontmatter_index.file_count,
+            **frontmatter_warning_status,
         },
         "semantic": {
             "enabled": semantic_status["enabled"],

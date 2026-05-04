@@ -25,6 +25,9 @@ class FrontmatterIndex:
         self._debounce_timer: threading.Timer | None = None
         self._pending_paths: dict[str, str] = {}
         self._change_callbacks: list = []
+        self._parse_warning_count = 0
+        self._last_parse_warning_at: float | None = None
+        self._last_parse_warning_path: str | None = None
 
     def start(self) -> None:
         """Walk all .md files, parse frontmatter, and start watching for changes.
@@ -74,6 +77,21 @@ class FrontmatterIndex:
     def file_count(self) -> int:
         with self._lock:
             return len(self._index)
+
+    @property
+    def parse_warning_status(self) -> dict[str, int | str | None]:
+        """Expose a compact operational summary of frontmatter parse warnings."""
+        with self._lock:
+            last_warning_at = self._last_parse_warning_at
+            if last_warning_at is None:
+                last_warning_iso = None
+            else:
+                last_warning_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(last_warning_at))
+            return {
+                "parse_warning_count": self._parse_warning_count,
+                "last_parse_warning_at": last_warning_iso,
+                "last_parse_warning_path": self._last_parse_warning_path,
+            }
 
     def search_by_field(
         self,
@@ -129,6 +147,10 @@ class FrontmatterIndex:
             post = frontmatter.load(str(path))
             return dict(post.metadata)
         except Exception:
+            with self._lock:
+                self._parse_warning_count += 1
+                self._last_parse_warning_at = time.time()
+                self._last_parse_warning_path = str(path)
             logger.warning("Failed to parse frontmatter: %s", path)
             return None
 
