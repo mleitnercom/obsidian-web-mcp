@@ -4,7 +4,7 @@ Production-hardened fork of `obsidian-web-mcp` for MCP access to an Obsidian vau
 
 ## Release
 
-Latest: [v0.6.1](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.1) (2026-04-26).
+Latest: [v0.6.2](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.2) (2026-05-04).
 
 ## Status
 
