@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
@@ -258,6 +259,41 @@ def _health_payload() -> dict:
         },
         "uptime_seconds": round(time.monotonic() - _server_started_at, 3),
     }
+
+
+def _minimal_health_payload() -> dict[str, Any]:
+    """Build a public-safe health payload for non-local callers."""
+    _sync_heartbeat_config_state()
+    vault_exists = VAULT_PATH.exists()
+    vault_is_dir = VAULT_PATH.is_dir()
+    return {
+        "status": "ok" if vault_exists and vault_is_dir else "degraded",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "uptime_seconds": round(time.monotonic() - _server_started_at, 3),
+    }
+
+
+def _has_proxy_origin_headers(request: Request) -> bool:
+    """Detect requests that reached us through a reverse proxy or tunnel."""
+    return any(
+        request.headers.get(name)
+        for name in ("x-forwarded-for", "x-real-ip", "cf-connecting-ip")
+    )
+
+
+def _is_direct_loopback_request(request: Request) -> bool:
+    """Allow detailed health only for direct local box access."""
+    client_host = getattr(request.client, "host", None)
+    if client_host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
+        return False
+    return not _has_proxy_origin_headers(request)
+
+
+def _can_return_detailed_health(request: Request) -> bool:
+    """Gate detailed health status behind local-only access unless explicitly allowed."""
+    if config.VAULT_HEALTH_ALLOW_REMOTE_DETAILS:
+        return True
+    return _is_direct_loopback_request(request)
 
 
 @asynccontextmanager
@@ -1131,8 +1167,10 @@ def build_app():
             headers=headers,
         )
 
-    async def health_check(_request):
-        return JSONResponse(_health_payload())
+    async def health_check(request: Request):
+        if _can_return_detailed_health(request):
+            return JSONResponse(_health_payload())
+        return JSONResponse(_minimal_health_payload())
 
     if mcp_transport is not None:
         app.routes.insert(0, Route("/", endpoint=mcp_transport, methods=["POST"]))

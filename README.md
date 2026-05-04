@@ -83,7 +83,7 @@ This is a server that provides network access to your personal notes. Security i
 
 **MCP transport compatibility is preserved.** The server answers `GET /` and `HEAD /` with an MCP protocol probe response for newer clients, while keeping normal tool access behind the authenticated HTTP app.
 
-**A lightweight health endpoint is available.** `GET /health` stays readable without bearer auth and returns a compact operational snapshot for vault reachability, frontmatter-index state, semantic-engine status, and operational features like the optional post-write hook.
+**A lightweight health endpoint is available.** `GET /health` stays readable without bearer auth. Direct loopback access gets the detailed operator snapshot, while external or proxied callers get only a minimal liveness payload unless `VAULT_HEALTH_ALLOW_REMOTE_DETAILS=true` is set intentionally.
 
 **Optional push heartbeats are supported.** If `VAULT_MCP_HEARTBEAT_URL` is configured, the server emits periodic GET pings to a push-style monitoring endpoint while also surfacing the current heartbeat state in `/health`.
 
@@ -235,6 +235,7 @@ All configuration is via environment variables:
 |----------|----------|---------|-------------|
 | `VAULT_MCP_HEARTBEAT_URL` | No | (empty) | Optional push heartbeat URL |
 | `VAULT_MCP_HEARTBEAT_INTERVAL` | No | `60` | Heartbeat interval in seconds |
+| `VAULT_HEALTH_ALLOW_REMOTE_DETAILS` | No | `false` | Let non-local callers see the detailed `/health` payload |
 | `VAULT_MCP_POST_WRITE_CMD` | No | (empty) | Optional local post-write command |
 | `VAULT_MCP_POST_WRITE_TIMEOUT` | No | `30` | Post-write hook timeout in seconds |
 

@@ -4,9 +4,10 @@ This is the practical operator path for the current production-oriented fork.
 
 ## Health and Heartbeat
 
-- `GET /health` returns a compact JSON status snapshot without bearer auth.
-- It includes vault reachability, frontmatter-index state, semantic-engine state, heartbeat state, post-write-hook state, and uptime.
-- Open it directly in a browser if you just want a quick operator check.
+- `GET /health` stays readable without bearer auth.
+- Direct loopback access gets the detailed operator snapshot with vault, semantic, OAuth, heartbeat, and post-write details.
+- External or proxied callers get only a minimal liveness payload unless `VAULT_HEALTH_ALLOW_REMOTE_DETAILS=true`.
+- Open it directly on the box if you want the rich operator view.
 - If you want push-style monitoring, set:
 
 ```ini
@@ -93,7 +94,7 @@ Restart-safe checklist:
 2. Keep `VAULT_REGISTERED_CLIENT_TTL_SECONDS=0`.
 3. Set `VAULT_PUBLIC_BASE_URL` explicitly when you run behind Cloudflare Tunnel or another reverse proxy.
 4. Keep `VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH` on persistent disk, not in a temp directory.
-5. After a restart, open `GET /health` and confirm the `oauth` block reports:
+5. After a restart, open `GET /health` locally on the host and confirm the `oauth` block reports:
    - `registered_client_persistence_enabled=true`
    - `registered_client_store_exists=true`
    - `restart_stable_reconnects=true`

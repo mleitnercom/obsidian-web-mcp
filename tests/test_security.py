@@ -718,8 +718,8 @@ def test_build_app_exposes_mcp_root_probe(vault_dir, monkeypatch):
     assert response.headers["MCP-Protocol-Version"] == "2025-06-18"
 
 
-def test_build_app_exposes_health_without_bearer(vault_dir, monkeypatch):
-    """GET /health returns compact operational status without bearer auth."""
+def test_build_app_exposes_detailed_health_without_bearer_for_local_requests(vault_dir, monkeypatch):
+    """GET /health returns detailed status for direct local operator requests."""
     reset_rate_limits()
     base_app = Starlette()
     monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
@@ -742,6 +742,50 @@ def test_build_app_exposes_health_without_bearer(vault_dir, monkeypatch):
     assert "heartbeat" in body
     assert "post_write_hook" in body
     assert "uptime_seconds" in body
+
+
+def test_build_app_exposes_minimal_health_for_proxied_requests(vault_dir, monkeypatch):
+    """GET /health should avoid leaking internal detail to remote or proxied callers."""
+    reset_rate_limits()
+    base_app = Starlette()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.get("/health", headers={"X-Forwarded-For": "203.0.113.7"})
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["status"] == "ok"
+    assert "checked_at" in body
+    assert "uptime_seconds" in body
+    assert "vault" not in body
+    assert "oauth" not in body
+    assert "semantic" not in body
+    assert "heartbeat" not in body
+
+
+def test_build_app_can_expose_detailed_health_remotely_when_configured(vault_dir, monkeypatch):
+    """Operators can opt back into remote detailed health when they really want it."""
+    reset_rate_limits()
+    base_app = Starlette()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+    monkeypatch.setattr(server.config, "VAULT_HEALTH_ALLOW_REMOTE_DETAILS", True)
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.get("/health", headers={"X-Forwarded-For": "203.0.113.7"})
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["status"] == "ok"
+    assert body["vault"]["exists"] is True
+    assert "oauth" in body
+    assert "semantic" in body
 
 
 def test_health_reflects_heartbeat_configuration(vault_dir, monkeypatch):
