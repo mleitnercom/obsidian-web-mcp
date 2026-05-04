@@ -17,6 +17,31 @@ VAULT_MCP_HEARTBEAT_INTERVAL=60
 
 - This is intentionally simple: the server emits periodic HTTP GET pings and also reports the last heartbeat attempt/success in `/health`.
 
+## Tool Usage Observability
+
+Use the observability CLI when you want a compact view of which MCP tools are actually being used and by which client family.
+
+Recent usage from systemd logs:
+
+```bash
+vault-observe tool-usage --since today
+```
+
+Read from a saved log file instead:
+
+```bash
+vault-observe tool-usage --log-file ./obsidian-mcp.log
+```
+
+The summary groups recent `Tool start:` events by:
+
+- tool name
+- detected client family (`claude`, `chatgpt`, `curl`, `python`, `other`, `unknown`)
+- top user agents
+- recent `vault_semantic_search` examples
+
+This is best-effort observability, not cryptographic attribution. Claude and ChatGPT can still share the same bearer token, so the current distinction comes mainly from headers and request metadata.
+
 ## Post-Write Hook
 
 If you want fire-and-forget follow-up automation after vault mutations, set:

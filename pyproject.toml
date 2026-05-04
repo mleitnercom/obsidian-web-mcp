@@ -33,6 +33,7 @@ semantic-sentence = [
 
 [project.scripts]
 vault-mcp = "obsidian_vault_mcp.server:main"
+vault-observe = "obsidian_vault_mcp.observability_cli:main"
 vault-semantic = "obsidian_vault_mcp.semantic_cli:main"
 vault-semantic-benchmark = "obsidian_vault_mcp.semantic_benchmark:main"
 
