@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-_TOOL_START_RE = re.compile(r"Tool start:\s+(vault_[a-z_]+)(?:\s+\((.*)\))?", re.DOTALL)
+_TOOL_START_RE = re.compile(r"Tool start:\s+(vault_[a-z_]+)(?:.*?\((.*)\))?", re.DOTALL)
 _CONTEXT_RE = re.compile(r"([a-z_]+)=('(?:[^'\\]|\\.)*'|[^,]+)")
 
 

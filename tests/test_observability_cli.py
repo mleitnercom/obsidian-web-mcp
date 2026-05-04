@@ -23,7 +23,7 @@ def test_parse_tool_start_line_extracts_client_metadata():
 
 
 def test_parse_tool_start_line_handles_wrapped_journal_message():
-    line = """INFO Tool start: vault_read
+    line = """INFO Tool start: vault_read                server.py:171
     (client_family='claude',
     client_ip='160.79.106.35',
     mcp_protocol_version='2025-11-25',
