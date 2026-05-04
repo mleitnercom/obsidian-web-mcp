@@ -5,16 +5,25 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.6.2] - 2026-05-04
+
+This release smooths out practical binary-ingestion workflows, hardens the public health surface, and adds the first useful operator visibility into which MCP tools clients actually use.
+
 ### Features
 - Add `vault_import_file` so mounted or local files can be copied into the vault without base64-wrapping them into the tool call first.
 - Allow operators to extend the binary media-type allowlist via `VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON` instead of forcing every practical file type into the default set.
+- Add `vault-observe tool-usage` for a compact journal-based summary of MCP tool usage by client family and user agent.
 
 ### Reliability / Operator UX
 - Cross-reference `vault_write_binary` and `vault_upload_*` in the tool descriptions so LLM clients discover the single-call vs. resumable path more reliably.
+- Restrict detailed `/health` output to direct local callers by default, with `VAULT_HEALTH_ALLOW_REMOTE_DETAILS=true` as an explicit opt-in for remote detail.
+- Carry best-effort request metadata (`client_family`, `client_ip`, `user_agent`, `mcp_protocol_version`) into tool-start logs so real Claude/ChatGPT usage patterns can be observed more clearly.
+- Improve the observability CLI so it can reconstruct and parse the wrapped Rich/journalctl tool-start log format seen in production.
 
 ### Docs / Tests
 - Document additive binary media-type config and local file imports in the README.
-- Add regression coverage for extra binary media types and allowlisted local file imports.
+- Document the new observability CLI in the operations runbook.
+- Add regression coverage for extra binary media types, allowlisted local file imports, health-detail gating, request-metadata binding, and wrapped-log observability parsing.
 
 ## [v0.6.1] - 2026-04-26
 
