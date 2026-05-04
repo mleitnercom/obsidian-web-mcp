@@ -763,7 +763,6 @@ def test_build_app_exposes_detailed_health_without_bearer_for_local_requests(vau
     monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
     monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
     monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
-    monkeypatch.setattr(server.frontmatter_index, "_observer", None)
     monkeypatch.setattr(server.frontmatter_index, "_parse_warning_count", 2)
     monkeypatch.setattr(server.frontmatter_index, "_last_parse_warning_at", 1_746_387_200.0)
     monkeypatch.setattr(
@@ -780,7 +779,8 @@ def test_build_app_exposes_detailed_health_without_bearer_for_local_requests(vau
     assert response.status_code == 200
     assert body["status"] == "ok"
     assert body["vault"]["exists"] is True
-    assert body["frontmatter_index"]["observer_alive"] is False
+    assert body["frontmatter_index"]["active"] is True
+    assert body["frontmatter_index"]["observer_alive"] is True
     assert body["frontmatter_index"]["parse_warning_count"] == 2
     assert body["frontmatter_index"]["last_parse_warning_at"] == "2025-05-04T19:33:20Z"
     assert body["frontmatter_index"]["last_parse_warning_path"] == str(vault_dir / "broken.md")
@@ -790,6 +790,28 @@ def test_build_app_exposes_detailed_health_without_bearer_for_local_requests(vau
     assert "heartbeat" in body
     assert "post_write_hook" in body
     assert "uptime_seconds" in body
+
+
+def test_build_app_runs_runtime_lifespan_on_startup(vault_dir, monkeypatch):
+    """TestClient startup should trigger the process-local runtime hooks."""
+    reset_rate_limits()
+    base_app = Starlette()
+    start_calls: list[str] = []
+    stop_calls: list[str] = []
+
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+    monkeypatch.setattr(server.frontmatter_index, "start", lambda: start_calls.append("start"))
+    monkeypatch.setattr(server.frontmatter_index, "stop", lambda: stop_calls.append("stop"))
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert start_calls == ["start"]
+    assert stop_calls == []
 
 
 def test_build_app_exposes_minimal_health_for_proxied_requests(vault_dir, monkeypatch):

@@ -1148,6 +1148,7 @@ def build_app():
     from .oauth import oauth_routes
 
     app = mcp.streamable_http_app()
+    base_lifespan = app.router.lifespan_context
     mcp_transport = next(
         (
             route.endpoint
@@ -1181,6 +1182,13 @@ def build_app():
             return JSONResponse(_health_payload())
         return JSONResponse(_minimal_health_payload())
 
+    @asynccontextmanager
+    async def combined_lifespan(starlette_app):
+        """Run FastMCP's transport lifespan and our process-local runtime hooks together."""
+        async with lifespan(mcp):
+            async with base_lifespan(starlette_app):
+                yield
+
     if mcp_transport is not None:
         app.routes.insert(0, Route("/", endpoint=mcp_transport, methods=["POST"]))
     app.routes.insert(0, Route("/", mcp_root_probe, methods=["GET", "HEAD"]))
@@ -1189,6 +1197,7 @@ def build_app():
     for route in oauth_routes:
         app.routes.insert(0, route)
 
+    app.router.lifespan_context = combined_lifespan
     app.add_middleware(McpRefreshCompatibilityMiddleware)
     app.add_middleware(BearerAuthMiddleware)
     return app
