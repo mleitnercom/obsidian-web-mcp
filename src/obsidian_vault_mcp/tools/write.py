@@ -41,6 +41,25 @@ UPLOAD_STAGING_DIRNAME = "upload-staging"
 UPLOAD_EXPIRY_SECONDS = 24 * 60 * 60
 
 
+def _write_text_with_verification(
+    path: str,
+    content: str,
+    *,
+    create_dirs: bool,
+) -> tuple[bool, int]:
+    """Write text atomically and verify the read-back matches exactly."""
+    is_new, size = write_file_atomic(path, content, create_dirs=create_dirs)
+    written_back, _ = read_file(path)
+    if written_back != content:
+        expected_size = len(content.encode("utf-8"))
+        actual_size = len(written_back.encode("utf-8"))
+        raise RuntimeError(
+            "Write verification failed after atomic write "
+            f"(expected {expected_size} bytes, read back {actual_size} bytes)"
+        )
+    return is_new, size
+
+
 def _allowed_binary_extensions_for(media_type: str) -> set[str] | None:
     """Return the allowed file extensions for one binary media type."""
     return allowed_binary_media_types().get(media_type.strip().lower())
@@ -221,7 +240,7 @@ def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontma
             except Exception as e:
                 logger.warning(f"Frontmatter merge failed for {path}, writing as-is: {e}")
 
-        is_new, size = write_file_atomic(path, content, create_dirs=create_dirs)
+        is_new, size = _write_text_with_verification(path, content, create_dirs=create_dirs)
         fire_post_write("created" if is_new else "updated", [path])
 
         return vault_json_dumps({"path": path, "created": is_new, "size": size})
@@ -253,7 +272,7 @@ def vault_batch_frontmatter_update(updates: list[dict]) -> str:
                 metadata[key] = value
 
             new_content = frontmatter_io.dumps(metadata, body)
-            write_file_atomic(file_path, new_content, create_dirs=False)
+            _write_text_with_verification(file_path, new_content, create_dirs=False)
 
             results.append({"path": file_path, "updated": True})
             updated_paths.append(file_path)
@@ -680,7 +699,7 @@ def _replace_in_content(
     changed = new_content != content
 
     if changed:
-        write_file_atomic(path, new_content, create_dirs=False)
+        _write_text_with_verification(path, new_content, create_dirs=False)
 
     return {
         "path": path,
@@ -689,6 +708,7 @@ def _replace_in_content(
         "occurrences_found": occurrences,
         "size_before": size_before,
         "size_after": size_after,
+        "size_delta": size_after - size_before,
         "replace_all": replace_all,
     }
 
@@ -779,7 +799,9 @@ def vault_patch(path: str, old_text: str, new_text: str = "") -> str:
                 "path": path,
                 "patched": True,
                 "changed": result["changed"],
+                "size_before": result["size_before"],
                 "size_after": result["size_after"],
+                "size_delta": result["size_delta"],
             }
         )
     except FileNotFoundError:
@@ -806,7 +828,7 @@ def vault_append(path: str, content: str, create_if_missing: bool = False) -> st
             new_content = content
             is_new = True
 
-        _, size = write_file_atomic(path, new_content, create_dirs=create_if_missing)
+        _, size = _write_text_with_verification(path, new_content, create_dirs=create_if_missing)
         fire_post_write("created" if is_new else "updated", [path])
         return vault_json_dumps({"path": path, "appended": True, "created": is_new, "size": size})
     except ValueError as e:

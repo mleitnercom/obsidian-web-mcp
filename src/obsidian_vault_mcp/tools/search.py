@@ -240,8 +240,9 @@ def vault_search(
 
 def vault_search_frontmatter(
     field: str,
-    value: str = "",
+    value: str | int | float | bool | list | dict = "",
     match_type: str = "exact",
+    filters: list[dict] | None = None,
     path_prefix: str | None = None,
     max_results: int = 20,
 ) -> str:
@@ -253,6 +254,7 @@ def vault_search_frontmatter(
             field=field,
             value=value,
             match_type=match_type,
+            filters=filters,
             path_prefix=path_prefix,
         )
 

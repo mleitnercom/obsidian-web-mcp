@@ -10,6 +10,7 @@ import pytest
 import frontmatter
 
 from .conftest import build_simple_pdf_bytes
+from obsidian_vault_mcp import config
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
 from obsidian_vault_mcp.tools.write import (
     vault_append,
@@ -28,7 +29,7 @@ from obsidian_vault_mcp.tools.write import (
 )
 import obsidian_vault_mcp.tools.write as write_tools
 from obsidian_vault_mcp.tools.analytics import vault_analytics_findings, vault_analytics_summary
-from obsidian_vault_mcp.tools.search import vault_search
+from obsidian_vault_mcp.tools.search import vault_search, vault_search_frontmatter
 from obsidian_vault_mcp.tools.manage import vault_delete, vault_delete_directory, vault_list, vault_tree
 
 
@@ -83,12 +84,57 @@ def test_vault_search_frontmatter_excerpt_serializes_datetime(vault_dir):
     assert excerpt["scheduled"] == "2026-04-05T13:45:00"
 
 
+def test_vault_search_frontmatter_supports_filters(vault_dir):
+    """The tool should support comparison, list semantics, and AND filters."""
+    from obsidian_vault_mcp.server import frontmatter_index
+
+    frontmatter_index.stop()
+    frontmatter_index._index.clear()
+    frontmatter_index.start()
+
+    result = json.loads(vault_search_frontmatter(
+        field="scope",
+        value="pbs",
+        match_type="exact",
+        filters=[
+            {"field": "status", "match_type": "in", "value": ["today", "next"]},
+            {"field": "priority", "match_type": "lte", "value": 2},
+            {"field": "stakeholders", "match_type": "list_contains", "value": "richard"},
+        ],
+        path_prefix="15_Tasks/",
+        max_results=10,
+    ))
+    assert "error" not in result
+    assert result["truncated"] is False
+    assert result["total"] == 1
+    assert result["results"][0]["path"] == "15_Tasks/pbs/task-alpha.md"
+
+    frontmatter_index.stop()
+    frontmatter_index._index.clear()
+
+
 def test_vault_write_creates_file(vault_dir):
     """vault_write creates a new file."""
     result = json.loads(vault_write("tools-test.md", "---\ntitle: Test\n---\n\nContent."))
     assert result["created"] is True
     assert result["size"] > 0
     assert (vault_dir / "tools-test.md").exists()
+
+
+def test_vault_write_detects_truncated_readback(vault_dir, monkeypatch):
+    """vault_write should fail if the persisted file does not match the intended content."""
+    original = write_tools.write_file_atomic
+
+    def _truncating_write(path, content, create_dirs=True):
+        truncated = content[:-7]
+        return original(path, truncated, create_dirs=create_dirs)
+
+    monkeypatch.setattr(write_tools, "write_file_atomic", _truncating_write)
+
+    result = json.loads(vault_write("tools-test.md", "---\ntitle: Test\n---\n\nContent intact."))
+
+    assert "error" in result
+    assert "Write verification failed" in result["error"]
 
 
 def test_vault_write_merge_frontmatter(vault_dir):
@@ -426,7 +472,24 @@ def test_vault_patch_updates_unique_match(vault_dir):
 
     assert "error" not in result
     assert result["patched"] is True
+    assert result["size_delta"] == len("patched note".encode("utf-8")) - len("test note".encode("utf-8"))
     assert "patched note" in (vault_dir / "test-note.md").read_text(encoding="utf-8")
+
+
+def test_vault_patch_detects_truncated_readback(vault_dir, monkeypatch):
+    """vault_patch should fail instead of claiming success when the write truncates."""
+    original = write_tools.write_file_atomic
+
+    def _truncating_write(path, content, create_dirs=True):
+        truncated = content[:-5]
+        return original(path, truncated, create_dirs=create_dirs)
+
+    monkeypatch.setattr(write_tools, "write_file_atomic", _truncating_write)
+
+    result = json.loads(vault_patch("test-note.md", "test note", "patched note"))
+
+    assert "error" in result
+    assert "Write verification failed" in result["error"]
 
 
 def test_vault_append_appends_content(vault_dir):

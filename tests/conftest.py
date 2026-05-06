@@ -56,6 +56,21 @@ def vault_dir(tmp_path, monkeypatch):
         "---\nstatus: draft\ntype: client-hub\nclient: TestCorp\n---\n\nNested note content.\n"
     )
 
+    (vault / "dated-task.md").write_text(
+        "---\nstatus: today\npriority: 1\ndue: 2026-05-06\nscope: pbs\nstakeholders:\n  - richard\n  - finance\n---\n\nTask due today.\n"
+    )
+    (vault / "future-task.md").write_text(
+        "---\nstatus: next\npriority: 3\ndue: 2026-05-09\nscope: pbs\nstakeholders:\n  - anna\n---\n\nTask due later.\n"
+    )
+    tasks_dir = vault / "15_Tasks" / "pbs"
+    tasks_dir.mkdir(parents=True)
+    (tasks_dir / "task-alpha.md").write_text(
+        "---\nstatus: next\npriority: 2\ndue: 2026-05-05\nscope: pbs\nstakeholders:\n  - richard\n  - ops\n---\n\nAlpha task.\n"
+    )
+    (tasks_dir / "task-beta.md").write_text(
+        "---\nstatus: done\npriority: 1\ndue: 2026-05-07\nscope: pbs\nstakeholders:\n  - anna\n---\n\nBeta task.\n"
+    )
+
     # no-frontmatter.md
     (vault / "no-frontmatter.md").write_text("Just plain text, no frontmatter here.\n")
 

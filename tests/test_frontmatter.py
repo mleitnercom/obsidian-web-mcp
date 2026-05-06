@@ -52,6 +52,50 @@ def test_search_with_prefix(index, vault_dir):
         assert r["path"].startswith("subfolder/")
 
 
+def test_search_lte_on_iso_dates(index, vault_dir):
+    """ISO date comparisons should match files due on or before the query date."""
+    results = index.search_by_field("due", "2026-05-06", "lte")
+    paths = {r["path"] for r in results}
+    assert "dated-task.md" in paths
+    assert "15_Tasks/pbs/task-alpha.md" in paths
+    assert "future-task.md" not in paths
+
+
+def test_search_in_for_scalar_field(index, vault_dir):
+    """Scalar membership checks should support OR-style filtering."""
+    results = index.search_by_field("status", ["today", "next"], "in")
+    paths = {r["path"] for r in results}
+    assert "dated-task.md" in paths
+    assert "future-task.md" in paths
+    assert "15_Tasks/pbs/task-alpha.md" in paths
+    assert "15_Tasks/pbs/task-beta.md" not in paths
+
+
+def test_search_list_contains(index, vault_dir):
+    """List membership should match exact list elements, not stringified substrings."""
+    results = index.search_by_field("stakeholders", "richard", "list_contains")
+    paths = {r["path"] for r in results}
+    assert "dated-task.md" in paths
+    assert "15_Tasks/pbs/task-alpha.md" in paths
+    assert "future-task.md" not in paths
+
+
+def test_search_with_additional_filters(index, vault_dir):
+    """Additional filters should be applied as a single AND query."""
+    results = index.search_by_field(
+        "scope",
+        "pbs",
+        "exact",
+        filters=[
+            {"field": "status", "match_type": "in", "value": ["today", "next"]},
+            {"field": "priority", "match_type": "lte", "value": 2},
+        ],
+        path_prefix="15_Tasks/",
+    )
+    paths = {r["path"] for r in results}
+    assert paths == {"15_Tasks/pbs/task-alpha.md"}
+
+
 def test_frontmatter_merge(vault_dir):
     """Existing frontmatter merged with new fields, body preserved."""
     import frontmatter

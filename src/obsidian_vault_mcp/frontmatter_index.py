@@ -3,7 +3,9 @@
 import logging
 import threading
 import time
+from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 import frontmatter
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
@@ -96,8 +98,9 @@ class FrontmatterIndex:
     def search_by_field(
         self,
         field: str,
-        value: str,
+        value: Any,
         match_type: str,
+        filters: list[dict[str, Any]] | None = None,
         path_prefix: str | None = None,
     ) -> list[dict]:
         """Search frontmatter index by field.
@@ -105,26 +108,21 @@ class FrontmatterIndex:
         Args:
             field: Frontmatter key to match against.
             value: Value to compare (ignored for match_type "exists").
-            match_type: One of "exact", "contains", "exists".
+            match_type: Frontmatter match operator.
+            filters: Optional additional AND filters.
             path_prefix: If set, only return files whose relative path starts with this.
 
         Returns:
             List of {"path": relative_path, "frontmatter": dict}.
         """
         results: list[dict] = []
+        active_filters = [{"field": field, "value": value, "match_type": match_type}, *(filters or [])]
         with self._lock:
             for rel_path, fm in self._index.items():
                 if path_prefix and not rel_path.startswith(path_prefix):
                     continue
-                if match_type == "exists":
-                    if field in fm:
-                        results.append({"path": rel_path, "frontmatter": fm})
-                elif match_type == "exact":
-                    if field in fm and str(fm[field]) == value:
-                        results.append({"path": rel_path, "frontmatter": fm})
-                elif match_type == "contains":
-                    if field in fm and value.lower() in str(fm[field]).lower():
-                        results.append({"path": rel_path, "frontmatter": fm})
+                if all(self._matches_filter(fm, filter_spec) for filter_spec in active_filters):
+                    results.append({"path": rel_path, "frontmatter": fm})
         return results
 
     def on_change(self, callback) -> None:
@@ -153,6 +151,86 @@ class FrontmatterIndex:
                 self._last_parse_warning_path = str(path)
             logger.warning("Failed to parse frontmatter: %s", path)
             return None
+
+    def _matches_filter(self, fm: dict[str, Any], filter_spec: dict[str, Any]) -> bool:
+        field = filter_spec["field"]
+        match_type = filter_spec["match_type"]
+        value = filter_spec.get("value")
+
+        if match_type == "exists":
+            return field in fm
+        if field not in fm:
+            return False
+
+        field_value = fm[field]
+        if match_type == "exact":
+            return self._normalize_scalar(field_value) == self._normalize_scalar(value)
+        if match_type == "contains":
+            return str(value).lower() in str(field_value).lower()
+        if match_type in {"lt", "lte", "gt", "gte"}:
+            return self._compare_values(field_value, value, match_type)
+        if match_type == "in":
+            if not isinstance(value, list):
+                return False
+            normalized_field = self._normalize_scalar(field_value)
+            return any(normalized_field == self._normalize_scalar(item) for item in value)
+        if match_type == "list_contains":
+            if not isinstance(field_value, list):
+                return False
+            return any(self._normalize_scalar(item) == self._normalize_scalar(value) for item in field_value)
+        if match_type == "list_any":
+            if not isinstance(field_value, list) or not isinstance(value, list):
+                return False
+            normalized_field = {self._normalize_scalar(item) for item in field_value}
+            return any(self._normalize_scalar(item) in normalized_field for item in value)
+        if match_type == "list_all":
+            if not isinstance(field_value, list) or not isinstance(value, list):
+                return False
+            normalized_field = {self._normalize_scalar(item) for item in field_value}
+            return all(self._normalize_scalar(item) in normalized_field for item in value)
+        return False
+
+    def _compare_values(self, field_value: Any, query_value: Any, operator: str) -> bool:
+        left = self._coerce_comparable(field_value)
+        right = self._coerce_comparable(query_value)
+        if left is None or right is None or type(left) is not type(right):
+            return False
+        if operator == "lt":
+            return left < right
+        if operator == "lte":
+            return left <= right
+        if operator == "gt":
+            return left > right
+        if operator == "gte":
+            return left >= right
+        return False
+
+    def _coerce_comparable(self, value: Any) -> date | float | None:
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return date.fromisoformat(value)
+            except ValueError:
+                pass
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
+
+    def _normalize_scalar(self, value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        return value
 
     def _schedule_debounce(self, abs_path: str, action: str) -> None:
         """Add a path/action to the pending set and reset the debounce timer."""

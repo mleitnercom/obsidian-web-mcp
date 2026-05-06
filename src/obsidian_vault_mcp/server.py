@@ -904,27 +904,43 @@ def vault_search(
 
 @mcp.tool(
     name="vault_search_frontmatter",
-    description="Search vault files by YAML frontmatter field values. Queries an in-memory index for fast results. Supports exact match, contains, and field-exists queries.",
+    description="Search vault files by YAML frontmatter field values. Queries an in-memory index for fast results. Supports equality, contains, exists, comparison, scalar membership, and multi-filter AND queries.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
 def vault_search_frontmatter(
     field: str,
-    value: str = "",
+    value: str | int | float | bool | list | dict = "",
     match_type: str = "exact",
+    filters: list[dict] | None = None,
     path_prefix: str | None = None,
     max_results: int = 20,
 ) -> str:
     """Search by frontmatter fields."""
-    inp = VaultSearchFrontmatterInput(field=field, value=value, match_type=match_type, path_prefix=path_prefix, max_results=max_results)
+    inp = VaultSearchFrontmatterInput(
+        field=field,
+        value=value,
+        match_type=match_type,
+        filters=filters,
+        path_prefix=path_prefix,
+        max_results=max_results,
+    )
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
         return limited
     return _run_logged_tool(
         "vault_search_frontmatter",
-        lambda: _vault_search_frontmatter(inp.field, inp.value, inp.match_type, inp.path_prefix, inp.max_results),
+        lambda: _vault_search_frontmatter(
+            inp.field,
+            inp.value,
+            inp.match_type,
+            [item.model_dump() for item in inp.filters] if inp.filters else None,
+            inp.path_prefix,
+            inp.max_results,
+        ),
         field=inp.field,
         value=inp.value,
         match_type=inp.match_type,
+        filters=[item.model_dump() for item in inp.filters] if inp.filters else None,
         path_prefix=inp.path_prefix,
         max_results=inp.max_results,
     )

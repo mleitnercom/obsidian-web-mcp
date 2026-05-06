@@ -1,6 +1,6 @@
 """Pydantic input models for obsidian-vault-mcp tool endpoints."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -444,6 +444,42 @@ class VaultSearchInput(BaseModel):
     )
 
 
+class FrontmatterSearchFilterInput(BaseModel):
+    """One frontmatter filter condition."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    field: str = Field(
+        ...,
+        description="Frontmatter field name to search (e.g. 'status', 'tags', 'publish-date')",
+        min_length=1,
+        max_length=100,
+    )
+    value: Any = Field(
+        default="",
+        description="Value to match against; ignored when match_type is 'exists'",
+    )
+    match_type: Literal[
+        "exact",
+        "contains",
+        "exists",
+        "lt",
+        "lte",
+        "gt",
+        "gte",
+        "in",
+        "list_contains",
+        "list_any",
+        "list_all",
+    ] = Field(
+        default="exact",
+        description=(
+            "How to match: exact equality, substring contains, field existence, "
+            "numeric/date comparisons, scalar membership, or list membership semantics"
+        ),
+    )
+
+
 class VaultSearchFrontmatterInput(BaseModel):
     """Search vault files by YAML frontmatter field values."""
 
@@ -455,14 +491,33 @@ class VaultSearchFrontmatterInput(BaseModel):
         min_length=1,
         max_length=100,
     )
-    value: str = Field(
+    value: Any = Field(
         default="",
         description="Value to match against; ignored when match_type is 'exists'",
-        max_length=200,
     )
-    match_type: Literal["exact", "contains", "exists"] = Field(
+    match_type: Literal[
+        "exact",
+        "contains",
+        "exists",
+        "lt",
+        "lte",
+        "gt",
+        "gte",
+        "in",
+        "list_contains",
+        "list_any",
+        "list_all",
+    ] = Field(
         default="exact",
-        description="How to match: 'exact' for equality, 'contains' for substring, 'exists' to check field presence",
+        description=(
+            "How to match: exact equality, substring contains, field existence, "
+            "numeric/date comparisons, scalar membership, or list membership semantics"
+        ),
+    )
+    filters: list[FrontmatterSearchFilterInput] | None = Field(
+        default=None,
+        description="Optional additional AND filters to apply in the same query",
+        max_length=10,
     )
     path_prefix: str | None = Field(
         default=None,
