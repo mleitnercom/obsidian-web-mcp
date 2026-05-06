@@ -3,6 +3,8 @@
 import pytest
 from pathlib import Path
 
+from obsidian_vault_mcp import config
+import obsidian_vault_mcp.vault as vault_module
 from obsidian_vault_mcp.vault import (
     delete_path,
     delete_directory_path,
@@ -71,6 +73,45 @@ def test_read_file_rejects_binary_pdf(vault_dir):
     assert metadata["pages"] == 1
     assert metadata["pages_with_text"] == 1
     assert metadata["extractable_text"] is True
+
+
+def test_read_file_uses_external_ocr_fallback_for_image_only_pdf(vault_dir, monkeypatch):
+    """Image-only PDFs should use the optional OCR fallback when configured."""
+    pdf_file = vault_dir / "scan.pdf"
+    pdf_file.write_bytes(build_simple_pdf_bytes("ignored"))
+
+    class _FakePage:
+        def extract_text(self):
+            return ""
+
+    class _FakeReader:
+        def __init__(self, _path):
+            self.is_encrypted = False
+            self.pages = [_FakePage()]
+
+    monkeypatch.setattr("pypdf.PdfReader", _FakeReader)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_ENABLED", True)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_CMD", "fake-ocr --stdout")
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_TIMEOUT", 10)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_LANGUAGES", "deu+eng")
+    monkeypatch.setattr(
+        vault_module.subprocess,
+        "run",
+        lambda *args, **kwargs: type(
+            "Completed",
+            (),
+            {"returncode": 0, "stdout": "OCR text from scan\n", "stderr": ""},
+        )(),
+    )
+
+    content, metadata = read_file("scan.pdf")
+
+    assert content == "OCR text from scan"
+    assert metadata["content_source"] == "pdf_ocr_fallback"
+    assert metadata["extractable_text"] is False
+    assert metadata["ocr"]["applied"] is True
+    assert metadata["ocr"]["command"] == "fake-ocr"
+    assert metadata["ocr"]["languages"] == ["deu", "eng"]
 
 
 def test_write_atomic_new_file(vault_dir):

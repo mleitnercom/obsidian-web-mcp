@@ -5,6 +5,22 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.6.3] - 2026-05-07
+
+### Features
+- Extend `vault_search_frontmatter` with comparison operators (`lt`, `lte`, `gt`, `gte`), scalar membership (`in`), list membership (`list_contains`, `list_any`, `list_all`), and optional multi-filter AND queries for task-oriented frontmatter workflows.
+- Make `vault_upload_init` return a tool-call-friendly default `part_size` plus `total_parts`, while still allowing callers to request an explicit chunk size.
+- Add an optional OCR fallback for image-only PDFs in `vault_read` via `VAULT_PDF_OCR_ENABLED` and `VAULT_PDF_OCR_CMD`, keeping the default deployment lightweight unless an operator explicitly wires in an external OCR command.
+
+### Reliability / Operator UX
+- Verify text writes by reading files back after atomic write operations so `vault_write`, `vault_patch`, `vault_append`, replace flows, and frontmatter batch updates fail loudly instead of silently succeeding on truncated output.
+- Surface `size_before` and `size_delta` on `vault_patch` results so unexpected shrinkage is easier to spot during targeted edits.
+- Count non-Markdown vault files as valid wikilink targets in analytics so links such as `[[exports/report.pdf]]` no longer inflate broken-link findings.
+
+### Docs / Tests
+- Expand regression coverage for frontmatter search operators, multi-filter task queries, text-write verification failures, chunked-upload init sizing, non-Markdown wikilink targets, and OCR fallback behavior.
+- Document the optional external OCR fallback and its configuration in the README.
+
 ## [v0.6.2] - 2026-05-04
 
 This release smooths out practical binary-ingestion workflows, hardens the public health surface, and adds the first useful operator visibility into which MCP tools clients actually use.
@@ -44,7 +60,6 @@ This release hardens the fork for more realistic live operation: safer large-fil
 ### Docs / Tests
 - Document subtree allowlisting and excluded prefixes in the README with operator examples.
 - Add focused regression coverage for allowlisted-root and excluded-prefix behavior.
-
 ## [v0.6.0] - 2026-04-19
 
 ### Features

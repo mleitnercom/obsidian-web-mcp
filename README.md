@@ -167,7 +167,7 @@ python -m pip install -e .[semantic-sentence]
 
 The server starts on port 8420 by default. It serves MCP over Streamable HTTP at `/mcp/`.
 
-`vault_read` supports normal text/markdown files and also extracts text from `.pdf` files via `pypdf`. Other known binary formats are still rejected with a clear error instead of a misleading UTF-8 decode failure.
+`vault_read` supports normal text/markdown files and also extracts text from `.pdf` files via `pypdf`. If a PDF has no text layer, an optional external OCR fallback can be enabled with `VAULT_PDF_OCR_ENABLED=true` plus `VAULT_PDF_OCR_CMD`. Other known binary formats are still rejected with a clear error instead of a misleading UTF-8 decode failure.
 
 For binary ingestion there are now three practical paths:
 
@@ -228,6 +228,10 @@ All configuration is via environment variables:
 | `VAULT_PUBLIC_BASE_URL` | No | (auto-detected) | Public HTTPS base URL |
 | `VAULT_TRUSTED_PROXY_IPS` | No | `127.0.0.1,::1` | Proxy IPs trusted for forwarded headers |
 | `VAULT_ALLOWED_HOSTS` | No | `127.0.0.1:*,localhost:*,[::1]:*` | Hosts allowed by rebinding protection |
+| `VAULT_PDF_OCR_ENABLED` | No | `false` | Enable external OCR fallback for image-only PDFs |
+| `VAULT_PDF_OCR_CMD` | No | (empty) | External command that prints OCR text to stdout; `{path}` placeholder is optional |
+| `VAULT_PDF_OCR_TIMEOUT` | No | `120` | Timeout in seconds for the external OCR command |
+| `VAULT_PDF_OCR_LANGUAGES` | No | `deu+eng` | Language hint passed to the OCR command via env |
 
 ### Health and Post-Write Automation
 

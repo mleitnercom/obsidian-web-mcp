@@ -3,7 +3,9 @@
 import fnmatch
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -223,7 +225,75 @@ def _read_pdf_file(path: Path) -> tuple[str, dict]:
         "extractable_text": extracted_page_count > 0,
     }
 
+    if extracted_page_count == 0:
+        ocr_metadata = _run_pdf_ocr(path)
+        if ocr_metadata is not None:
+            metadata["ocr"] = {k: v for k, v in ocr_metadata.items() if k != "content"}
+            if ocr_metadata.get("applied") and ocr_metadata.get("content"):
+                metadata["content_source"] = "pdf_ocr_fallback"
+                return ocr_metadata["content"], metadata
+
     return "\n\n".join(page_texts), metadata
+
+
+def _run_pdf_ocr(path: Path) -> dict | None:
+    """Optionally run an external OCR command for image-only PDFs."""
+    if not config.VAULT_PDF_OCR_ENABLED or not config.VAULT_PDF_OCR_CMD:
+        return None
+
+    argv = shlex.split(config.VAULT_PDF_OCR_CMD, posix=os.name != "nt")
+    if not argv:
+        return None
+    if any("{path}" in arg for arg in argv):
+        argv = [arg.format(path=str(path)) for arg in argv]
+    else:
+        argv = [*argv, str(path)]
+
+    env = os.environ.copy()
+    env["VAULT_PDF_PATH"] = str(path)
+    env["VAULT_PDF_OCR_LANGUAGES"] = config.VAULT_PDF_OCR_LANGUAGES
+
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=config.VAULT_PDF_OCR_TIMEOUT,
+            check=False,
+            env=env,
+        )
+    except FileNotFoundError:
+        return {
+            "applied": False,
+            "engine": "external_command",
+            "languages": config.VAULT_PDF_OCR_LANGUAGES.split("+"),
+            "error": f"OCR command not found: {argv[0]}",
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "applied": False,
+            "engine": "external_command",
+            "languages": config.VAULT_PDF_OCR_LANGUAGES.split("+"),
+            "error": f"OCR command timed out after {config.VAULT_PDF_OCR_TIMEOUT} seconds",
+        }
+
+    content = result.stdout.strip()
+    metadata = {
+        "applied": result.returncode == 0 and bool(content),
+        "engine": "external_command",
+        "command": Path(argv[0]).name,
+        "languages": config.VAULT_PDF_OCR_LANGUAGES.split("+"),
+        "returncode": result.returncode,
+    }
+    if result.stderr.strip():
+        metadata["stderr"] = result.stderr.strip()[:500]
+    if result.returncode != 0:
+        metadata["error"] = f"OCR command exited with status {result.returncode}"
+    if not content:
+        metadata["error"] = metadata.get("error", "OCR command returned no text")
+    metadata["content"] = content
+    return metadata
 
 
 def read_file(relative_path: str) -> tuple[str, dict]:
