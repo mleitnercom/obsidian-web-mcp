@@ -639,6 +639,20 @@ def test_vault_analytics_ignores_wikilinks_in_frontmatter(vault_dir):
     assert summary["findings"]["broken_wikilinks"] == 0
 
 
+def test_vault_analytics_recognizes_non_markdown_wikilink_targets(vault_dir):
+    """Valid wikilinks to PDFs or other vault files should not count as broken."""
+    exports = vault_dir / "exports"
+    exports.mkdir()
+    (exports / "report.pdf").write_bytes(build_simple_pdf_bytes("Linked PDF"))
+    (vault_dir / "pdf-link.md").write_text("[[exports/report.pdf]]\n", encoding="utf-8")
+
+    summary = json.loads(vault_analytics_summary())
+    findings = json.loads(vault_analytics_findings("broken_wikilinks"))
+
+    assert summary["findings"]["broken_wikilinks"] == 0
+    assert findings["count"] == 0
+
+
 def test_vault_search_finds_text(vault_dir):
     """vault_search finds text in files."""
     result = json.loads(vault_search("test note"))

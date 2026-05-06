@@ -19,7 +19,7 @@ from ..vault import (
 WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 
-def _iter_markdown_files(path_prefix: str = "") -> tuple[Path, list[Path]]:
+def _iter_vault_files(path_prefix: str = "", pattern: str = "*") -> tuple[Path, list[Path]]:
     if path_prefix:
         roots = [resolve_vault_path(path_prefix)]
     else:
@@ -31,7 +31,7 @@ def _iter_markdown_files(path_prefix: str = "") -> tuple[Path, list[Path]]:
     for root in roots:
         if not root.is_dir():
             raise NotADirectoryError(f"Not a directory: {path_prefix}")
-        for path in root.rglob("*.md"):
+        for path in root.rglob(pattern):
             if any(part in config.EXCLUDED_DIRS for part in path.parts):
                 continue
             if path.is_symlink() or not path.is_file():
@@ -44,17 +44,20 @@ def _iter_markdown_files(path_prefix: str = "") -> tuple[Path, list[Path]]:
 
 def _load_posts(path_prefix: str = "") -> tuple[list[dict], dict[str, list[str]], dict[str, str]]:
     vault_root = config.VAULT_PATH.resolve()
-    _, files = _iter_markdown_files(path_prefix)
+    _, files = _iter_vault_files(path_prefix, "*.md")
+    _, vault_files = _iter_vault_files(path_prefix, "*")
     posts: list[dict] = []
     basename_index: dict[str, list[str]] = defaultdict(list)
     path_index: dict[str, str] = {}
 
-    for path in files:
+    for path in vault_files:
         rel = str(path.relative_to(vault_root)).replace("\\", "/")
         basename_index[path.stem.lower()].append(rel)
         path_index[rel.lower()] = rel
-        if path.suffix.lower() == ".md":
-            path_index[path.with_suffix("").relative_to(vault_root).as_posix().lower()] = rel
+        path_index[path.with_suffix("").relative_to(vault_root).as_posix().lower()] = rel
+
+    for path in files:
+        rel = str(path.relative_to(vault_root)).replace("\\", "/")
         try:
             raw = path.read_text(encoding="utf-8")
             post = frontmatter.loads(raw)
