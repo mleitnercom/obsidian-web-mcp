@@ -580,7 +580,7 @@ def vault_write_binary(
 
 @mcp.tool(
     name="vault_upload_init",
-    description="Start a resumable binary upload session for larger files. Use status to resume missing parts and commit with a full-file SHA-256 checksum. For smaller files that fit in one tool call, prefer vault_write_binary.",
+    description="Start a resumable binary upload session for larger files. Returns a tool-call-friendly default part_size unless you explicitly request a different chunk size.",
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
 )
 def vault_upload_init(

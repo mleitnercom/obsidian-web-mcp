@@ -323,6 +323,41 @@ def test_resumable_upload_rejects_wrong_duplicate_part(vault_dir, monkeypatch):
     assert "different checksum" in result["error"]
 
 
+def test_vault_upload_init_uses_small_default_part_size(vault_dir, monkeypatch):
+    """Init should return a tool-call-friendly default part size for multi-part uploads."""
+    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+
+    result = json.loads(
+        vault_upload_init(
+            "assets/default-parts.pdf",
+            "application/pdf",
+            340758,
+        )
+    )
+
+    assert "error" not in result
+    assert result["part_size"] == 16 * 1024
+    assert result["total_parts"] == 21
+
+
+def test_vault_upload_init_honors_explicit_part_size(vault_dir, monkeypatch):
+    """Init should preserve an explicit smaller part size request."""
+    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+
+    result = json.loads(
+        vault_upload_init(
+            "assets/custom-parts.pdf",
+            "application/pdf",
+            50000,
+            part_size=8192,
+        )
+    )
+
+    assert "error" not in result
+    assert result["part_size"] == 8192
+    assert result["total_parts"] == 7
+
+
 def test_vault_import_url_downloads_and_writes_binary(vault_dir, monkeypatch):
     """URL imports should let the server download and atomically write an allowed binary."""
     content = b"%PDF fake content"

@@ -37,6 +37,8 @@ DEFAULT_ALLOWED_BINARY_MEDIA_TYPES = {
     "application/pdf": {".pdf"},
 }
 
+MAX_BINARY_CHUNK_SIZE = 256 * 1024
+DEFAULT_BINARY_PART_SIZE = 16 * 1024
 UPLOAD_STAGING_DIRNAME = "upload-staging"
 UPLOAD_EXPIRY_SECONDS = 24 * 60 * 60
 
@@ -361,7 +363,7 @@ def vault_upload_init(
                     "media_type": media_type,
                 }
             )
-        chosen_part_size = part_size or min(config.MAX_UPLOAD_PART_SIZE, max(64 * 1024, total_size))
+        chosen_part_size = min(part_size or DEFAULT_BINARY_PART_SIZE, total_size)
         if chosen_part_size <= 0 or chosen_part_size > config.MAX_UPLOAD_PART_SIZE:
             return vault_json_dumps(
                 {
