@@ -455,7 +455,7 @@ class FrontmatterSearchFilterInput(BaseModel):
         min_length=1,
         max_length=100,
     )
-    value: Any = Field(
+    value: str | int | float | bool | list[Any] | dict[str, Any] = Field(
         default="",
         description=(
             "Value to match against. For 'in' and 'list_*' operators pass an array. "
@@ -486,7 +486,7 @@ class FrontmatterSearchFilterInput(BaseModel):
 
 
 class VaultSearchFrontmatterInput(BaseModel):
-    """Search vault files by YAML frontmatter field values."""
+    """Search vault files by YAML frontmatter field values with comparison, list-membership, and AND filters."""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
@@ -496,7 +496,7 @@ class VaultSearchFrontmatterInput(BaseModel):
         min_length=1,
         max_length=100,
     )
-    value: Any = Field(
+    value: str | int | float | bool | list[Any] | dict[str, Any] = Field(
         default="",
         description=(
             "Value to match against. For 'in' and 'list_*' operators pass an array. "
