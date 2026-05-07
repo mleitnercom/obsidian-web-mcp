@@ -457,16 +457,20 @@ class FrontmatterSearchFilterInput(BaseModel):
     )
     value: Any = Field(
         default="",
-        description="Value to match against; ignored when match_type is 'exists'",
+        description=(
+            "Value to match against. For 'in' and 'list_*' operators pass an array. "
+            "For comparison operators pass a scalar such as an ISO date string, number, or plain string. "
+            "Ignored when match_type is 'exists'."
+        ),
     )
     match_type: Literal[
         "exact",
         "contains",
         "exists",
-        "lt",
         "lte",
-        "gt",
         "gte",
+        "lt",
+        "gt",
         "in",
         "list_contains",
         "list_any",
@@ -475,7 +479,8 @@ class FrontmatterSearchFilterInput(BaseModel):
         default="exact",
         description=(
             "How to match: exact equality, substring contains, field existence, "
-            "numeric/date comparisons, scalar membership, or list membership semantics"
+            "numeric/date comparisons, scalar membership, or list membership semantics. "
+            "Allowed values: exact, contains, exists, lte, gte, lt, gt, in, list_contains, list_any, list_all."
         ),
     )
 
@@ -493,16 +498,20 @@ class VaultSearchFrontmatterInput(BaseModel):
     )
     value: Any = Field(
         default="",
-        description="Value to match against; ignored when match_type is 'exists'",
+        description=(
+            "Value to match against. For 'in' and 'list_*' operators pass an array. "
+            "For comparison operators pass a scalar such as an ISO date string, number, or plain string. "
+            "Ignored when match_type is 'exists'."
+        ),
     )
     match_type: Literal[
         "exact",
         "contains",
         "exists",
-        "lt",
         "lte",
-        "gt",
         "gte",
+        "lt",
+        "gt",
         "in",
         "list_contains",
         "list_any",
@@ -511,12 +520,16 @@ class VaultSearchFrontmatterInput(BaseModel):
         default="exact",
         description=(
             "How to match: exact equality, substring contains, field existence, "
-            "numeric/date comparisons, scalar membership, or list membership semantics"
+            "numeric/date comparisons, scalar membership, or list membership semantics. "
+            "Allowed values: exact, contains, exists, lte, gte, lt, gt, in, list_contains, list_any, list_all."
         ),
     )
     filters: list[FrontmatterSearchFilterInput] | None = Field(
         default=None,
-        description="Optional additional AND filters to apply in the same query",
+        description=(
+            "Optional additional AND filters to apply in the same query. "
+            "Each entry uses the same {field, match_type, value} schema as the top-level filter."
+        ),
         max_length=10,
     )
     path_prefix: str | None = Field(

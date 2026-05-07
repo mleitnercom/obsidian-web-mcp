@@ -12,13 +12,14 @@ import time
 import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Annotated, Any, Callable, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
+from pydantic import Field
 
 from . import config
 from .config import VAULT_MCP_PORT, VAULT_MCP_TOKEN, VAULT_PATH
@@ -398,6 +399,7 @@ from .models import (
     VaultAnalyticsSummaryInput,
     VaultAppendInput,
     VaultBatchReplaceInput,
+    FrontmatterSearchFilterInput,
     VaultReadInput,
     VaultImportFileInput,
     VaultPatchInput,
@@ -904,16 +906,67 @@ def vault_search(
 
 @mcp.tool(
     name="vault_search_frontmatter",
-    description="Search vault files by YAML frontmatter field values. Queries an in-memory index for fast results. Supports equality, contains, exists, comparison, scalar membership, and multi-filter AND queries.",
+    description=(
+        "Search vault files by YAML frontmatter field values with comparison operators, list-membership semantics, "
+        "and multi-field AND filters. Comparison operators (lte, gte, lt, gt) work on ISO dates and numeric values. "
+        "List operators (list_contains, list_any, list_all) treat the frontmatter value as a list. "
+        "Use the optional filters array to AND multiple conditions in one call."
+    ),
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
 def vault_search_frontmatter(
-    field: str,
-    value: str | int | float | bool | list | dict = "",
-    match_type: str = "exact",
-    filters: list[dict] | None = None,
-    path_prefix: str | None = None,
-    max_results: int = 20,
+    field: Annotated[
+        str,
+        Field(description="Frontmatter field name to search, for example 'status', 'scope', or 'due'."),
+    ],
+    value: Annotated[
+        str | int | float | bool | list[Any] | dict[str, Any],
+        Field(
+            description=(
+                "Value to match against. For 'in' and 'list_*' operators pass an array. "
+                "For comparison operators pass a scalar such as an ISO date string, number, or plain string. "
+                "Ignored when match_type is 'exists'."
+            )
+        ),
+    ] = "",
+    match_type: Annotated[
+        Literal[
+            "exact",
+            "contains",
+            "exists",
+            "lte",
+            "gte",
+            "lt",
+            "gt",
+            "in",
+            "list_contains",
+            "list_any",
+            "list_all",
+        ],
+        Field(
+            description=(
+                "How to match the field: equality, substring contains, field existence, date/number comparisons, "
+                "scalar membership, or list membership semantics."
+            )
+        ),
+    ] = "exact",
+    filters: Annotated[
+        list[FrontmatterSearchFilterInput] | None,
+        Field(
+            description=(
+                "Optional additional AND filters. Each entry uses the same {field, match_type, value} schema "
+                "as the top-level filter."
+            )
+        ),
+    ] = None,
+    path_prefix: Annotated[
+        str | None,
+        Field(description="Optional directory prefix to limit the search scope."),
+    ] = None,
+    max_results: Annotated[
+        int,
+        Field(description="Maximum number of matching files to return."),
+    ] = 20,
 ) -> str:
     """Search by frontmatter fields."""
     inp = VaultSearchFrontmatterInput(

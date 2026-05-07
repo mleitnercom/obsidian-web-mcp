@@ -113,6 +113,37 @@ def test_vault_search_frontmatter_supports_filters(vault_dir):
     frontmatter_index._index.clear()
 
 
+def test_vault_search_frontmatter_tool_schema_exposes_extended_filters():
+    """The registered MCP tool schema should expose enums and nested filter input."""
+    from obsidian_vault_mcp.server import mcp
+
+    tool = mcp._tool_manager.get_tool("vault_search_frontmatter")
+    schema = tool.parameters
+
+    assert schema["properties"]["match_type"]["enum"] == [
+        "exact",
+        "contains",
+        "exists",
+        "lte",
+        "gte",
+        "lt",
+        "gt",
+        "in",
+        "list_contains",
+        "list_any",
+        "list_all",
+    ]
+
+    filters_schema = schema["properties"]["filters"]["anyOf"][0]
+    filter_item_ref = filters_schema["items"]["$ref"]
+    filter_def_name = filter_item_ref.rsplit("/", 1)[-1]
+    filter_def = schema["$defs"][filter_def_name]
+
+    assert filter_def["properties"]["match_type"]["enum"] == schema["properties"]["match_type"]["enum"]
+    assert "AND filters" in schema["properties"]["filters"]["description"]
+    assert "list_*" in schema["properties"]["value"]["description"]
+
+
 def test_vault_write_creates_file(vault_dir):
     """vault_write creates a new file."""
     result = json.loads(vault_write("tools-test.md", "---\ntitle: Test\n---\n\nContent."))
