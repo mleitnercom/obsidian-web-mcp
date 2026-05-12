@@ -21,6 +21,7 @@ def test_post_write_hook_runs_without_shell(monkeypatch, vault_dir):
 
     monkeypatch.setattr(hooks.config, "VAULT_MCP_POST_WRITE_CMD", "python -V")
     monkeypatch.setattr(hooks.config, "VAULT_MCP_POST_WRITE_TIMEOUT", 12)
+    monkeypatch.setattr(hooks.shutil, "which", lambda executable: f"/usr/bin/{executable}")
     monkeypatch.setattr(hooks.subprocess, "run", fake_run)
 
     hooks._run_cmd("python -V", "updated", ["note.md"])
