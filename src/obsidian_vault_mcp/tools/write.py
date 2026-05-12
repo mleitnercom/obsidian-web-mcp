@@ -3,6 +3,7 @@
 import base64
 import binascii
 import hashlib
+import hmac
 import ipaddress
 import json
 import logging
@@ -12,7 +13,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from .. import config
@@ -41,6 +42,7 @@ MAX_BINARY_CHUNK_SIZE = 256 * 1024
 DEFAULT_BINARY_PART_SIZE = 16 * 1024
 UPLOAD_STAGING_DIRNAME = "upload-staging"
 UPLOAD_EXPIRY_SECONDS = 24 * 60 * 60
+DIRECT_UPLOAD_TYPE = "direct"
 
 
 def _refresh_frontmatter_index(paths: list[str], operation: str) -> None:
@@ -155,6 +157,14 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_sha256_hex(value: str, field_name: str = "expected_sha256") -> str:
+    """Validate and normalize a SHA-256 hex digest."""
+    normalized = value.strip().lower()
+    if len(normalized) != 64 or any(ch not in "0123456789abcdef" for ch in normalized):
+        raise ValueError(f"{field_name} must be a 64-character hex SHA-256 digest")
+    return normalized
+
+
 def _upload_root() -> Path:
     root = config.SEMANTIC_CACHE_PATH / UPLOAD_STAGING_DIRNAME
     root.mkdir(parents=True, exist_ok=True)
@@ -166,6 +176,33 @@ def _upload_paths(upload_id: str) -> tuple[Path, Path, Path]:
         raise ValueError("Invalid upload_id")
     upload_dir = _upload_root() / upload_id
     return upload_dir, upload_dir / "metadata.json", upload_dir / "parts"
+
+
+def _direct_upload_secret() -> str:
+    """Return the HMAC secret for signed direct upload URLs."""
+    secret = config.VAULT_UPLOAD_URL_SECRET or config.VAULT_MCP_TOKEN
+    if not secret:
+        raise ValueError("VAULT_UPLOAD_URL_SECRET or VAULT_MCP_TOKEN must be configured for direct uploads")
+    return secret
+
+
+def _direct_upload_canonical(metadata: dict, expires_at: int) -> str:
+    """Build the stable string signed by direct upload URLs."""
+    return "\n".join(
+        [
+            metadata["upload_id"],
+            metadata["path"],
+            metadata["media_type"],
+            str(metadata["max_size_bytes"]),
+            str(expires_at),
+            metadata.get("expected_sha256") or "",
+        ]
+    )
+
+
+def _direct_upload_signature(metadata: dict, expires_at: int) -> str:
+    payload = _direct_upload_canonical(metadata, expires_at).encode("utf-8")
+    return hmac.new(_direct_upload_secret().encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:
@@ -221,6 +258,184 @@ def _upload_status_payload(metadata: dict, parts_dir: Path) -> dict:
         "complete": not missing_parts,
         "expires_in_seconds": max(0, int(metadata["created_at"] + UPLOAD_EXPIRY_SECONDS - time.time())),
     }
+
+
+def vault_request_upload_url(
+    path: str,
+    media_type: str,
+    max_size_bytes: int,
+    overwrite: bool = False,
+    create_dirs: bool = True,
+    expected_sha256: str | None = None,
+    ttl_seconds: int | None = None,
+) -> str:
+    """Create a short-lived signed HTTP URL for direct binary upload."""
+    try:
+        _cleanup_stale_uploads()
+        resolved = _validate_binary_target(path, media_type)
+        if max_size_bytes <= 0:
+            return vault_json_dumps({"error": "max_size_bytes must be greater than 0", "path": path})
+        if max_size_bytes > config.MAX_BINARY_SIZE:
+            return vault_json_dumps(
+                {
+                    "error": f"max_size_bytes {max_size_bytes} exceeds limit of {config.MAX_BINARY_SIZE} bytes",
+                    "path": path,
+                    "media_type": media_type,
+                }
+            )
+        if resolved.exists() and not overwrite:
+            return vault_json_dumps(
+                {
+                    "error": f"File already exists: {path}. Set overwrite=true to replace it.",
+                    "path": path,
+                    "media_type": media_type,
+                }
+            )
+
+        normalized_sha256 = _validate_sha256_hex(expected_sha256) if expected_sha256 else None
+        requested_ttl = ttl_seconds if ttl_seconds is not None else config.VAULT_UPLOAD_URL_TTL_SECONDS
+        max_ttl = max(1, config.VAULT_UPLOAD_URL_MAX_TTL_SECONDS)
+        effective_ttl = max(1, min(requested_ttl, max_ttl))
+        now = int(time.time())
+        expires_at = now + effective_ttl
+        upload_id = str(uuid.uuid4())
+        upload_dir, metadata_path, _parts_dir = _upload_paths(upload_id)
+        upload_dir.mkdir(parents=True, exist_ok=False)
+        metadata = {
+            "type": DIRECT_UPLOAD_TYPE,
+            "upload_id": upload_id,
+            "path": path,
+            "media_type": media_type.strip().lower(),
+            "max_size_bytes": max_size_bytes,
+            "overwrite": overwrite,
+            "create_dirs": create_dirs,
+            "expected_sha256": normalized_sha256,
+            "created_at": now,
+            "expires_at": expires_at,
+            "completed_at": None,
+        }
+        _write_json_atomic(metadata_path, metadata)
+        signature = _direct_upload_signature(metadata, expires_at)
+        base_url = config.VAULT_PUBLIC_BASE_URL or f"http://127.0.0.1:{config.VAULT_MCP_PORT}"
+        upload_url = f"{base_url}/upload/{upload_id}?{urlencode({'expires': str(expires_at), 'signature': signature})}"
+        return vault_json_dumps(
+            {
+                "upload_id": upload_id,
+                "upload_url": upload_url,
+                "expires_at": expires_at,
+                "expires_in_seconds": effective_ttl,
+                "path": path,
+                "media_type": media_type,
+                "max_size_bytes": max_size_bytes,
+                "method": "POST",
+                "curl": f'curl -X POST -H "Content-Type: {media_type}" --data-binary @/path/to/file "{upload_url}"',
+            }
+        )
+    except ValueError as e:
+        return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type})
+    except Exception as e:
+        logger.error(f"vault_request_upload_url error for {path}: {e}")
+        return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type})
+
+
+def commit_direct_upload(
+    upload_id: str,
+    content: bytes,
+    content_type: str,
+    expires: str,
+    signature: str,
+) -> tuple[dict, int]:
+    """Validate and commit a signed direct HTTP upload."""
+    try:
+        metadata, _upload_dir, metadata_path, _parts_dir = _load_upload(upload_id)
+        if metadata.get("type") != DIRECT_UPLOAD_TYPE:
+            return {"error": "Upload id is not a direct upload session", "upload_id": upload_id}, 400
+
+        try:
+            expires_at = int(expires)
+        except (TypeError, ValueError):
+            return {"error": "Invalid expires parameter", "upload_id": upload_id}, 400
+        if expires_at != int(metadata["expires_at"]):
+            return {"error": "Upload expiry mismatch", "upload_id": upload_id}, 403
+        if time.time() > expires_at:
+            return {"error": "Upload URL has expired", "upload_id": upload_id}, 410
+        expected_signature = _direct_upload_signature(metadata, expires_at)
+        if not signature or not hmac.compare_digest(signature, expected_signature):
+            return {"error": "Invalid upload signature", "upload_id": upload_id}, 403
+        if metadata.get("completed_at"):
+            return {"error": "Upload URL has already been used", "upload_id": upload_id}, 409
+
+        media_type = metadata["media_type"]
+        normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
+        if not normalized_content_type:
+            return {
+                "error": f"Content-Type must be set to requested media_type '{media_type}'",
+                "upload_id": upload_id,
+                "media_type": media_type,
+            }, 415
+        if normalized_content_type != media_type:
+            return {
+                "error": f"Content-Type '{normalized_content_type}' does not match requested media_type '{media_type}'",
+                "upload_id": upload_id,
+                "media_type": media_type,
+            }, 415
+        if not content:
+            return {"error": "Upload body is empty", "upload_id": upload_id}, 400
+        if len(content) > metadata["max_size_bytes"]:
+            return {
+                "error": f"Uploaded content exceeds max_size_bytes of {metadata['max_size_bytes']} bytes",
+                "upload_id": upload_id,
+                "size": len(content),
+            }, 413
+        if len(content) > config.MAX_BINARY_SIZE:
+            return {
+                "error": f"Uploaded content exceeds server limit of {config.MAX_BINARY_SIZE} bytes",
+                "upload_id": upload_id,
+                "size": len(content),
+            }, 413
+
+        actual_sha256 = _sha256_bytes(content)
+        expected_sha256 = metadata.get("expected_sha256")
+        if expected_sha256 and actual_sha256 != expected_sha256:
+            return {
+                "error": "Upload checksum mismatch",
+                "upload_id": upload_id,
+                "expected_sha256": expected_sha256,
+                "actual_sha256": actual_sha256,
+            }, 422
+
+        resolved = _validate_binary_target(metadata["path"], media_type)
+        if resolved.exists() and not metadata["overwrite"]:
+            return {
+                "error": f"File already exists: {metadata['path']}. Set overwrite=true to replace it.",
+                "upload_id": upload_id,
+                "path": metadata["path"],
+            }, 409
+
+        is_new, size = write_bytes_atomic(
+            metadata["path"],
+            content,
+            create_dirs=metadata["create_dirs"],
+            overwrite=metadata["overwrite"],
+        )
+        metadata["completed_at"] = int(time.time())
+        metadata["size"] = size
+        metadata["sha256"] = actual_sha256
+        _write_json_atomic(metadata_path, metadata)
+        fire_post_write("created" if is_new else "updated", [metadata["path"]])
+        return {
+            "upload_id": upload_id,
+            "path": metadata["path"],
+            "created": is_new,
+            "size": size,
+            "media_type": media_type,
+            "sha256": actual_sha256,
+        }, 201 if is_new else 200
+    except ValueError as e:
+        return {"error": str(e), "upload_id": upload_id}, 400
+    except Exception as e:
+        logger.error(f"direct upload commit error for {upload_id}: {e}")
+        return {"error": str(e), "upload_id": upload_id}, 500
 
 
 def _validate_import_url(url: str) -> None:

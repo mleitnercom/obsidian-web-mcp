@@ -2,8 +2,9 @@
 
 import pytest
 from pathlib import Path
+from watchdog.events import FileMovedEvent
 
-from obsidian_vault_mcp.frontmatter_index import FrontmatterIndex
+from obsidian_vault_mcp.frontmatter_index import FrontmatterIndex, _VaultEventHandler
 
 
 @pytest.fixture
@@ -141,3 +142,20 @@ def test_on_change_callback_receives_event(index):
     assert len(index._change_callbacks) == 1
     index._change_callbacks[0]("test-note.md", "modify")
     assert events == [("test-note.md", "modify")]
+
+
+def test_watchdog_moved_event_refreshes_old_and_new_paths(index, vault_dir):
+    """Filesystem move events should not leave ghost paths in the frontmatter index."""
+    source = vault_dir / "test-note.md"
+    destination = vault_dir / "15_Tasks" / "_done" / "2026-05" / "test-note.md"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source.replace(destination)
+
+    handler = _VaultEventHandler(index)
+    handler.on_moved(FileMovedEvent(str(source), str(destination)))
+    index._flush_pending()
+
+    results = index.search_by_field("status", "active", "exact")
+    paths = {item["path"] for item in results}
+    assert "test-note.md" not in paths
+    assert "15_Tasks/_done/2026-05/test-note.md" in paths

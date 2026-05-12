@@ -44,6 +44,10 @@ _AUTH_EXEMPT_METHOD_PATHS = {
     ("HEAD", "/"),
 }
 
+_AUTH_EXEMPT_PATH_PREFIXES = (
+    "/upload/",
+)
+
 
 def _public_base_url(request: Request) -> str:
     """Return externally reachable base URL for auth discovery responses."""
@@ -149,6 +153,9 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
         normalized_path = path.rstrip("/") or "/"
 
         if normalized_path in _AUTH_EXEMPT_PATHS:
+            return await call_next(request)
+
+        if any(normalized_path.startswith(prefix) for prefix in _AUTH_EXEMPT_PATH_PREFIXES):
             return await call_next(request)
 
         if (request.method, normalized_path) in _AUTH_EXEMPT_METHOD_PATHS:

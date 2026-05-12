@@ -19,6 +19,7 @@ from obsidian_vault_mcp.tools.write import (
     vault_import_file,
     vault_import_url,
     vault_patch,
+    vault_request_upload_url,
     vault_str_replace,
     vault_upload_commit,
     vault_upload_init,
@@ -30,7 +31,7 @@ from obsidian_vault_mcp.tools.write import (
 import obsidian_vault_mcp.tools.write as write_tools
 from obsidian_vault_mcp.tools.analytics import vault_analytics_findings, vault_analytics_summary
 from obsidian_vault_mcp.tools.search import vault_search, vault_search_frontmatter
-from obsidian_vault_mcp.tools.manage import vault_delete, vault_delete_directory, vault_list, vault_tree
+from obsidian_vault_mcp.tools.manage import vault_delete, vault_delete_directory, vault_list, vault_move, vault_tree
 
 
 def test_vault_read_returns_frontmatter(vault_dir):
@@ -133,6 +134,51 @@ def test_vault_write_refreshes_frontmatter_index_without_waiting_for_observer(va
 
     stale = json.loads(vault_search_frontmatter(field="status", value="active", match_type="exact"))
     assert all(item["path"] != "test-note.md" for item in stale["results"])
+
+    frontmatter_index._index.clear()
+
+
+def test_vault_move_refreshes_frontmatter_index_paths_without_observer(vault_dir):
+    """Moving a markdown file should remove the old index path and add the new one immediately."""
+    from obsidian_vault_mcp.server import frontmatter_index
+
+    frontmatter_index.stop()
+    frontmatter_index._index.clear()
+    frontmatter_index.start()
+    frontmatter_index.stop()
+
+    before = json.loads(vault_search_frontmatter(field="status", value="active", match_type="exact"))
+    assert any(item["path"] == "test-note.md" for item in before["results"])
+
+    result = json.loads(vault_move("test-note.md", "15_Tasks/_done/2026-05/test-note.md"))
+    assert "error" not in result
+
+    old_path = json.loads(vault_search_frontmatter(field="status", value="active", match_type="exact"))
+    assert all(item["path"] != "test-note.md" for item in old_path["results"])
+
+    new_path = json.loads(vault_search_frontmatter(field="status", value="active", match_type="exact"))
+    assert any(item["path"] == "15_Tasks/_done/2026-05/test-note.md" for item in new_path["results"])
+
+    frontmatter_index._index.clear()
+
+
+def test_vault_delete_refreshes_frontmatter_index_without_observer(vault_dir):
+    """Soft-deleting a markdown file should remove it from frontmatter search immediately."""
+    from obsidian_vault_mcp.server import frontmatter_index
+
+    frontmatter_index.stop()
+    frontmatter_index._index.clear()
+    frontmatter_index.start()
+    frontmatter_index.stop()
+
+    before = json.loads(vault_search_frontmatter(field="status", value="active", match_type="exact"))
+    assert any(item["path"] == "test-note.md" for item in before["results"])
+
+    result = json.loads(vault_delete("test-note.md", confirm=True))
+    assert "error" not in result
+
+    after = json.loads(vault_search_frontmatter(field="status", value="active", match_type="exact"))
+    assert all(item["path"] != "test-note.md" for item in after["results"])
 
     frontmatter_index._index.clear()
 
@@ -364,6 +410,30 @@ def test_resumable_upload_supports_status_retry_and_commit(vault_dir, monkeypatc
     assert commit["sha256"] == checksum
     assert (vault_dir / "assets" / "blob.pdf").read_bytes() == content
     assert "error" in json.loads(vault_upload_status(upload_id))
+
+
+def test_vault_request_upload_url_returns_signed_public_url(vault_dir, monkeypatch):
+    """Direct uploads should return a short-lived URL that agents can POST to outside MCP args."""
+    monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    monkeypatch.setattr(write_tools.config, "VAULT_PUBLIC_BASE_URL", "https://vault.example.com")
+    monkeypatch.setattr(write_tools.config, "VAULT_UPLOAD_URL_SECRET", "upload-secret")
+    monkeypatch.setattr(write_tools.config, "VAULT_UPLOAD_URL_TTL_SECONDS", 900)
+    monkeypatch.setattr(write_tools.config, "VAULT_UPLOAD_URL_MAX_TTL_SECONDS", 3600)
+
+    result = json.loads(
+        vault_request_upload_url(
+            "assets/agenda.pdf",
+            "application/pdf",
+            max_size_bytes=4 * 1024 * 1024,
+            expected_sha256=hashlib.sha256(b"agenda").hexdigest(),
+        )
+    )
+
+    assert "error" not in result
+    assert result["upload_url"].startswith("https://vault.example.com/upload/")
+    assert "signature=" in result["upload_url"]
+    assert result["expires_in_seconds"] == 900
+    assert result["method"] == "POST"
 
 
 def test_resumable_upload_rejects_wrong_duplicate_part(vault_dir, monkeypatch):

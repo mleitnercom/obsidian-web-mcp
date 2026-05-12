@@ -314,17 +314,20 @@ class _VaultEventHandler(FileSystemEventHandler):
         super().__init__()
         self._index = index
 
+    def _handle_path(self, path_str: str, action: str) -> None:
+        path = Path(path_str)
+        if path.suffix != ".md":
+            return
+        if action != "delete" and path.is_symlink():
+            return
+        if action != "delete" and self._index._is_excluded(path):
+            return
+        self._index._schedule_debounce(path_str, action)
+
     def _handle(self, event: FileSystemEvent, action: str) -> None:
         if event.is_directory:
             return
-        path = Path(event.src_path)
-        if path.suffix != ".md":
-            return
-        if path.is_symlink():
-            return
-        if self._index._is_excluded(path):
-            return
-        self._index._schedule_debounce(event.src_path, action)
+        self._handle_path(event.src_path, action)
 
     def on_created(self, event: FileSystemEvent) -> None:
         self._handle(event, "create")
@@ -334,3 +337,11 @@ class _VaultEventHandler(FileSystemEventHandler):
 
     def on_deleted(self, event: FileSystemEvent) -> None:
         self._handle(event, "delete")
+
+    def on_moved(self, event: FileSystemEvent) -> None:
+        if event.is_directory:
+            return
+        self._handle_path(event.src_path, "delete")
+        dest_path = getattr(event, "dest_path", "")
+        if dest_path:
+            self._handle_path(dest_path, "create")

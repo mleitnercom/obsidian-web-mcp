@@ -17,6 +17,36 @@ from ..vault import (
 logger = logging.getLogger(__name__)
 
 
+def _markdown_paths_under(path: str) -> list[str]:
+    """Return vault-relative markdown files under a file or directory path."""
+    resolved = resolve_vault_path(path)
+    vault_root = config.VAULT_PATH.resolve()
+    if resolved.is_file():
+        return [resolved.relative_to(vault_root).as_posix()] if resolved.suffix == ".md" else []
+    if not resolved.is_dir():
+        return []
+    return [
+        item.relative_to(vault_root).as_posix()
+        for item in resolved.rglob("*.md")
+        if item.is_file() and not item.is_symlink() and is_vault_path_allowed(item)
+    ]
+
+
+def _refresh_frontmatter_paths(paths: list[str], action: str) -> None:
+    """Synchronously refresh management mutations in the frontmatter index."""
+    if not paths:
+        return
+    try:
+        from ..server import frontmatter_index
+    except Exception:
+        return
+    for path in paths:
+        try:
+            frontmatter_index.refresh_path(path, action=action)
+        except Exception:
+            logger.warning("Frontmatter index refresh failed for %s", path)
+
+
 def vault_list(
     path: str = "",
     depth: int = 1,
@@ -46,8 +76,12 @@ def vault_list(
 def vault_move(source: str, destination: str, create_dirs: bool = True) -> str:
     """Move a file or directory within the vault."""
     try:
+        old_paths = _markdown_paths_under(source)
         moved = move_path(source, destination, create_dirs=create_dirs)
         if moved:
+            new_paths = _markdown_paths_under(destination)
+            _refresh_frontmatter_paths(old_paths, "delete")
+            _refresh_frontmatter_paths(new_paths, "create")
             fire_post_write("moved", [source, destination])
         return vault_json_dumps({"source": source, "destination": destination, "moved": moved})
     except ValueError as e:
@@ -126,8 +160,10 @@ def vault_delete(path: str, confirm: bool = False) -> str:
         })
 
     try:
+        old_paths = _markdown_paths_under(path)
         deleted = delete_path(path)
         if deleted:
+            _refresh_frontmatter_paths(old_paths, "delete")
             fire_post_write("deleted", [path])
         return vault_json_dumps({"path": path, "deleted": deleted})
     except ValueError as e:
@@ -146,8 +182,10 @@ def vault_delete_directory(path: str, confirm: bool = False, only_if_empty: bool
         })
 
     try:
+        old_paths = _markdown_paths_under(path)
         deleted = delete_directory_path(path, only_if_empty=only_if_empty)
         if deleted:
+            _refresh_frontmatter_paths(old_paths, "delete")
             fire_post_write("deleted_directory", [path])
         return vault_json_dumps({"path": path, "deleted": deleted, "only_if_empty": only_if_empty})
     except (ValueError, NotADirectoryError) as e:

@@ -5,6 +5,15 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+### Features
+- Add `vault_request_upload_url` plus signed `POST /upload/{upload_id}` direct uploads for agent-local binary files, avoiding MCP argument-size limits for PDFs and other attachments.
+
+### Reliability / Operator UX
+- Log direct upload completions and rejections, and steer tool descriptions away from legacy chunked upload flows for practical agent file transfer.
+
+### Docs / Tests
+- Document direct upload configuration (`VAULT_UPLOAD_URL_SECRET`, TTL limits) and add regression tests for signed upload success and bad-signature rejection.
+
 ## [v0.6.3] - 2026-05-07
 
 ### Features

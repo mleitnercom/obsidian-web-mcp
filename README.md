@@ -4,7 +4,7 @@ Production-hardened fork of `obsidian-web-mcp` for MCP access to an Obsidian vau
 
 ## Release
 
-Latest: [v0.6.2](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.2) (2026-05-04).
+Latest: [v0.6.3](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.3) (2026-05-07).
 
 ## Status
 
@@ -99,7 +99,8 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_analytics_findings` | Return detailed findings for one analytics category such as broken wikilinks or encoding issues, including wikilink classification details |
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
 | `vault_write_binary` | Write an allowed binary file such as PNG, JPEG, WebP, GIF, SVG, PDF, or configured extra media types from base64 input |
-| `vault_upload_init` / `vault_upload_part` / `vault_upload_status` / `vault_upload_commit` / `vault_upload_abort` | Resumable binary upload flow for larger LLM-generated files, with missing-part recovery and SHA-256 verification |
+| `vault_request_upload_url` | Create a short-lived signed HTTP upload URL so agents can POST local files directly without squeezing bytes through MCP tool arguments |
+| `vault_upload_init` / `vault_upload_part` / `vault_upload_status` / `vault_upload_commit` / `vault_upload_abort` | Legacy resumable binary upload flow with missing-part recovery and SHA-256 verification; prefer `vault_request_upload_url` for real agent file uploads |
 | `vault_import_file` | Import an allowed binary file from a local allowlisted filesystem path without base64-wrapping it into the tool call |
 | `vault_import_url` | Import an allowed binary file from an HTTP(S) URL by letting the server download and verify it |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content, preserving existing YAML formatting where possible |
@@ -169,10 +170,11 @@ The server starts on port 8420 by default. It serves MCP over Streamable HTTP at
 
 `vault_read` supports normal text/markdown files and also extracts text from `.pdf` files via `pypdf`. If a PDF has no text layer, an optional external OCR fallback can be enabled with `VAULT_PDF_OCR_ENABLED=true` plus `VAULT_PDF_OCR_CMD`. Other known binary formats are still rejected with a clear error instead of a misleading UTF-8 decode failure.
 
-For binary ingestion there are now three practical paths:
+For binary ingestion there are now four practical paths:
 
 - `vault_write_binary` for smaller files that comfortably fit into one tool call
-- `vault_upload_*` for larger payloads where base64 size or tool-call limits become fragile
+- `vault_request_upload_url` for real agent/local uploads: request a signed URL, then `POST` the file bytes directly to that URL
+- `vault_upload_*` as a legacy fallback for payloads that must still be chunked through MCP arguments
 - `vault_import_file` for files that already exist on a mounted or local filesystem path visible to the MCP server
 
 Frontmatter-aware write paths now preserve formatting much better than the older PyYAML-style rewrite flow. `vault_write(merge_frontmatter=true)` and `vault_batch_frontmatter_update` keep quote styles, key order, inline comments, and flow-style lists where possible by round-tripping YAML with `ruamel.yaml`.
@@ -272,12 +274,16 @@ All configuration is via environment variables:
 | `VAULT_IMPORT_URL_ALLOW_PRIVATE` | No | `false` | Allow URL imports from private/local network addresses |
 | `VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON` | No | (empty) | JSON object mapping extra MIME types to allowed file extensions, merged into the built-in binary allowlist |
 | `VAULT_IMPORT_FILE_ALLOWED_ROOTS` | No | (empty) | Comma-separated absolute source roots that `vault_import_file` may read from |
+| `VAULT_UPLOAD_URL_SECRET` | No | `VAULT_MCP_TOKEN` fallback | HMAC secret for short-lived direct upload URLs; set a dedicated secret in production |
+| `VAULT_UPLOAD_URL_TTL_SECONDS` | No | `900` | Default lifetime for direct upload URLs |
+| `VAULT_UPLOAD_URL_MAX_TTL_SECONDS` | No | `3600` | Maximum lifetime callers may request for direct upload URLs |
 
 Example operator extensions:
 
 ```bash
 export VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON='{"application/vnd.openxmlformats-officedocument.wordprocessingml.document":[".docx"],"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"],"application/vnd.openxmlformats-officedocument.presentationml.presentation":[".pptx"]}'
 export VAULT_IMPORT_FILE_ALLOWED_ROOTS="/sessions/shared/uploads,/srv/obsidian-imports"
+export VAULT_UPLOAD_URL_SECRET="$(python -c 'import secrets; print(secrets.token_hex(32))')"
 ```
 | `VAULT_MAX_BATCH_SIZE` | No | `20` | Max files in batch operations |
 | `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard search result cap |

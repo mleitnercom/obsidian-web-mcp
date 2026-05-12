@@ -15,6 +15,7 @@ from .config import (
     MAX_UPLOAD_PART_SIZE,
     SEMANTIC_MAX_RESULTS,
     MAX_TREE_DEPTH,
+    VAULT_UPLOAD_URL_MAX_TTL_SECONDS,
 )
 
 
@@ -101,6 +102,20 @@ class VaultUploadInitInput(BaseModel):
     part_size: int | None = Field(default=None, ge=1, le=MAX_UPLOAD_PART_SIZE, description="Optional decoded byte size per part")
     overwrite: bool = Field(default=False, description="If true, allow replacing an existing file on commit")
     create_dirs: bool = Field(default=True, description="Create parent directories on commit if they do not exist")
+
+
+class VaultRequestUploadUrlInput(BaseModel):
+    """Create a signed direct HTTP upload URL for binary content."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(..., description="Relative path from vault root including filename and extension", min_length=1, max_length=500)
+    media_type: str = Field(..., description="MIME type of the binary content", min_length=3, max_length=200)
+    max_size_bytes: int = Field(..., ge=1, le=MAX_BINARY_SIZE, description="Maximum byte size accepted by the signed upload URL")
+    overwrite: bool = Field(default=False, description="If true, allow replacing an existing file")
+    create_dirs: bool = Field(default=True, description="Create parent directories if they do not exist")
+    expected_sha256: str | None = Field(default=None, description="Optional SHA-256 checksum of the uploaded content", min_length=64, max_length=64)
+    ttl_seconds: int | None = Field(default=None, ge=1, le=VAULT_UPLOAD_URL_MAX_TTL_SECONDS, description="Optional URL lifetime in seconds")
 
 
 class VaultUploadPartInput(BaseModel):

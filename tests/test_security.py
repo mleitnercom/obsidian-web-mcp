@@ -16,6 +16,7 @@ from starlette.testclient import TestClient
 import obsidian_vault_mcp.auth as auth
 import obsidian_vault_mcp.oauth as oauth
 import obsidian_vault_mcp.server as server
+import obsidian_vault_mcp.tools.write as write_tools
 from obsidian_vault_mcp import config
 from obsidian_vault_mcp.auth import BearerAuthMiddleware
 from obsidian_vault_mcp.rate_limit import (
@@ -151,6 +152,102 @@ def test_bearer_auth_allows_root_probe_without_token(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
+
+
+def test_direct_upload_endpoint_accepts_signed_url_without_bearer(vault_dir, monkeypatch):
+    """Signed upload URLs bypass bearer auth but still require a valid HMAC signature."""
+    reset_rate_limits()
+    base_app = Starlette()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+    monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    monkeypatch.setattr(write_tools.config, "VAULT_PUBLIC_BASE_URL", "http://testserver")
+    monkeypatch.setattr(write_tools.config, "VAULT_UPLOAD_URL_SECRET", "upload-secret")
+
+    content = b"%PDF-1.4\nfake agenda\n"
+    request_payload = json.loads(
+        write_tools.vault_request_upload_url(
+            "uploads/agenda.pdf",
+            "application/pdf",
+            max_size_bytes=1024,
+            expected_sha256=hashlib.sha256(content).hexdigest(),
+        )
+    )
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.post(
+            request_payload["upload_url"],
+            content=content,
+            headers={"Content-Type": "application/pdf"},
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["path"] == "uploads/agenda.pdf"
+    assert body["sha256"] == hashlib.sha256(content).hexdigest()
+    assert (vault_dir / "uploads" / "agenda.pdf").read_bytes() == content
+
+
+def test_direct_upload_endpoint_rejects_bad_signature(vault_dir, monkeypatch):
+    """A bearer-free upload route must fail closed when the URL signature is invalid."""
+    reset_rate_limits()
+    base_app = Starlette()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+    monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    monkeypatch.setattr(write_tools.config, "VAULT_PUBLIC_BASE_URL", "http://testserver")
+    monkeypatch.setattr(write_tools.config, "VAULT_UPLOAD_URL_SECRET", "upload-secret")
+
+    request_payload = json.loads(
+        write_tools.vault_request_upload_url("uploads/agenda.pdf", "application/pdf", max_size_bytes=1024)
+    )
+    tampered_url = request_payload["upload_url"].replace("signature=", "signature=x")
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.post(
+            tampered_url,
+            content=b"%PDF-1.4\nfake agenda\n",
+            headers={"Content-Type": "application/pdf"},
+        )
+
+    assert response.status_code == 403
+    assert response.json()["error"] == "Invalid upload signature"
+    assert not (vault_dir / "uploads" / "agenda.pdf").exists()
+
+
+def test_direct_upload_endpoint_requires_matching_content_type(vault_dir, monkeypatch):
+    """Signed URLs still bind the upload to the requested binary media type."""
+    reset_rate_limits()
+    base_app = Starlette()
+    monkeypatch.setattr(server, "VAULT_PATH", vault_dir)
+    monkeypatch.setattr(server, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(auth, "VAULT_MCP_TOKEN", "test-token-12345")
+    monkeypatch.setattr(server.mcp, "streamable_http_app", lambda: base_app)
+    monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    monkeypatch.setattr(write_tools.config, "VAULT_PUBLIC_BASE_URL", "http://testserver")
+    monkeypatch.setattr(write_tools.config, "VAULT_UPLOAD_URL_SECRET", "upload-secret")
+
+    request_payload = json.loads(
+        write_tools.vault_request_upload_url("uploads/agenda.pdf", "application/pdf", max_size_bytes=1024)
+    )
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.post(
+            request_payload["upload_url"],
+            content=b"%PDF-1.4\nfake agenda\n",
+            headers={"Content-Type": "image/png"},
+        )
+
+    assert response.status_code == 415
+    assert "does not match requested media_type" in response.json()["error"]
+    assert not (vault_dir / "uploads" / "agenda.pdf").exists()
 
 
 def test_root_probe_advertises_sse_content_type_when_requested(vault_dir, monkeypatch):

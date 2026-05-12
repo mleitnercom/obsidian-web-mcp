@@ -366,11 +366,13 @@ from .tools.analytics import (
     vault_analytics_summary as _vault_analytics_summary,
 )
 from .tools.write import (
+    commit_direct_upload,
     vault_append as _vault_append,
     vault_batch_replace as _vault_batch_replace,
     vault_batch_frontmatter_update as _vault_batch_frontmatter_update,
     vault_import_file as _vault_import_file,
     vault_patch as _vault_patch,
+    vault_request_upload_url as _vault_request_upload_url,
     vault_str_replace as _vault_str_replace,
     vault_import_url as _vault_import_url,
     vault_upload_abort as _vault_upload_abort,
@@ -403,6 +405,7 @@ from .models import (
     VaultReadInput,
     VaultImportFileInput,
     VaultPatchInput,
+    VaultRequestUploadUrlInput,
     VaultStrReplaceInput,
     VaultImportUrlInput,
     VaultUploadAbortInput,
@@ -548,7 +551,7 @@ def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontma
 
 @mcp.tool(
     name="vault_write_binary",
-    description="Write a binary file such as an image, SVG, PDF, or configured extra media type to the Obsidian vault. Data must be base64-encoded and match an allowed media type. For larger files or response-limit issues, use vault_upload_init plus vault_upload_part and vault_upload_commit instead.",
+    description="Write a small binary file such as an image, SVG, PDF, or configured extra media type to the Obsidian vault. Data must be base64-encoded and match an allowed media type. For agent file uploads, larger files, or response-limit issues, prefer vault_request_upload_url and POST the bytes to the returned URL.",
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
 )
 def vault_write_binary(
@@ -581,8 +584,59 @@ def vault_write_binary(
 
 
 @mcp.tool(
+    name="vault_request_upload_url",
+    description=(
+        "Create a short-lived signed HTTP upload URL for binary files. Use this for agent/local files that are too large "
+        "or awkward to pass through MCP tool arguments: call this tool, then POST the file bytes to upload_url with "
+        "Content-Type matching media_type."
+    ),
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_request_upload_url(
+    path: str,
+    media_type: str,
+    max_size_bytes: int,
+    overwrite: bool = False,
+    create_dirs: bool = True,
+    expected_sha256: str | None = None,
+    ttl_seconds: int | None = None,
+) -> str:
+    """Create a signed direct upload URL."""
+    inp = VaultRequestUploadUrlInput(
+        path=path,
+        media_type=media_type,
+        max_size_bytes=max_size_bytes,
+        overwrite=overwrite,
+        create_dirs=create_dirs,
+        expected_sha256=expected_sha256,
+        ttl_seconds=ttl_seconds,
+    )
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_request_upload_url",
+        lambda: _vault_request_upload_url(
+            inp.path,
+            inp.media_type,
+            inp.max_size_bytes,
+            inp.overwrite,
+            inp.create_dirs,
+            inp.expected_sha256,
+            inp.ttl_seconds,
+        ),
+        path=inp.path,
+        media_type=inp.media_type,
+        max_size_bytes=inp.max_size_bytes,
+        overwrite=inp.overwrite,
+        has_expected_sha256=bool(inp.expected_sha256),
+        ttl_seconds=inp.ttl_seconds,
+    )
+
+
+@mcp.tool(
     name="vault_upload_init",
-    description="Start a resumable binary upload session for larger files. Returns a tool-call-friendly default part_size unless you explicitly request a different chunk size.",
+    description="Legacy fallback: start a resumable base64 binary upload session. Prefer vault_request_upload_url for real agent file uploads because it avoids MCP argument-size limits.",
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
 )
 def vault_upload_init(
@@ -1251,6 +1305,61 @@ def build_app():
             return JSONResponse(_health_payload())
         return JSONResponse(_minimal_health_payload())
 
+    async def direct_upload(request: Request):
+        """Accept bytes for a signed direct upload URL."""
+        upload_id = request.path_params["upload_id"]
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > config.MAX_BINARY_SIZE:
+                    return JSONResponse(
+                        {
+                            "error": f"Uploaded content exceeds server limit of {config.MAX_BINARY_SIZE} bytes",
+                            "upload_id": upload_id,
+                        },
+                        status_code=413,
+                    )
+            except ValueError:
+                return JSONResponse({"error": "Invalid Content-Length", "upload_id": upload_id}, status_code=400)
+
+        content_type = request.headers.get("content-type", "")
+        body = b""
+        if content_type.split(";", 1)[0].strip().lower() == "multipart/form-data":
+            try:
+                form = await request.form()
+            except Exception as exc:
+                logger.warning("Direct upload multipart parse failed for %s: %s", upload_id, exc)
+                return JSONResponse(
+                    {"error": "Could not parse multipart upload; send field 'file' or use --data-binary", "upload_id": upload_id},
+                    status_code=400,
+                )
+            uploaded = form.get("file")
+            if uploaded is None:
+                return JSONResponse({"error": "Multipart upload must include a 'file' field", "upload_id": upload_id}, status_code=400)
+            content_type = getattr(uploaded, "content_type", "") or content_type
+            body = await uploaded.read()
+        else:
+            body = await request.body()
+
+        result, status_code = commit_direct_upload(
+            upload_id=upload_id,
+            content=body,
+            content_type=content_type,
+            expires=request.query_params.get("expires", ""),
+            signature=request.query_params.get("signature", ""),
+        )
+        if "error" in result:
+            logger.warning("Direct upload rejected: %s (%s)", upload_id, result["error"])
+        else:
+            logger.info(
+                "Direct upload complete: %s path=%r size=%s media_type=%r",
+                upload_id,
+                result.get("path"),
+                result.get("size"),
+                result.get("media_type"),
+            )
+        return JSONResponse(result, status_code=status_code)
+
     @asynccontextmanager
     async def combined_lifespan(starlette_app):
         """Run FastMCP's transport lifespan and our process-local runtime hooks together."""
@@ -1262,6 +1371,7 @@ def build_app():
         app.routes.insert(0, Route("/", endpoint=mcp_transport, methods=["POST"]))
     app.routes.insert(0, Route("/", mcp_root_probe, methods=["GET", "HEAD"]))
     app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
+    app.routes.insert(0, Route("/upload/{upload_id}", direct_upload, methods=["POST"]))
 
     for route in oauth_routes:
         app.routes.insert(0, route)
