@@ -1257,6 +1257,7 @@ def main():
             host="0.0.0.0",
             port=VAULT_MCP_PORT,
             log_level="info",
+            access_log=False,
             proxy_headers=True,
             forwarded_allow_ips=config.TRUSTED_PROXY_IPS,
         )
