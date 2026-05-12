@@ -113,6 +113,30 @@ def test_vault_search_frontmatter_supports_filters(vault_dir):
     frontmatter_index._index.clear()
 
 
+def test_vault_write_refreshes_frontmatter_index_without_waiting_for_observer(vault_dir):
+    """Text writes should update the frontmatter index even if the file watcher is not running."""
+    from obsidian_vault_mcp.server import frontmatter_index
+
+    frontmatter_index.stop()
+    frontmatter_index._index.clear()
+    frontmatter_index.start()
+    frontmatter_index.stop()
+
+    before = json.loads(vault_search_frontmatter(field="status", value="active", match_type="exact"))
+    assert any(item["path"] == "test-note.md" for item in before["results"])
+
+    result = json.loads(vault_write("test-note.md", "---\nstatus: done\ntype: note\n---\n\nUpdated body.\n"))
+    assert "error" not in result
+
+    after = json.loads(vault_search_frontmatter(field="status", value="done", match_type="exact"))
+    assert any(item["path"] == "test-note.md" for item in after["results"])
+
+    stale = json.loads(vault_search_frontmatter(field="status", value="active", match_type="exact"))
+    assert all(item["path"] != "test-note.md" for item in stale["results"])
+
+    frontmatter_index._index.clear()
+
+
 def test_vault_search_frontmatter_tool_schema_exposes_extended_filters():
     """The registered MCP tool schema should expose enums and nested filter input."""
     from obsidian_vault_mcp.server import mcp

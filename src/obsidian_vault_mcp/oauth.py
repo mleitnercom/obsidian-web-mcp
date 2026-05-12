@@ -60,6 +60,14 @@ def _client_secret_matches(candidate: str, client: dict) -> bool:
         return hmac.compare_digest(_hash_client_secret(candidate), stored_hash)
     return False
 
+
+def _client_token_auth_method(client: dict) -> str:
+    """Return the registered token auth method for a client."""
+    method = client.get("token_endpoint_auth_method", "client_secret_post")
+    if method in {"none", "client_secret_post"}:
+        return method
+    return "client_secret_post"
+
 # Clean up expired codes periodically
 def _cleanup_codes():
     now = time.time()
@@ -101,6 +109,7 @@ def _serialize_registered_clients() -> dict[str, dict]:
             "client_secret_hash": data["client_secret_hash"],
             "redirect_uris": sorted(data.get("redirect_uris", [])),
             "allow_client_credentials": bool(data.get("allow_client_credentials", False)),
+            "token_endpoint_auth_method": _client_token_auth_method(data),
             "created_at": float(data.get("created_at", time.time())),
         }
         for client_id, data in _registered_clients.items()
@@ -183,6 +192,11 @@ def _load_registered_clients() -> None:
                 "client_secret_hash": secret_hash,
                 "redirect_uris": set(redirect_uris),
                 "allow_client_credentials": bool(data.get("allow_client_credentials", False)),
+                "token_endpoint_auth_method": (
+                    data.get("token_endpoint_auth_method")
+                    if data.get("token_endpoint_auth_method") in {"none", "client_secret_post"}
+                    else "client_secret_post"
+                ),
                 "created_at": float(created_at),
             }
 
@@ -362,6 +376,7 @@ def _get_registered_client(client_id: str) -> dict | None:
             "client_secret": config.VAULT_OAUTH_CLIENT_SECRET,
             "redirect_uris": None,
             "allow_client_credentials": True,
+            "token_endpoint_auth_method": "client_secret_post",
         }
 
     return None
@@ -406,7 +421,7 @@ async def oauth_metadata(request: Request) -> JSONResponse:
         "grant_types_supported": ["authorization_code"],
         "response_types_supported": ["code"],
         "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["client_secret_post"],
+        "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
     })
 
 
@@ -496,6 +511,12 @@ async def oauth_authorize(request: Request):
     if allowed_redirect_uris is not None and redirect_uri not in allowed_redirect_uris:
         return JSONResponse({"error": "invalid_request", "error_description": "redirect_uri not registered"}, status_code=400)
 
+    if _client_token_auth_method(client) == "none" and not code_challenge:
+        return JSONResponse(
+            {"error": "invalid_request", "error_description": "code_challenge required for public PKCE clients"},
+            status_code=400,
+        )
+
     if _oauth_login_enabled():
         if not _has_valid_auth_session(request):
             return _render_login_form(params)
@@ -544,6 +565,12 @@ async def oauth_token(request: Request) -> JSONResponse:
     grant_type = form.get("grant_type", "")
     client_id = form.get("client_id", "")
     client_secret = form.get("client_secret", "")
+    logger.info(
+        "OAuth token request grant_type=%s client_id=%r client_secret_present=%s",
+        grant_type,
+        client_id,
+        bool(client_secret),
+    )
 
     # Support both authorization_code and client_credentials grants
     if grant_type == "authorization_code":
@@ -570,6 +597,7 @@ async def _handle_authorization_code(form, client_id: str, client_secret: str) -
 
     code_data = _auth_codes[code]
     client = _get_registered_client(client_id)
+    auth_method = _client_token_auth_method(client) if client is not None else "unknown"
 
     if client is None:
         return JSONResponse({"error": "invalid_client"}, status_code=401)
@@ -577,18 +605,25 @@ async def _handle_authorization_code(form, client_id: str, client_secret: str) -
     if not hmac.compare_digest(client_id, code_data["client_id"]):
         return JSONResponse({"error": "invalid_grant", "error_description": "client_id mismatch"}, status_code=400)
 
-    if not client_secret:
-        return JSONResponse({"error": "invalid_client", "error_description": "client_secret required"}, status_code=401)
-
-    if not _client_secret_matches(client_secret, client):
-        return JSONResponse({"error": "invalid_client"}, status_code=401)
-
     # Verify redirect_uri matches
     if not redirect_uri:
         return JSONResponse({"error": "invalid_request", "error_description": "redirect_uri required"}, status_code=400)
 
     if code_data["redirect_uri"] and redirect_uri != code_data["redirect_uri"]:
         return JSONResponse({"error": "invalid_grant", "error_description": "redirect_uri mismatch"}, status_code=400)
+
+    if auth_method == "client_secret_post":
+        if client_secret:
+            if not _client_secret_matches(client_secret, client):
+                logger.warning("OAuth token rejected for client_id=%r: invalid client_secret", client_id)
+                return JSONResponse({"error": "invalid_client"}, status_code=401)
+        elif not code_data["code_challenge"]:
+            logger.warning("OAuth token rejected for client_id=%r: client_secret missing and no PKCE challenge", client_id)
+            return JSONResponse({"error": "invalid_client", "error_description": "client_secret required"}, status_code=401)
+    elif auth_method == "none":
+        if not code_data["code_challenge"]:
+            logger.warning("OAuth token rejected for client_id=%r: public client missing PKCE challenge", client_id)
+            return JSONResponse({"error": "invalid_grant", "error_description": "PKCE required for public clients"}, status_code=400)
 
     # Verify PKCE code_challenge if one was provided during authorization
     if code_data["code_challenge"]:
@@ -604,7 +639,11 @@ async def _handle_authorization_code(form, client_id: str, client_secret: str) -
             return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"}, status_code=400)
 
     _auth_codes.pop(code, None)
-    logger.info("OAuth token issued via authorization_code grant")
+    logger.info(
+        "OAuth token issued via authorization_code grant auth_method=%s client_secret_present=%s",
+        auth_method,
+        bool(client_secret),
+    )
     return JSONResponse({
         "access_token": config.VAULT_MCP_TOKEN,
         "token_type": "bearer",
@@ -654,8 +693,14 @@ async def oauth_register(request: Request) -> JSONResponse:
         body = {}
 
     redirect_uris = body.get("redirect_uris", [])
+    token_auth_method = body.get("token_endpoint_auth_method", "client_secret_post")
     if not isinstance(redirect_uris, list) or not all(isinstance(uri, str) and uri for uri in redirect_uris):
         return JSONResponse({"error": "invalid_client_metadata", "error_description": "redirect_uris must be a list of non-empty strings"}, status_code=400)
+    if token_auth_method not in {"none", "client_secret_post"}:
+        return JSONResponse(
+            {"error": "invalid_client_metadata", "error_description": "token_endpoint_auth_method must be 'none' or 'client_secret_post'"},
+            status_code=400,
+        )
 
     if not redirect_uris:
         return JSONResponse({"error": "invalid_client_metadata", "error_description": "redirect_uris required"}, status_code=400)
@@ -669,6 +714,7 @@ async def oauth_register(request: Request) -> JSONResponse:
         "client_secret_hash": _hash_client_secret(client_secret),
         "redirect_uris": set(redirect_uris),
         "allow_client_credentials": False,
+        "token_endpoint_auth_method": token_auth_method,
         "created_at": time.time(),
     }
     _persist_registered_clients()
@@ -680,7 +726,7 @@ async def oauth_register(request: Request) -> JSONResponse:
         "grant_types": ["authorization_code"],
         "response_types": ["code"],
         "redirect_uris": redirect_uris,
-        "token_endpoint_auth_method": "client_secret_post",
+        "token_endpoint_auth_method": token_auth_method,
     }, status_code=201)
 
 

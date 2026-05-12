@@ -130,6 +130,17 @@ class FrontmatterIndex:
         if callback not in self._change_callbacks:
             self._change_callbacks.append(callback)
 
+    def refresh_path(self, rel_path: str, action: str = "modify") -> None:
+        """Synchronously refresh one vault-relative markdown path in the index.
+
+        This is used by write tools to provide read-after-write consistency even
+        before watchdog debounce events have fired.
+        """
+        if not rel_path:
+            return
+        abs_path = config.VAULT_PATH / rel_path
+        self._apply_single_path_update(abs_path, action)
+
     # -- Internal helpers --
 
     def _is_excluded(self, path: Path) -> bool:
@@ -246,6 +257,45 @@ class FrontmatterIndex:
             )
             self._debounce_timer.start()
 
+    def _apply_single_path_update(self, abs_path: Path, action: str) -> None:
+        """Refresh one absolute markdown path and notify change callbacks."""
+        try:
+            rel = abs_path.relative_to(config.VAULT_PATH).as_posix()
+        except ValueError:
+            return
+
+        if abs_path.suffix != ".md":
+            return
+
+        if abs_path.is_symlink():
+            with self._lock:
+                self._index.pop(rel, None)
+            return
+
+        if not is_vault_path_allowed(abs_path):
+            with self._lock:
+                self._index.pop(rel, None)
+            return
+
+        if abs_path.exists():
+            fm = self._parse_frontmatter(abs_path)
+            with self._lock:
+                if fm is not None:
+                    self._index[rel] = fm
+                else:
+                    self._index.pop(rel, None)
+            emitted_action = "create" if action == "create" else "modify"
+        else:
+            with self._lock:
+                self._index.pop(rel, None)
+            emitted_action = "delete"
+
+        for callback in self._change_callbacks:
+            try:
+                callback(rel, emitted_action)
+            except Exception:
+                logger.warning("Frontmatter change callback failed for %s", rel)
+
     def _flush_pending(self) -> None:
         """Process all pending file changes."""
         with self._lock:
@@ -254,39 +304,7 @@ class FrontmatterIndex:
             self._debounce_timer = None
 
         for abs_path_str, action in updates.items():
-            abs_path = Path(abs_path_str)
-            if abs_path.is_symlink():
-                with self._lock:
-                    self._index.pop(abs_path.relative_to(config.VAULT_PATH).as_posix(), None)
-                continue
-            if not is_vault_path_allowed(abs_path):
-                with self._lock:
-                    try:
-                        rel = abs_path.relative_to(config.VAULT_PATH).as_posix()
-                    except ValueError:
-                        rel = None
-                    if rel is not None:
-                        self._index.pop(rel, None)
-                continue
-            rel = abs_path.relative_to(config.VAULT_PATH).as_posix()
-            if abs_path.exists():
-                fm = self._parse_frontmatter(abs_path)
-                with self._lock:
-                    if fm is not None:
-                        self._index[rel] = fm
-                    else:
-                        self._index.pop(rel, None)
-                emitted_action = "create" if action == "create" else "modify"
-            else:
-                with self._lock:
-                    self._index.pop(rel, None)
-                emitted_action = "delete"
-
-            for callback in self._change_callbacks:
-                try:
-                    callback(rel, emitted_action)
-                except Exception:
-                    logger.warning("Frontmatter change callback failed for %s", rel)
+            self._apply_single_path_update(Path(abs_path_str), action)
 
 
 class _VaultEventHandler(FileSystemEventHandler):

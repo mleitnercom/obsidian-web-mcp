@@ -43,6 +43,26 @@ UPLOAD_STAGING_DIRNAME = "upload-staging"
 UPLOAD_EXPIRY_SECONDS = 24 * 60 * 60
 
 
+def _refresh_frontmatter_index(paths: list[str], operation: str) -> None:
+    """Refresh markdown paths in the frontmatter index immediately after writes."""
+    if not paths:
+        return
+
+    try:
+        from ..server import frontmatter_index
+    except Exception:
+        return
+
+    action = "create" if operation == "created" else "modify"
+    for path in paths:
+        if not path.endswith(".md"):
+            continue
+        try:
+            frontmatter_index.refresh_path(path, action=action)
+        except Exception:
+            logger.warning("Frontmatter index refresh failed for %s", path)
+
+
 def _write_text_with_verification(
     path: str,
     content: str,
@@ -243,6 +263,7 @@ def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontma
                 logger.warning(f"Frontmatter merge failed for {path}, writing as-is: {e}")
 
         is_new, size = _write_text_with_verification(path, content, create_dirs=create_dirs)
+        _refresh_frontmatter_index([path], "created" if is_new else "updated")
         fire_post_write("created" if is_new else "updated", [path])
 
         return vault_json_dumps({"path": path, "created": is_new, "size": size})
@@ -286,6 +307,7 @@ def vault_batch_frontmatter_update(updates: list[dict]) -> str:
             results.append({"path": file_path, "updated": False, "error": str(e)})
 
     if updated_paths:
+        _refresh_frontmatter_index(updated_paths, "updated")
         fire_post_write("updated_frontmatter", updated_paths)
 
     return vault_json_dumps({"results": results})
@@ -727,6 +749,7 @@ def vault_str_replace(path: str, old_str: str, new_str: str = "", replace_all: b
             replace_all=replace_all,
         )
         if result.get("changed"):
+            _refresh_frontmatter_index([path], "updated")
             fire_post_write("updated", [path])
         return vault_json_dumps(result)
     except FileNotFoundError:
@@ -770,6 +793,7 @@ def vault_batch_replace(updates: list[dict]) -> str:
             results.append({"error": str(e), "path": path})
 
     if changed_paths:
+        _refresh_frontmatter_index(changed_paths, "updated")
         fire_post_write("updated", changed_paths)
 
     return vault_json_dumps({"results": results})
@@ -795,6 +819,7 @@ def vault_patch(path: str, old_text: str, new_text: str = "") -> str:
                 result["error"] = "old_text not found in file"
             return vault_json_dumps(result)
         if result.get("changed"):
+            _refresh_frontmatter_index([path], "updated")
             fire_post_write("updated", [path])
         return vault_json_dumps(
             {
@@ -831,6 +856,7 @@ def vault_append(path: str, content: str, create_if_missing: bool = False) -> st
             is_new = True
 
         _, size = _write_text_with_verification(path, new_content, create_dirs=create_if_missing)
+        _refresh_frontmatter_index([path], "created" if is_new else "updated")
         fire_post_write("created" if is_new else "updated", [path])
         return vault_json_dumps({"path": path, "appended": True, "created": is_new, "size": size})
     except ValueError as e:

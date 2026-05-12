@@ -2,6 +2,8 @@
 
 import json
 import time
+import hashlib
+import base64
 
 import pytest
 from starlette.applications import Starlette
@@ -244,6 +246,20 @@ def test_oauth_register_returns_unique_secret(monkeypatch):
     assert response.status_code == 201
     assert body["client_secret"] != "server-secret"
     assert body["client_id"] in oauth._registered_clients
+
+
+def test_oauth_metadata_advertises_public_and_confidential_token_auth(monkeypatch):
+    """OAuth metadata should advertise both PKCE public and client_secret_post clients."""
+    reset_rate_limits()
+    monkeypatch.setattr(oauth.config, "VAULT_PUBLIC_BASE_URL", "https://vault.example.com")
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        response = client.get("/.well-known/oauth-authorization-server")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["token_endpoint_auth_methods_supported"] == ["none", "client_secret_post"]
 
 
 def test_oauth_registered_clients_persist_to_disk(monkeypatch, tmp_path):
@@ -586,6 +602,57 @@ def test_oauth_authorization_code_flow_validates_client_and_redirect(monkeypatch
     reset_rate_limits()
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
+
+
+def test_oauth_public_pkce_client_can_exchange_code_without_secret(monkeypatch):
+    """Public PKCE clients should complete authorization_code without client_secret."""
+    reset_rate_limits()
+    oauth._auth_codes.clear()
+    oauth._registered_clients.clear()
+    monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token")
+    code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with TestClient(app) as client:
+        registration = client.post(
+            "/oauth/register",
+            json={
+                "redirect_uris": ["https://codex.example/callback"],
+                "token_endpoint_auth_method": "none",
+            },
+        ).json()
+
+        authorize = client.get(
+            "/oauth/authorize",
+            params={
+                "response_type": "code",
+                "client_id": registration["client_id"],
+                "redirect_uri": "https://codex.example/callback",
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+            },
+            follow_redirects=False,
+        )
+        assert authorize.status_code == 302
+        code = authorize.headers["location"].split("code=", 1)[1]
+
+        token = client.post(
+            "/oauth/token",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": registration["client_id"],
+                "code": code,
+                "redirect_uri": "https://codex.example/callback",
+                "code_verifier": code_verifier,
+            },
+        )
+
+    assert registration["token_endpoint_auth_method"] == "none"
+    assert token.status_code == 200
+    assert token.json()["access_token"] == "vault-token"
     monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token")
 
     app = Starlette(routes=oauth.oauth_routes)
