@@ -12,6 +12,7 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ### Reliability / Operator UX
 - Log direct upload completions and rejections, and steer tool descriptions away from legacy chunked upload flows for practical agent file transfer.
+- Clean up binary-ingestion tool guidance so agents prefer `vault_request_upload_url` for real file uploads while keeping legacy `vault_upload_*` tools available until observed usage supports removal.
 - Refresh the frontmatter index synchronously after `vault_move`, `vault_delete`, and `vault_delete_directory` so moved or deleted Markdown files do not remain as ghost paths in `vault_search_frontmatter`.
 - Teach the frontmatter filesystem watcher to process move/rename events by removing the old path and indexing the new path.
 - Disable HTTP access logs so short-lived signed upload URLs are not written to the service journal.
