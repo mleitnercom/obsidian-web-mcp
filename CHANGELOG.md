@@ -5,14 +5,20 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.6.4] - 2026-05-12
+
 ### Features
 - Add `vault_request_upload_url` plus signed `POST /upload/{upload_id}` direct uploads for agent-local binary files, avoiding MCP argument-size limits for PDFs and other attachments.
 
 ### Reliability / Operator UX
 - Log direct upload completions and rejections, and steer tool descriptions away from legacy chunked upload flows for practical agent file transfer.
+- Refresh the frontmatter index synchronously after `vault_move`, `vault_delete`, and `vault_delete_directory` so moved or deleted Markdown files do not remain as ghost paths in `vault_search_frontmatter`.
+- Teach the frontmatter filesystem watcher to process move/rename events by removing the old path and indexing the new path.
+- Disable HTTP access logs so short-lived signed upload URLs are not written to the service journal.
 
 ### Docs / Tests
 - Document direct upload configuration (`VAULT_UPLOAD_URL_SECRET`, TTL limits) and add regression tests for signed upload success and bad-signature rejection.
+- Add regression coverage for direct uploads, moved/deleted frontmatter paths, watchdog move events, and Linux-compatible hook tests.
 
 ## [v0.6.3] - 2026-05-07
 
