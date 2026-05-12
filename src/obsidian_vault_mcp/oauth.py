@@ -534,7 +534,7 @@ async def oauth_authorize(request: Request):
         "expires_at": time.time() + 300,  # 5 minute expiry
     }
 
-    logger.info(f"OAuth authorization code issued, redirecting to {redirect_uri[:50]}...")
+    logger.info("OAuth authorization code issued")
 
     # Redirect back to Claude with the code
     params = {"code": code}
@@ -565,12 +565,6 @@ async def oauth_token(request: Request) -> JSONResponse:
     grant_type = form.get("grant_type", "")
     client_id = form.get("client_id", "")
     client_secret = form.get("client_secret", "")
-    logger.info(
-        "OAuth token request grant_type=%s client_id=%r client_secret_present=%s",
-        grant_type,
-        client_id,
-        bool(client_secret),
-    )
 
     # Support both authorization_code and client_credentials grants
     if grant_type == "authorization_code":
@@ -639,11 +633,6 @@ async def _handle_authorization_code(form, client_id: str, client_secret: str) -
             return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"}, status_code=400)
 
     _auth_codes.pop(code, None)
-    logger.info(
-        "OAuth token issued via authorization_code grant auth_method=%s client_secret_present=%s",
-        auth_method,
-        bool(client_secret),
-    )
     return JSONResponse({
         "access_token": config.VAULT_MCP_TOKEN,
         "token_type": "bearer",
@@ -666,7 +655,6 @@ async def _handle_client_credentials(client_id: str, client_secret: str) -> JSON
         logger.warning(f"OAuth client_credentials failed (client_id={client_id!r})")
         return JSONResponse({"error": "invalid_client"}, status_code=401)
 
-    logger.info("OAuth token issued via client_credentials grant")
     return JSONResponse({
         "access_token": config.VAULT_MCP_TOKEN,
         "token_type": "bearer",

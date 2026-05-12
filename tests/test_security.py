@@ -4,6 +4,7 @@ import json
 import time
 import hashlib
 import base64
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from starlette.applications import Starlette
@@ -788,6 +789,64 @@ def test_oauth_public_pkce_client_can_exchange_code_without_secret(monkeypatch):
 
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
+
+
+def test_oauth_success_logs_do_not_include_secret_material(monkeypatch, caplog):
+    """Successful OAuth flows must not write token or verifier material to logs."""
+    reset_rate_limits()
+    oauth._auth_codes.clear()
+    oauth._registered_clients.clear()
+    monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token-secret")
+
+    code_verifier = "verifier-secret-material"
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    redirect_uri = "https://codex.example/callback?state_hint=redirect-secret"
+
+    app = Starlette(routes=oauth.oauth_routes)
+    with caplog.at_level("INFO", logger="obsidian_vault_mcp.oauth"):
+        with TestClient(app) as client:
+            registration = client.post(
+                "/oauth/register",
+                json={
+                    "redirect_uris": [redirect_uri],
+                    "token_endpoint_auth_method": "none",
+                },
+            ).json()
+
+            authorize = client.get(
+                "/oauth/authorize",
+                params={
+                    "response_type": "code",
+                    "client_id": registration["client_id"],
+                    "redirect_uri": redirect_uri,
+                    "code_challenge": code_challenge,
+                    "code_challenge_method": "S256",
+                },
+                follow_redirects=False,
+            )
+            code = parse_qs(urlparse(authorize.headers["location"]).query)["code"][0]
+
+            token = client.post(
+                "/oauth/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": registration["client_id"],
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "code_verifier": code_verifier,
+                },
+            )
+
+    assert authorize.status_code == 302
+    assert token.status_code == 200
+    logs = "\n".join(record.getMessage() for record in caplog.records)
+    assert "vault-token-secret" not in logs
+    assert "verifier-secret-material" not in logs
+    assert "redirect-secret" not in logs
+    assert code not in logs
+    assert registration["client_secret"] not in logs
 
 
 def test_oauth_authorize_rejects_unregistered_redirect_uri():
