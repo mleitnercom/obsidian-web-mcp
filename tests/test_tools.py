@@ -715,6 +715,17 @@ def test_vault_daily_note_path_rolls_over_when_local_day_changes(vault_dir, monk
     assert second["path"] == "Daily/2026-05-15.md"
 
 
+def test_vault_daily_note_path_appends_markdown_suffix_for_dotted_formats(vault_dir, monkeypatch):
+    """Dots in the strftime format are not treated as explicit file extensions."""
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FOLDER", "Daily")
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FORMAT", "%Y.%m.%d")
+    monkeypatch.setattr(daily_tools, "_today", lambda: date(2026, 5, 14))
+
+    result = json.loads(vault_daily_note_path())
+
+    assert result["path"] == "Daily/2026.05.14.md"
+
+
 def test_vault_daily_note_append_creates_missing_note_with_template(vault_dir, monkeypatch):
     """Appending to a missing daily note creates it through the verified append path."""
     monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FOLDER", "Daily")

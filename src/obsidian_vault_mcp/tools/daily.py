@@ -21,7 +21,7 @@ def _daily_note_path(for_date=None) -> str:
     """Build the configured daily-note path for the current local date."""
     day = for_date or _today()
     filename = day.strftime(config.VAULT_DAILY_NOTES_FORMAT)
-    if not PurePosixPath(filename).suffix:
+    if not filename.lower().endswith((".md", ".markdown")):
         filename = f"{filename}.md"
 
     folder = config.VAULT_DAILY_NOTES_FOLDER.strip().strip("/\\")
