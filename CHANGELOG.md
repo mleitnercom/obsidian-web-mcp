@@ -5,6 +5,16 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.6.6] - 2026-05-14
+
+### Features
+- Add append-only JSON-lines audit logging for vault mutations via `VAULT_AUDIT_LOG_PATH`.
+- Audit records include UTC timestamp, token hash, client id/family, operation, target path, before/after size and checksum, request id, and `operation_status`.
+
+### Reliability / Operator UX
+- Audit logging covers MCP write/mutation tools plus signed direct uploads through `POST /upload/{id}`.
+- Failed tool-level mutations emit `operation_status="error"` without rolling back the original tool result or turning audit failures into client-facing errors.
+
 ## [v0.6.5] - 2026-05-14
 
 ### Features

@@ -5,12 +5,15 @@ import hashlib
 import json
 import os
 from datetime import date, datetime
+from contextlib import contextmanager
 
 import pytest
 import frontmatter
+from starlette.testclient import TestClient
 
 from .conftest import build_simple_pdf_bytes
 from obsidian_vault_mcp import config
+import obsidian_vault_mcp.server as server
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
 from obsidian_vault_mcp.tools.daily import vault_daily_note_append, vault_daily_note_path, vault_daily_note_read
 import obsidian_vault_mcp.tools.daily as daily_tools
@@ -34,6 +37,55 @@ import obsidian_vault_mcp.tools.write as write_tools
 from obsidian_vault_mcp.tools.analytics import vault_analytics_findings, vault_analytics_summary
 from obsidian_vault_mcp.tools.search import vault_search, vault_search_frontmatter
 from obsidian_vault_mcp.tools.manage import vault_delete, vault_delete_directory, vault_list, vault_move, vault_tree
+from obsidian_vault_mcp.rate_limit import (
+    reset_current_auth_principal,
+    reset_current_request_metadata,
+    set_current_auth_principal,
+    set_current_request_metadata,
+)
+
+
+@contextmanager
+def _authenticated_tool_context():
+    principal = set_current_auth_principal("audit-token")
+    metadata = set_current_request_metadata({"client_family": "pytest", "request_id": "req-test"})
+    try:
+        yield
+    finally:
+        reset_current_request_metadata(metadata)
+        reset_current_auth_principal(principal)
+
+
+def _read_jsonl(path):
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _assert_one_audit_record(audit_path, operation, target_path=None, status="success"):
+    records = _read_jsonl(audit_path)
+    assert len(records) == 1
+    record = records[0]
+    for field in (
+        "timestamp",
+        "token_id_hash",
+        "client_id",
+        "operation",
+        "target_path",
+        "size_before",
+        "size_after",
+        "checksum_before",
+        "checksum_after",
+        "request_id",
+        "operation_status",
+    ):
+        assert field in record
+    assert record["operation"] == operation
+    assert record["operation_status"] == status
+    assert record["token_id_hash"]
+    assert record["client_id"] == "pytest"
+    assert record["request_id"] == "req-test"
+    if target_path is not None:
+        assert record["target_path"] == target_path
+    return record
 
 
 def test_vault_read_returns_frontmatter(vault_dir):
@@ -591,6 +643,169 @@ def test_vault_import_file_rejects_source_outside_allowlist(vault_dir, monkeypat
 
     assert "error" in result
     assert "outside VAULT_IMPORT_FILE_ALLOWED_ROOTS" in result["error"]
+
+
+def test_audit_log_disabled_when_path_empty(vault_dir, monkeypatch, tmp_path):
+    """Empty VAULT_AUDIT_LOG_PATH disables audit logging without failing mutations."""
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_PATH", "")
+
+    with _authenticated_tool_context():
+        result = json.loads(server.vault_write("audit/disabled.md", "ok\n"))
+
+    assert "error" not in result
+    assert not audit_path.exists()
+
+
+def test_audit_log_records_mutation_operations(vault_dir, monkeypatch, tmp_path):
+    """Each mutating operation should append exactly one normalized audit record."""
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_PATH", str(audit_path))
+    monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    monkeypatch.setattr(write_tools.config, "IMPORT_FILE_ALLOWED_ROOTS", [str(tmp_path)])
+
+    def run_and_assert(operation, call, target_path=None):
+        if audit_path.exists():
+            audit_path.unlink()
+        with _authenticated_tool_context():
+            result = json.loads(call())
+        assert "error" not in result
+        return _assert_one_audit_record(audit_path, operation, target_path)
+
+    run_and_assert("vault_write", lambda: server.vault_write("audit/write.md", "one\n"), "audit/write.md")
+    run_and_assert(
+        "vault_write_binary",
+        lambda: server.vault_write_binary("audit/pixel.png", base64.b64encode(b"png").decode("ascii"), "image/png"),
+        "audit/pixel.png",
+    )
+
+    vault_write("audit/patch.md", "before\n")
+    run_and_assert("vault_patch", lambda: server.vault_patch("audit/patch.md", "before", "after"), "audit/patch.md")
+
+    vault_write("audit/append.md", "start\n")
+    run_and_assert("vault_append", lambda: server.vault_append("audit/append.md", "more\n"), "audit/append.md")
+
+    vault_write("audit/replace.md", "old\n")
+    run_and_assert("vault_str_replace", lambda: server.vault_str_replace("audit/replace.md", "old", "new"), "audit/replace.md")
+
+    vault_write("audit/batch-replace.md", "alpha\n")
+    run_and_assert(
+        "vault_batch_replace",
+        lambda: server.vault_batch_replace([{"path": "audit/batch-replace.md", "old_str": "alpha", "new_str": "beta"}]),
+        ["audit/batch-replace.md"],
+    )
+
+    vault_write("audit/move-source.md", "move\n")
+    run_and_assert("vault_move", lambda: server.vault_move("audit/move-source.md", "audit/move-dest.md"), "audit/move-dest.md")
+
+    vault_write("audit/delete.md", "delete\n")
+    run_and_assert("vault_delete", lambda: server.vault_delete("audit/delete.md", confirm=True), "audit/delete.md")
+
+    (vault_dir / "audit" / "empty-dir").mkdir(parents=True)
+    run_and_assert(
+        "vault_delete_directory",
+        lambda: server.vault_delete_directory("audit/empty-dir", confirm=True),
+        "audit/empty-dir",
+    )
+
+    vault_write("audit/frontmatter.md", "---\nstatus: old\n---\n\nBody.\n")
+    run_and_assert(
+        "vault_batch_frontmatter_update",
+        lambda: server.vault_batch_frontmatter_update([{"path": "audit/frontmatter.md", "fields": {"status": "new"}}]),
+        ["audit/frontmatter.md"],
+    )
+
+    content = b"abcdefghijklmnopqrstuvwxyz"
+    checksum = hashlib.sha256(content).hexdigest()
+    init = json.loads(vault_upload_init("audit/upload.pdf", "application/pdf", total_size=len(content), part_size=10))
+    upload_id = init["upload_id"]
+    json.loads(vault_upload_part(upload_id, 0, base64.b64encode(content[:10]).decode("ascii")))
+    json.loads(vault_upload_part(upload_id, 1, base64.b64encode(content[10:20]).decode("ascii")))
+    json.loads(vault_upload_part(upload_id, 2, base64.b64encode(content[20:]).decode("ascii")))
+    run_and_assert("vault_upload_commit", lambda: server.vault_upload_commit(upload_id, checksum), "audit/upload.pdf")
+
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF local")
+    run_and_assert(
+        "vault_import_file",
+        lambda: server.vault_import_file("audit/import-file.pdf", str(source), "application/pdf"),
+        "audit/import-file.pdf",
+    )
+
+    class FakeHeaders:
+        def get(self, name, default=None):
+            return "application/pdf" if name.lower() == "content-type" else default
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __init__(self):
+            self._chunks = [b"%PDF remote", b""]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size):
+            return self._chunks.pop(0)
+
+    monkeypatch.setattr(write_tools, "_validate_import_url", lambda url: None)
+    monkeypatch.setattr(write_tools, "urlopen", lambda request, timeout: FakeResponse())
+    run_and_assert(
+        "vault_import_url",
+        lambda: server.vault_import_url("audit/import-url.pdf", "https://example.invalid/file.pdf", "application/pdf"),
+        "audit/import-url.pdf",
+    )
+
+
+def test_audit_log_records_error_status_without_rollback(vault_dir, monkeypatch, tmp_path):
+    """Tool errors should still produce an operation_status=error record."""
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_PATH", str(audit_path))
+
+    with _authenticated_tool_context():
+        result = json.loads(server.vault_append("audit/missing.md", "nope\n", create_if_missing=False))
+
+    assert "error" in result
+    record = _assert_one_audit_record(audit_path, "vault_append", "audit/missing.md", status="error")
+    assert record["error"]
+    assert not (vault_dir / "audit" / "missing.md").exists()
+
+
+def test_audit_log_records_direct_upload_route(vault_dir, monkeypatch, tmp_path):
+    """POST /upload/{id} should append one audit line outside the MCP tool wrapper."""
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_PATH", str(audit_path))
+    monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    monkeypatch.setattr(write_tools.config, "VAULT_PUBLIC_BASE_URL", "http://testserver")
+    monkeypatch.setattr(write_tools.config, "VAULT_UPLOAD_URL_SECRET", "upload-secret")
+
+    content = b"%PDF direct"
+    request_payload = json.loads(
+        vault_request_upload_url(
+            "audit/direct.pdf",
+            "application/pdf",
+            max_size_bytes=1024,
+            expected_sha256=hashlib.sha256(content).hexdigest(),
+        )
+    )
+
+    app = server.build_app()
+    with TestClient(app) as client:
+        response = client.post(
+            request_payload["upload_url"],
+            content=content,
+            headers={"Content-Type": "application/pdf"},
+        )
+
+    assert response.status_code == 201
+    record = _read_jsonl(audit_path)[0]
+    assert record["operation"] == "POST /upload/{id}"
+    assert record["target_path"] == "audit/direct.pdf"
+    assert record["operation_status"] == "success"
+    assert record["size_after"] == len(content)
 
 
 def test_vault_str_replace_updates_unique_match(vault_dir):

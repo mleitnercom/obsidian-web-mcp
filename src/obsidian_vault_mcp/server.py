@@ -22,6 +22,14 @@ from starlette.routing import Route
 from pydantic import Field
 
 from . import config
+from .audit import (
+    MUTATION_OPERATIONS,
+    before_target_path,
+    build_audit_record,
+    infer_target_path,
+    snapshot_path,
+    write_audit_record,
+)
 from .config import VAULT_MCP_PORT, VAULT_MCP_TOKEN, VAULT_PATH
 from .frontmatter_index import FrontmatterIndex
 from .rate_limit import check_rate_limit, current_auth_principal, current_request_metadata
@@ -156,6 +164,11 @@ def _log_oauth_runtime_summary() -> None:
 def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
     """Run one MCP tool call with consistent start/end/error logging."""
     started = time.monotonic()
+    audit_before = None
+    audit_before_path = None
+    if name in MUTATION_OPERATIONS:
+        audit_before_path = before_target_path(name, context)
+        audit_before = snapshot_path(audit_before_path)
     request_metadata = current_request_metadata() or {}
     merged_context: dict[str, Any] = {}
     for key in ("client_family", "client_ip", "mcp_protocol_version", "user_agent", "request_path"):
@@ -178,10 +191,42 @@ def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
     except Exception:
         duration = time.monotonic() - started
         logger.exception("Tool failed: %s after %.3fs", name, duration)
+        if name in MUTATION_OPERATIONS:
+            target_path = infer_target_path(name, context)
+            write_audit_record(
+                build_audit_record(
+                    operation=name,
+                    target_path=target_path,
+                    before=audit_before,
+                    after=snapshot_path(target_path),
+                    operation_status="error",
+                    error="tool exception",
+                )
+            )
         raise
 
     duration = time.monotonic() - started
     logger.info("Tool complete: %s in %.3fs (%s bytes)", name, duration, len(result))
+    if name in MUTATION_OPERATIONS:
+        parsed_result: dict[str, Any] = {}
+        try:
+            payload = json.loads(result)
+            if isinstance(payload, dict):
+                parsed_result = payload
+        except Exception:
+            parsed_result = {}
+        target_path = infer_target_path(name, context, parsed_result)
+        operation_status = "error" if "error" in parsed_result else "success"
+        write_audit_record(
+            build_audit_record(
+                operation=name,
+                target_path=target_path,
+                before=audit_before,
+                after=snapshot_path(target_path),
+                operation_status=operation_status,
+                error=parsed_result.get("error") if operation_status == "error" else None,
+            )
+        )
     return result
 
 
@@ -1418,6 +1463,17 @@ def build_app():
             content_type=content_type,
             expires=request.query_params.get("expires", ""),
             signature=request.query_params.get("signature", ""),
+        )
+        target_path = result.get("path")
+        write_audit_record(
+            build_audit_record(
+                operation="POST /upload/{id}",
+                target_path=target_path,
+                before={"size": None, "checksum": None},
+                after=snapshot_path(target_path),
+                operation_status="error" if "error" in result else "success",
+                error=result.get("error"),
+            )
         )
         if "error" in result:
             logger.warning("Direct upload rejected: %s (%s)", upload_id, result["error"])

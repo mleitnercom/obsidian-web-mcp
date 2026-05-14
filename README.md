@@ -89,6 +89,8 @@ This is a server that provides network access to your personal notes. Security i
 
 **Optional post-write hooks are supported.** If `VAULT_MCP_POST_WRITE_CMD` is configured, the server can trigger a local follow-up command after vault mutations such as writes, deletes, moves, and appends. The command is executed without a shell and receives mutation metadata via environment variables. This is intentionally a trusted-operator feature for single-user or otherwise tightly controlled deployments: it is opt-in and constrained, but authenticated write activity can still trigger a local follow-up command.
 
+**Optional append-only audit logs are supported.** If `VAULT_AUDIT_LOG_PATH` is configured, mutating tools append one JSON-lines record per operation, including before/after size and SHA-256 checksum where a single target file is available. If the variable is empty, audit logging is disabled and mutations continue normally.
+
 ## Tools
 
 | Tool | Description |
@@ -281,8 +283,9 @@ All configuration is via environment variables:
 | `VAULT_UPLOAD_URL_TTL_SECONDS` | No | `900` | Default lifetime for direct upload URLs |
 | `VAULT_UPLOAD_URL_MAX_TTL_SECONDS` | No | `3600` | Maximum lifetime callers may request for direct upload URLs |
 | `VAULT_DAILY_NOTES_FOLDER` | No | (empty) | Folder for daily notes relative to the vault root |
-| `VAULT_DAILY_NOTES_FORMAT` | No | `%Y-%m-%d` | Server-local `strftime` format for daily-note filenames; `.md` is appended when no suffix is present |
+| `VAULT_DAILY_NOTES_FORMAT` | No | `%Y-%m-%d` | Server-local `strftime` format for daily-note filenames; `.md` is appended unless the format already ends in `.md` or `.markdown` |
 | `VAULT_DAILY_NOTES_TEMPLATE` | No | (empty) | Optional `strftime`-expanded text used when `vault_daily_note_append` creates a missing daily note |
+| `VAULT_AUDIT_LOG_PATH` | No | (empty) | Optional append-only JSON-lines audit file for mutating operations; empty disables audit logging |
 
 Example operator extensions:
 
