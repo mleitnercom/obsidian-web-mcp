@@ -4,7 +4,7 @@ Production-hardened fork of `obsidian-web-mcp` for MCP access to an Obsidian vau
 
 ## Release
 
-Latest: [v0.6.4](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.4) (2026-05-12).
+Latest: [v0.6.7](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.7) (2026-05-14).
 
 ## Status
 
@@ -113,6 +113,10 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_daily_note_path` | Return today's configured daily-note path using the server's local date |
 | `vault_daily_note_read` | Read today's daily note; missing notes return `error_code="daily_note_not_found"` and `status_code=404` |
 | `vault_daily_note_append` | Append to today's daily note, creating it with `VAULT_DAILY_NOTES_TEMPLATE` if missing via the verified append path |
+| `vault_template_list` | List Markdown templates from `VAULT_TEMPLATER_FOLDER` without executing Templater |
+| `vault_template_render` | Render a template using simple `{{ }}` variable substitution; not full Templater execution |
+| `vault_template_apply` | Render a simple template and write it through the verified `vault_write` path |
+| `vault_dataview_query` | Run a Dataview TABLE DQL query through Obsidian Local REST API and return structured JSON |
 | `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
 | `vault_semantic_search` | Optional semantic, keyword, or hybrid search backed by a persistent FAISS index (supports `path_prefix`, `filter_tags`, `search_mode`, `min_score`) |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
@@ -286,14 +290,12 @@ All configuration is via environment variables:
 | `VAULT_DAILY_NOTES_FORMAT` | No | `%Y-%m-%d` | Server-local `strftime` format for daily-note filenames; `.md` is appended unless the format already ends in `.md` or `.markdown` |
 | `VAULT_DAILY_NOTES_TEMPLATE` | No | (empty) | Optional `strftime`-expanded text used when `vault_daily_note_append` creates a missing daily note |
 | `VAULT_AUDIT_LOG_PATH` | No | (empty) | Optional append-only JSON-lines audit file for mutating operations; empty disables audit logging |
-
-Example operator extensions:
-
-```bash
-export VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON='{"application/vnd.openxmlformats-officedocument.wordprocessingml.document":[".docx"],"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"],"application/vnd.openxmlformats-officedocument.presentationml.presentation":[".pptx"]}'
-export VAULT_IMPORT_FILE_ALLOWED_ROOTS="/sessions/shared/uploads,/srv/obsidian-imports"
-export VAULT_UPLOAD_URL_SECRET="$(python -c 'import secrets; print(secrets.token_hex(32))')"
-```
+| `VAULT_OBSIDIAN_REST_URL` | No | (empty) | Obsidian Local REST API base URL; empty disables Local REST-backed tools with `capability_unavailable` |
+| `VAULT_OBSIDIAN_REST_API_KEY` | No | (empty) | API key sent as `Authorization: Bearer <key>` to Obsidian Local REST API |
+| `VAULT_OBSIDIAN_REST_VERIFY_TLS` | No | `false` | Verify TLS certificates for Local REST calls; `/health` warns if false for non-loopback URLs |
+| `VAULT_OBSIDIAN_REST_TIMEOUT` | No | `15` | Default timeout in seconds for Local REST calls |
+| `VAULT_TEMPLATER_FOLDER` | No | (empty) | Vault-relative folder used by `vault_template_list`, `vault_template_render`, and `vault_template_apply` |
+| `VAULT_DATAVIEW_TIMEOUT` | No | `15` | Timeout in seconds for `vault_dataview_query` |
 | `VAULT_MAX_BATCH_SIZE` | No | `20` | Max files in batch operations |
 | `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard search result cap |
 | `VAULT_DEFAULT_SEARCH_RESULTS` | No | `20` | Default search result count |
@@ -305,6 +307,27 @@ export VAULT_UPLOAD_URL_SECRET="$(python -c 'import secrets; print(secrets.token
 | `VAULT_RATE_LIMIT_OAUTH_AUTHORIZE` | No | `30` | `/oauth/authorize` per IP per minute |
 | `VAULT_RATE_LIMIT_OAUTH_TOKEN` | No | `30` | `/oauth/token` per IP per minute |
 | `VAULT_RATE_LIMIT_OAUTH_REGISTER` | No | `10` | `/oauth/register` per IP per minute |
+
+Example operator extensions:
+
+```bash
+export VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON='{"application/vnd.openxmlformats-officedocument.wordprocessingml.document":[".docx"],"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"],"application/vnd.openxmlformats-officedocument.presentationml.presentation":[".pptx"]}'
+export VAULT_IMPORT_FILE_ALLOWED_ROOTS="/sessions/shared/uploads,/srv/obsidian-imports"
+export VAULT_UPLOAD_URL_SECRET="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+```
+
+### Templates and Dataview
+
+The P2 template tools intentionally use a small server-side renderer, not full Templater execution. Supported tokens are `{{date}}`, `{{datetime}}`, `{{title}}`, `{{target_path}}`, `{{key}}`, and `{{variables.key}}`. Templates containing Templater `<%` syntax are rejected with `error_code="template_render_unavailable"` and are not written.
+
+`vault_dataview_query` uses Obsidian Local REST API's Dataview TABLE-DQL endpoint. `query_type` is strictly `dql`; script-style Dataview execution is not exposed.
+
+```bash
+export VAULT_OBSIDIAN_REST_URL="https://127.0.0.1:27124"
+export VAULT_OBSIDIAN_REST_API_KEY="your-local-rest-api-key"
+export VAULT_OBSIDIAN_REST_VERIFY_TLS=false
+export VAULT_TEMPLATER_FOLDER="Templates"
+```
 
 Generate tokens with: `python -c "import secrets; print(secrets.token_hex(32))"`
 

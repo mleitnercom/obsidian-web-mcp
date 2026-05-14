@@ -32,6 +32,7 @@ from .audit import (
 )
 from .config import VAULT_MCP_PORT, VAULT_MCP_TOKEN, VAULT_PATH
 from .frontmatter_index import FrontmatterIndex
+from .obsidian_rest import obsidian_rest_reachable, obsidian_rest_tls_warning
 from .rate_limit import check_rate_limit, current_auth_principal, current_request_metadata
 from .retrieval import SemanticSearchEngine
 from .vault import vault_json_dumps
@@ -285,7 +286,7 @@ def _health_payload() -> dict:
             except Exception as exc:
                 logger.warning("Semantic health probe failed during initialize: %s", exc)
     semantic_status = semantic_engine.status
-    return {
+    payload = {
         "status": "ok" if vault_exists and vault_is_dir else "degraded",
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "vault": {
@@ -314,6 +315,16 @@ def _health_payload() -> dict:
         },
         "uptime_seconds": round(time.monotonic() - _server_started_at, 3),
     }
+    if config.VAULT_OBSIDIAN_REST_URL:
+        payload["obsidian_rest"] = {
+            "url_configured": True,
+            "verify_tls": config.VAULT_OBSIDIAN_REST_VERIFY_TLS,
+            "tls_warning": obsidian_rest_tls_warning(),
+            "reachable": obsidian_rest_reachable(timeout=2),
+        }
+    else:
+        payload["obsidian_rest"] = {"url_configured": False}
+    return payload
 
 
 def _minimal_health_payload() -> dict[str, Any]:
@@ -433,6 +444,12 @@ from .tools.daily import (
     vault_daily_note_path as _vault_daily_note_path,
     vault_daily_note_read as _vault_daily_note_read,
 )
+from .tools.templates import (
+    vault_dataview_query as _vault_dataview_query,
+    vault_template_apply as _vault_template_apply,
+    vault_template_list as _vault_template_list,
+    vault_template_render as _vault_template_render,
+)
 from .tools.search import vault_search as _vault_search, vault_search_frontmatter as _vault_search_frontmatter
 from .tools.manage import (
     vault_delete as _vault_delete,
@@ -468,9 +485,13 @@ from .models import (
     VaultBatchReadInput,
     VaultBatchFrontmatterUpdateInput,
     VaultDailyNoteAppendInput,
+    VaultDataviewQueryInput,
     VaultSearchInput,
     VaultSearchFrontmatterInput,
     VaultSemanticSearchInput,
+    VaultTemplateApplyInput,
+    VaultTemplateListInput,
+    VaultTemplateRenderInput,
     VaultListInput,
     VaultMoveInput,
     VaultReindexInput,
@@ -1042,6 +1063,140 @@ def vault_daily_note_append(
         "vault_daily_note_append",
         lambda: _vault_daily_note_append(inp.content),
         content_bytes=len(inp.content.encode("utf-8")),
+    )
+
+
+@mcp.tool(
+    name="vault_template_list",
+    description="List markdown templates from VAULT_TEMPLATER_FOLDER. Uses vault files only; it does not execute Templater.",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_template_list(folder: str | None = None, recursive: bool = True) -> str:
+    """List markdown templates from the configured template folder."""
+    inp = VaultTemplateListInput(folder=folder, recursive=recursive)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_template_list",
+        lambda: _vault_template_list(inp.folder, inp.recursive),
+        folder=inp.folder,
+        recursive=inp.recursive,
+    )
+
+
+@mcp.tool(
+    name="vault_template_render",
+    description=(
+        "Render a template without writing. Simple variable substitution, not full Templater execution. "
+        "Supports {{date}}, {{datetime}}, {{title}}, {{target_path}}, {{key}}, and {{variables.key}}. "
+        "Returns error_code=template_render_unavailable when Templater <% syntax is detected."
+    ),
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_template_render(
+    template_path: str,
+    target_path_hint: str | None = None,
+    variables: dict[str, str | int | float | bool | None] | None = None,
+    engine: Annotated[
+        str,
+        Field(
+            description="Allowed values: simple. Simple variable substitution only; not full Templater execution.",
+            json_schema_extra={"enum": ["simple"]},
+        ),
+    ] = "simple",
+) -> str:
+    """Render a template using the simple server-side renderer."""
+    inp = VaultTemplateRenderInput(
+        template_path=template_path,
+        target_path_hint=target_path_hint,
+        variables=variables,
+        engine=engine,
+    )
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_template_render",
+        lambda: _vault_template_render(inp.template_path, inp.target_path_hint, inp.variables, inp.engine),
+        template_path=inp.template_path,
+        target_path_hint=inp.target_path_hint,
+    )
+
+
+@mcp.tool(
+    name="vault_template_apply",
+    description=(
+        "Render a template and write a note through the verified vault_write path. "
+        "Simple variable substitution, not full Templater execution. Respects overwrite=false with "
+        "error_code=target_exists."
+    ),
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_template_apply(
+    template_path: str,
+    target_path: str,
+    variables: dict[str, str | int | float | bool | None] | None = None,
+    overwrite: bool = False,
+    engine: Annotated[
+        str,
+        Field(
+            description="Allowed values: simple. Simple variable substitution only; not full Templater execution.",
+            json_schema_extra={"enum": ["simple"]},
+        ),
+    ] = "simple",
+) -> str:
+    """Render a simple template and write the result."""
+    inp = VaultTemplateApplyInput(
+        template_path=template_path,
+        target_path=target_path,
+        variables=variables,
+        overwrite=overwrite,
+        engine=engine,
+    )
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_template_apply",
+        lambda: _vault_template_apply(inp.template_path, inp.target_path, inp.variables, inp.overwrite, inp.engine),
+        template_path=inp.template_path,
+        target_path=inp.target_path,
+        overwrite=inp.overwrite,
+    )
+
+
+@mcp.tool(
+    name="vault_dataview_query",
+    description=(
+        "Run a Dataview DQL TABLE query through Obsidian Local REST API and return structured JSON "
+        "with type=table, columns, rows, and duration_ms. query_type is strictly enum=['dql']; "
+        "script queries are intentionally not exposed."
+    ),
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_dataview_query(
+    query: str,
+    query_type: Annotated[
+        str,
+        Field(
+            description="Allowed values: dql.",
+            json_schema_extra={"enum": ["dql"]},
+        ),
+    ] = "dql",
+    timeout_seconds: int | None = None,
+) -> str:
+    """Run a Dataview DQL TABLE query through Local REST API."""
+    inp = VaultDataviewQueryInput(query=query, query_type=query_type, timeout_seconds=timeout_seconds)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_dataview_query",
+        lambda: _vault_dataview_query(inp.query, inp.query_type, inp.timeout_seconds),
+        query=inp.query,
+        query_type=inp.query_type,
+        timeout_seconds=inp.timeout_seconds,
     )
 
 
