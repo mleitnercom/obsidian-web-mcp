@@ -12,6 +12,8 @@ import frontmatter
 from .conftest import build_simple_pdf_bytes
 from obsidian_vault_mcp import config
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
+from obsidian_vault_mcp.tools.daily import vault_daily_note_append, vault_daily_note_path, vault_daily_note_read
+import obsidian_vault_mcp.tools.daily as daily_tools
 from obsidian_vault_mcp.tools.write import (
     vault_append,
     vault_batch_replace,
@@ -212,6 +214,22 @@ def test_vault_search_frontmatter_tool_schema_exposes_extended_filters():
     assert filter_def["properties"]["match_type"]["enum"] == schema["properties"]["match_type"]["enum"]
     assert "AND filters" in schema["properties"]["filters"]["description"]
     assert "list_*" in schema["properties"]["value"]["description"]
+
+
+def test_daily_note_tool_schemas_are_discoverable():
+    """Daily-note tools should be visible with explicit append content schema."""
+    from obsidian_vault_mcp.server import mcp
+
+    path_tool = mcp._tool_manager.get_tool("vault_daily_note_path")
+    read_tool = mcp._tool_manager.get_tool("vault_daily_note_read")
+    append_tool = mcp._tool_manager.get_tool("vault_daily_note_append")
+
+    assert path_tool is not None
+    assert read_tool is not None
+    assert append_tool is not None
+    schema = append_tool.parameters
+    assert schema["properties"]["content"]["type"] == "string"
+    assert "VAULT_DAILY_NOTES_TEMPLATE" in schema["properties"]["content"]["description"]
 
 
 def test_vault_write_creates_file(vault_dir):
@@ -668,6 +686,76 @@ def test_vault_append_can_create_file(vault_dir):
     assert "error" not in result
     assert result["created"] is True
     assert (vault_dir / "logs" / "run.log").read_text(encoding="utf-8") == "Started\n"
+
+
+def test_vault_daily_note_path_uses_local_date_and_config(vault_dir, monkeypatch):
+    """Daily-note path follows the server-local day and configured strftime format."""
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FOLDER", "Journal/Daily")
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FORMAT", "%Y/%m/%d")
+    monkeypatch.setattr(daily_tools, "_today", lambda: date(2026, 5, 14))
+
+    result = json.loads(vault_daily_note_path())
+
+    assert "error" not in result
+    assert result["date"] == "2026-05-14"
+    assert result["path"] == "Journal/Daily/2026/05/14.md"
+
+
+def test_vault_daily_note_path_rolls_over_when_local_day_changes(vault_dir, monkeypatch):
+    """Daily-note path is recomputed per call so midnight rollover changes the note."""
+    days = iter([date(2026, 5, 14), date(2026, 5, 15)])
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FOLDER", "Daily")
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FORMAT", "%Y-%m-%d")
+    monkeypatch.setattr(daily_tools, "_today", lambda: next(days))
+
+    first = json.loads(vault_daily_note_path())
+    second = json.loads(vault_daily_note_path())
+
+    assert first["path"] == "Daily/2026-05-14.md"
+    assert second["path"] == "Daily/2026-05-15.md"
+
+
+def test_vault_daily_note_append_creates_missing_note_with_template(vault_dir, monkeypatch):
+    """Appending to a missing daily note creates it through the verified append path."""
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FOLDER", "Daily")
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FORMAT", "%Y-%m-%d")
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_TEMPLATE", "# Daily %Y-%m-%d\n\n")
+    monkeypatch.setattr(daily_tools, "_today", lambda: date(2026, 5, 14))
+
+    result = json.loads(vault_daily_note_append("- first entry\n"))
+
+    assert "error" not in result
+    assert result["path"] == "Daily/2026-05-14.md"
+    assert result["created"] is True
+    assert (vault_dir / "Daily" / "2026-05-14.md").read_text(encoding="utf-8") == "# Daily 2026-05-14\n\n- first entry\n"
+
+
+def test_vault_daily_note_read_missing_returns_404_error_code(vault_dir, monkeypatch):
+    """Reading a missing daily note returns a clear not-found payload."""
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FOLDER", "Daily")
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FORMAT", "%Y-%m-%d")
+    monkeypatch.setattr(daily_tools, "_today", lambda: date(2026, 5, 14))
+
+    result = json.loads(vault_daily_note_read())
+
+    assert result["error_code"] == "daily_note_not_found"
+    assert result["status_code"] == 404
+    assert result["path"] == "Daily/2026-05-14.md"
+
+
+def test_vault_daily_note_read_existing_note(vault_dir, monkeypatch):
+    """Reading today's daily note returns its content and metadata."""
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FOLDER", "Daily")
+    monkeypatch.setattr(daily_tools.config, "VAULT_DAILY_NOTES_FORMAT", "%Y-%m-%d")
+    monkeypatch.setattr(daily_tools, "_today", lambda: date(2026, 5, 14))
+    (vault_dir / "Daily").mkdir()
+    (vault_dir / "Daily" / "2026-05-14.md").write_text("hello daily\n", encoding="utf-8")
+
+    result = json.loads(vault_daily_note_read())
+
+    assert "error" not in result
+    assert result["content"] == "hello daily\n"
+    assert result["metadata"]["size"] >= len("hello daily\n")
 
 
 def test_vault_analytics_summary_reports_hygiene_findings(vault_dir):

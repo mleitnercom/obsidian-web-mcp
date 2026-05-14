@@ -5,6 +5,16 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.6.5] - 2026-05-14
+
+### Features
+- Add Daily Note tools: `vault_daily_note_path`, `vault_daily_note_read`, and `vault_daily_note_append`.
+- Add `VAULT_DAILY_NOTES_FOLDER`, `VAULT_DAILY_NOTES_FORMAT`, and `VAULT_DAILY_NOTES_TEMPLATE` so operators can align paths with their Obsidian Daily Notes setup.
+
+### Reliability / Operator UX
+- `vault_daily_note_append` creates missing daily notes through the existing verified `vault_append` write path, including read-back verification.
+- Missing daily-note reads return `error_code="daily_note_not_found"` with `status_code=404` in the tool payload instead of silently creating a note.
+
 ## [v0.6.4] - 2026-05-12
 
 ### Features

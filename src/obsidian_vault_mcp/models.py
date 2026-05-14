@@ -258,6 +258,21 @@ class VaultAppendInput(BaseModel):
     )
 
 
+class VaultDailyNoteAppendInput(BaseModel):
+    """Append content to today's configured daily note."""
+
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+
+    content: str = Field(
+        ...,
+        description=(
+            "Text to append to today's daily note. If the note is missing, it is created "
+            "using VAULT_DAILY_NOTES_TEMPLATE before this content."
+        ),
+        max_length=MAX_CONTENT_SIZE,
+    )
+
+
 class VaultAnalyticsSummaryInput(BaseModel):
     """Build a compact analytics summary for a vault path."""
 

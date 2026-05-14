@@ -108,6 +108,9 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_batch_replace` | Run exact string replacements across multiple files in one call |
 | `vault_patch` | Replace one unique exact text occurrence in a file for a targeted edit |
 | `vault_append` | Append content to the end of a file, optionally creating it first |
+| `vault_daily_note_path` | Return today's configured daily-note path using the server's local date |
+| `vault_daily_note_read` | Read today's daily note; missing notes return `error_code="daily_note_not_found"` and `status_code=404` |
+| `vault_daily_note_append` | Append to today's daily note, creating it with `VAULT_DAILY_NOTES_TEMPLATE` if missing via the verified append path |
 | `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
 | `vault_semantic_search` | Optional semantic, keyword, or hybrid search backed by a persistent FAISS index (supports `path_prefix`, `filter_tags`, `search_mode`, `min_score`) |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
@@ -277,6 +280,9 @@ All configuration is via environment variables:
 | `VAULT_UPLOAD_URL_SECRET` | No | `VAULT_MCP_TOKEN` fallback | HMAC secret for short-lived direct upload URLs; set a dedicated secret in production |
 | `VAULT_UPLOAD_URL_TTL_SECONDS` | No | `900` | Default lifetime for direct upload URLs |
 | `VAULT_UPLOAD_URL_MAX_TTL_SECONDS` | No | `3600` | Maximum lifetime callers may request for direct upload URLs |
+| `VAULT_DAILY_NOTES_FOLDER` | No | (empty) | Folder for daily notes relative to the vault root |
+| `VAULT_DAILY_NOTES_FORMAT` | No | `%Y-%m-%d` | Server-local `strftime` format for daily-note filenames; `.md` is appended when no suffix is present |
+| `VAULT_DAILY_NOTES_TEMPLATE` | No | (empty) | Optional `strftime`-expanded text used when `vault_daily_note_append` creates a missing daily note |
 
 Example operator extensions:
 

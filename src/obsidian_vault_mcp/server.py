@@ -383,6 +383,11 @@ from .tools.write import (
     vault_write as _vault_write,
     vault_write_binary as _vault_write_binary,
 )
+from .tools.daily import (
+    vault_daily_note_append as _vault_daily_note_append,
+    vault_daily_note_path as _vault_daily_note_path,
+    vault_daily_note_read as _vault_daily_note_read,
+)
 from .tools.search import vault_search as _vault_search, vault_search_frontmatter as _vault_search_frontmatter
 from .tools.manage import (
     vault_delete as _vault_delete,
@@ -417,6 +422,7 @@ from .models import (
     VaultWriteBinaryInput,
     VaultBatchReadInput,
     VaultBatchFrontmatterUpdateInput,
+    VaultDailyNoteAppendInput,
     VaultSearchInput,
     VaultSearchFrontmatterInput,
     VaultSemanticSearchInput,
@@ -927,6 +933,70 @@ def vault_append(path: str, content: str, create_if_missing: bool = False) -> st
         path=inp.path,
         content_bytes=len(inp.content.encode("utf-8")),
         create_if_missing=inp.create_if_missing,
+    )
+
+
+@mcp.tool(
+    name="vault_daily_note_path",
+    description=(
+        "Return today's daily-note path using the server's local date. "
+        "Path is controlled by VAULT_DAILY_NOTES_FOLDER and VAULT_DAILY_NOTES_FORMAT."
+    ),
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_daily_note_path() -> str:
+    """Return today's configured daily-note path."""
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _run_logged_tool("vault_daily_note_path", _vault_daily_note_path)
+
+
+@mcp.tool(
+    name="vault_daily_note_read",
+    description=(
+        "Read today's daily note. If it does not exist, returns error_code='daily_note_not_found' "
+        "and status_code=404 instead of creating it."
+    ),
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_daily_note_read() -> str:
+    """Read today's configured daily note."""
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _run_logged_tool("vault_daily_note_read", _vault_daily_note_read)
+
+
+@mcp.tool(
+    name="vault_daily_note_append",
+    description=(
+        "Append text to today's daily note, creating it if missing. The path is computed from "
+        "VAULT_DAILY_NOTES_FOLDER and VAULT_DAILY_NOTES_FORMAT; new files are prefixed with "
+        "VAULT_DAILY_NOTES_TEMPLATE when configured. Uses the verified vault_append write path."
+    ),
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_daily_note_append(
+    content: Annotated[
+        str,
+        Field(
+            description=(
+                "Text to append to today's daily note. If the note is missing, it is created "
+                "using VAULT_DAILY_NOTES_TEMPLATE before this content."
+            )
+        ),
+    ],
+) -> str:
+    """Append content to today's configured daily note."""
+    inp = VaultDailyNoteAppendInput(content=content)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_daily_note_append",
+        lambda: _vault_daily_note_append(inp.content),
+        content_bytes=len(inp.content.encode("utf-8")),
     )
 
 
