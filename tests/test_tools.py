@@ -554,6 +554,65 @@ def test_vault_upload_init_honors_explicit_part_size(vault_dir, monkeypatch):
     assert result["total_parts"] == 7
 
 
+def test_deprecated_upload_tools_return_warning_flags(vault_dir, monkeypatch):
+    """Legacy MCP upload wrappers should keep working while returning migration hints."""
+    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+    content = b"abcd"
+    checksum = hashlib.sha256(content).hexdigest()
+
+    with _authenticated_tool_context():
+        init = json.loads(server.vault_upload_init("assets/deprecated.pdf", "application/pdf", total_size=4, part_size=4))
+        assert init["deprecated"] is True
+        assert "removed in v0.7.0" in init["deprecation_warning"]
+        assert "vault_request_upload_url" in init["deprecation_warning"]
+
+        upload_id = init["upload_id"]
+        part = json.loads(server.vault_upload_part(upload_id, 0, base64.b64encode(content).decode("ascii")))
+        status = json.loads(server.vault_upload_status(upload_id))
+        commit = json.loads(server.vault_upload_commit(upload_id, checksum))
+
+        init_abort = json.loads(server.vault_upload_init("assets/deprecated-abort.pdf", "application/pdf", total_size=4, part_size=4))
+        abort = json.loads(server.vault_upload_abort(init_abort["upload_id"]))
+
+    for payload in (part, status, commit):
+        assert payload["deprecated"] is True
+        assert "signed POST /upload/{id}" in payload["deprecation_warning"]
+
+    assert abort["deprecated"] is True
+    assert abort["aborted"] is True
+
+
+def test_deprecated_upload_tools_log_warning(vault_dir, monkeypatch, caplog):
+    """Deprecated upload tool use should be visible in logs with client family."""
+    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
+
+    with _authenticated_tool_context():
+        with caplog.at_level("WARNING", logger="obsidian_vault_mcp.server"):
+            result = json.loads(server.vault_upload_init("assets/warn.pdf", "application/pdf", total_size=4, part_size=4))
+
+    assert "error" not in result
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("Deprecated tool called: vault_upload_init" in message for message in messages)
+    assert any("client_family='pytest'" in message for message in messages)
+
+
+def test_deprecated_upload_tool_schemas_are_discoverable():
+    """MCP tool descriptions should clearly mark legacy upload tools as deprecated."""
+    from obsidian_vault_mcp.server import mcp
+
+    for name in (
+        "vault_upload_init",
+        "vault_upload_part",
+        "vault_upload_status",
+        "vault_upload_commit",
+        "vault_upload_abort",
+    ):
+        tool = mcp._tool_manager.get_tool(name)
+        assert tool is not None
+        assert tool.description.startswith("DEPRECATED")
+        assert "vault_request_upload_url" in tool.description
+
+
 def test_vault_import_url_downloads_and_writes_binary(vault_dir, monkeypatch):
     """URL imports should let the server download and atomically write an allowed binary."""
     content = b"%PDF fake content"
