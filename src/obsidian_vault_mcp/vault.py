@@ -1,12 +1,14 @@
 """Core filesystem operations for the Obsidian vault."""
 
 import fnmatch
+import hashlib
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -58,6 +60,14 @@ class _DateAwareEncoder(json.JSONEncoder):
 def vault_json_dumps(obj: object, **kwargs) -> str:
     """``json.dumps`` replacement that handles ``datetime.date`` values."""
     return json.dumps(obj, cls=_DateAwareEncoder, **kwargs)
+
+
+class OcrError(RuntimeError):
+    """OCR-specific failure with a stable client-facing error code."""
+
+    def __init__(self, error_code: str, message: str):
+        super().__init__(message)
+        self.error_code = error_code
 
 
 def _included_root_paths() -> list[Path]:
@@ -169,6 +179,115 @@ def _iso_timestamp(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
+def _iso_timestamp_seconds(ts: float) -> str:
+    """Convert a Unix timestamp to a second-precision UTC ISO string."""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _ocr_sidecar_suffix() -> str:
+    """Return the configured sidecar suffix."""
+    suffix = config.VAULT_PDF_OCR_SIDECAR_SUFFIX.strip()
+    return suffix or ".ocr.txt"
+
+
+def is_ocr_sidecar_name(name: str) -> bool:
+    """Return whether a filename looks like a generated PDF OCR sidecar."""
+    return name.endswith(_ocr_sidecar_suffix())
+
+
+def _pdf_source_fingerprint(path: Path) -> tuple[str, str]:
+    """Return (mtime_iso, first-64KB SHA-256 prefix) for OCR cache identity."""
+    stat = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        digest.update(handle.read(64 * 1024))
+    return _iso_timestamp_seconds(stat.st_mtime), digest.hexdigest()[:16]
+
+
+def _ocr_sidecar_path(path: Path) -> Path:
+    """Return the sidecar path for a PDF path."""
+    return path.with_name(f"{path.name}{_ocr_sidecar_suffix()}")
+
+
+def _ocr_lock_path(sidecar_path: Path) -> Path:
+    """Return a dot-prefixed lock path next to the sidecar."""
+    return sidecar_path.with_name(f".{sidecar_path.name}.lock")
+
+
+def _read_valid_ocr_sidecar(path: Path, sidecar_path: Path) -> str | None:
+    """Read a sidecar only if its metadata matches the current PDF."""
+    if not sidecar_path.is_file():
+        return None
+    try:
+        lines = sidecar_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    if len(lines) < 2:
+        return None
+
+    mtime_iso, digest = _pdf_source_fingerprint(path)
+    expected_source = f"# Source: {mtime_iso}:{digest}"
+    if lines[1].strip() != expected_source:
+        return None
+    return "\n".join(lines[2:]).lstrip("\n")
+
+
+def _write_ocr_sidecar(path: Path, sidecar_path: Path, content: str) -> int:
+    """Atomically write OCR sidecar content with sync-friendly dotfile temp naming."""
+    mtime_iso, digest = _pdf_source_fingerprint(path)
+    generated_at = datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = (
+        f"# OCR generated {generated_at}\n"
+        f"# Source: {mtime_iso}:{digest}\n\n"
+        f"{content.rstrip()}\n"
+    )
+    encoded = payload.encode("utf-8")
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=sidecar_path.parent,
+        prefix=f".{sidecar_path.name}.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
+        os.replace(tmp_path, sidecar_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    return len(encoded)
+
+
+class _OcrSidecarLock:
+    """Small cross-platform lock based on exclusive lock-file creation."""
+
+    def __init__(self, lock_path: Path, timeout_seconds: int):
+        self.lock_path = lock_path
+        self.timeout_seconds = max(1, timeout_seconds)
+
+    def __enter__(self):
+        deadline = time.monotonic() + self.timeout_seconds
+        while True:
+            try:
+                fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(f"{os.getpid()}\n")
+                return self
+            except FileExistsError:
+                if time.monotonic() >= deadline:
+                    raise OcrError("ocr_timeout", f"OCR sidecar lock timed out after {self.timeout_seconds} seconds")
+                time.sleep(0.05)
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            self.lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _reject_unsupported_binary(path: Path) -> None:
     """Reject known binary formats before attempting UTF-8 text reads."""
     suffix = path.suffix.lower()
@@ -226,6 +345,43 @@ def _read_pdf_file(path: Path) -> tuple[str, dict]:
     }
 
     if extracted_page_count == 0:
+        sidecar_path = _ocr_sidecar_path(path)
+        if config.VAULT_PDF_OCR_ENABLED and config.VAULT_PDF_OCR_CMD and config.VAULT_PDF_OCR_SIDECAR_ENABLED:
+            cached_content = _read_valid_ocr_sidecar(path, sidecar_path)
+            if cached_content is not None:
+                metadata["content_source"] = "pdf_ocr_sidecar"
+                metadata["ocr"] = {
+                    "applied": True,
+                    "engine": "sidecar_cache",
+                    "sidecar_path": _relative_to_vault_root(sidecar_path),
+                    "cache_hit": True,
+                }
+                return cached_content, metadata
+
+            lock_path = _ocr_lock_path(sidecar_path)
+            with _OcrSidecarLock(lock_path, config.VAULT_PDF_OCR_TIMEOUT * 2):
+                cached_content = _read_valid_ocr_sidecar(path, sidecar_path)
+                if cached_content is not None:
+                    metadata["content_source"] = "pdf_ocr_sidecar"
+                    metadata["ocr"] = {
+                        "applied": True,
+                        "engine": "sidecar_cache",
+                        "sidecar_path": _relative_to_vault_root(sidecar_path),
+                        "cache_hit": True,
+                    }
+                    return cached_content, metadata
+
+                ocr_metadata = _run_pdf_ocr(path)
+                if ocr_metadata is not None:
+                    metadata["ocr"] = {k: v for k, v in ocr_metadata.items() if k != "content"}
+                    if ocr_metadata.get("applied") and ocr_metadata.get("content"):
+                        bytes_written = _write_ocr_sidecar(path, sidecar_path, ocr_metadata["content"])
+                        metadata["ocr"]["sidecar_path"] = _relative_to_vault_root(sidecar_path)
+                        metadata["ocr"]["sidecar_bytes"] = bytes_written
+                        metadata["ocr"]["cache_hit"] = False
+                        metadata["content_source"] = "pdf_ocr_sidecar"
+                        return ocr_metadata["content"], metadata
+
         ocr_metadata = _run_pdf_ocr(path)
         if ocr_metadata is not None:
             metadata["ocr"] = {k: v for k, v in ocr_metadata.items() if k != "content"}
@@ -264,19 +420,9 @@ def _run_pdf_ocr(path: Path) -> dict | None:
             env=env,
         )
     except FileNotFoundError:
-        return {
-            "applied": False,
-            "engine": "external_command",
-            "languages": config.VAULT_PDF_OCR_LANGUAGES.split("+"),
-            "error": f"OCR command not found: {argv[0]}",
-        }
+        raise OcrError("ocr_tool_unavailable", f"OCR command not found: {argv[0]}")
     except subprocess.TimeoutExpired:
-        return {
-            "applied": False,
-            "engine": "external_command",
-            "languages": config.VAULT_PDF_OCR_LANGUAGES.split("+"),
-            "error": f"OCR command timed out after {config.VAULT_PDF_OCR_TIMEOUT} seconds",
-        }
+        raise OcrError("ocr_timeout", f"OCR command timed out after {config.VAULT_PDF_OCR_TIMEOUT} seconds")
 
     content = result.stdout.strip()
     metadata = {
@@ -289,9 +435,12 @@ def _run_pdf_ocr(path: Path) -> dict | None:
     if result.stderr.strip():
         metadata["stderr"] = result.stderr.strip()[:500]
     if result.returncode != 0:
-        metadata["error"] = f"OCR command exited with status {result.returncode}"
+        message = f"OCR command exited with status {result.returncode}"
+        if metadata.get("stderr"):
+            message = f"{message}: {metadata['stderr']}"
+        raise OcrError("ocr_failed", message)
     if not content:
-        metadata["error"] = metadata.get("error", "OCR command returned no text")
+        raise OcrError("ocr_failed", "OCR command returned no text")
     metadata["content"] = content
     return metadata
 
@@ -453,6 +602,7 @@ def list_directory(
     include_files: bool = True,
     include_dirs: bool = True,
     pattern: str | None = None,
+    include_ocr_sidecars: bool = False,
 ) -> list[dict]:
     """List directory contents recursively up to *depth* levels.
 
@@ -518,6 +668,8 @@ def list_directory(
                 continue
 
             if not is_dir and not include_files:
+                continue
+            if not is_dir and not include_ocr_sidecars and is_ocr_sidecar_name(entry.name):
                 continue
 
             # Apply glob pattern filter

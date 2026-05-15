@@ -120,7 +120,7 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
 | `vault_semantic_search` | Optional semantic, keyword, or hybrid search backed by a persistent FAISS index (supports `path_prefix`, `filter_tags`, `search_mode`, `min_score`) |
 | `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
-| `vault_list` | List directory contents with recursion depth, glob filtering, and file/dir toggles |
+| `vault_list` | List directory contents with recursion depth, glob filtering, file/dir toggles, and explicit OCR-sidecar visibility |
 | `vault_tree` | Return a compact nested JSON tree of folders and files for quick orientation |
 | `vault_reindex` | Rebuild the semantic cache, but keep it disabled by default in live MCP operation because MCP-triggered refreshes can be long-running |
 | `vault_move` | Move or rename a file or directory within the vault |
@@ -177,7 +177,7 @@ python -m pip install -e .[semantic-sentence]
 
 The server starts on port 8420 by default. It serves MCP over Streamable HTTP at `/mcp/`.
 
-`vault_read` supports normal text/markdown files and also extracts text from `.pdf` files via `pypdf`. If a PDF has no text layer, an optional external OCR fallback can be enabled with `VAULT_PDF_OCR_ENABLED=true` plus `VAULT_PDF_OCR_CMD`. Other known binary formats are still rejected with a clear error instead of a misleading UTF-8 decode failure.
+`vault_read` supports normal text/markdown files and also extracts text from `.pdf` files via `pypdf`. If a PDF has no text layer, an optional external OCR fallback can be enabled with `VAULT_PDF_OCR_ENABLED=true` plus `VAULT_PDF_OCR_CMD`. When sidecars are enabled, successful OCR output is cached next to the PDF as `*.pdf.ocr.txt` with source metadata, so unchanged scan PDFs do not trigger OCR repeatedly. Other known binary formats are still rejected with a clear error instead of a misleading UTF-8 decode failure.
 
 For binary ingestion there are now four practical paths:
 
@@ -243,6 +243,8 @@ All configuration is via environment variables:
 | `VAULT_PDF_OCR_CMD` | No | (empty) | External command that prints OCR text to stdout; `{path}` placeholder is optional |
 | `VAULT_PDF_OCR_TIMEOUT` | No | `120` | Timeout in seconds for the external OCR command |
 | `VAULT_PDF_OCR_LANGUAGES` | No | `deu+eng` | Language hint passed to the OCR command via env |
+| `VAULT_PDF_OCR_SIDECAR_ENABLED` | No | same as `VAULT_PDF_OCR_ENABLED` | Cache successful OCR output next to PDFs as sidecar text files |
+| `VAULT_PDF_OCR_SIDECAR_SUFFIX` | No | `.ocr.txt` | Suffix for generated OCR sidecar files |
 
 ### Health and Post-Write Automation
 

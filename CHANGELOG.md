@@ -5,6 +5,23 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.6.10] - 2026-05-15
+
+### Features
+- Add persistent OCR sidecars for image-only PDFs: successful external OCR results are cached next to the source PDF as `*.pdf.ocr.txt` with source mtime and SHA-256 metadata.
+- Add `VAULT_PDF_OCR_SIDECAR_ENABLED` and `VAULT_PDF_OCR_SIDECAR_SUFFIX` to control sidecar generation and naming.
+- Add `include_ocr_sidecars` to `vault_list`; generated OCR sidecars stay hidden from default listings but remain available for search and explicit listing.
+
+### Reliability / Operator UX
+- Reuse valid OCR sidecars on later reads, avoiding repeated OCR process launches for unchanged scan PDFs.
+- Invalidate OCR sidecars automatically when the source PDF mtime or first-64KB SHA-256 fingerprint changes.
+- Guard concurrent first reads with a dotfile lock so only one OCR command runs per uncached PDF.
+- Return stable OCR error codes (`ocr_tool_unavailable`, `ocr_timeout`, `ocr_failed`) without creating partial sidecars on failure.
+
+### Docs / Tests
+- Add regression coverage for sidecar validity checks, cache hits, invalidation, concurrency locking, disabled-sidecar behavior, OCR failure mapping, and listing visibility.
+- Document v0.6.10 OCR sidecar smoke scope for live validation.
+
 ## [v0.6.9] - 2026-05-15
 
 ### Deprecated

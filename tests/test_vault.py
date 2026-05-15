@@ -1,5 +1,8 @@
 """Tests for vault.py -- path resolution, file operations, and safety checks."""
 
+import subprocess
+import threading
+
 import pytest
 from pathlib import Path
 
@@ -17,6 +20,27 @@ from obsidian_vault_mcp.vault import (
     write_file_atomic,
 )
 from .conftest import build_simple_pdf_bytes
+
+
+class _ImageOnlyPage:
+    def extract_text(self):
+        return ""
+
+
+class _ImageOnlyReader:
+    def __init__(self, _path):
+        self.is_encrypted = False
+        self.pages = [_ImageOnlyPage()]
+
+
+def _enable_ocr_sidecar(monkeypatch, command: str = "fake-ocr --stdout") -> None:
+    monkeypatch.setattr("pypdf.PdfReader", _ImageOnlyReader)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_ENABLED", True)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_CMD", command)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_TIMEOUT", 10)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_LANGUAGES", "deu+eng")
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_SIDECAR_ENABLED", True)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_SIDECAR_SUFFIX", ".ocr.txt")
 
 
 def test_resolve_valid_path(vault_dir):
@@ -94,6 +118,8 @@ def test_read_file_uses_external_ocr_fallback_for_image_only_pdf(vault_dir, monk
     monkeypatch.setattr(config, "VAULT_PDF_OCR_CMD", "fake-ocr --stdout")
     monkeypatch.setattr(config, "VAULT_PDF_OCR_TIMEOUT", 10)
     monkeypatch.setattr(config, "VAULT_PDF_OCR_LANGUAGES", "deu+eng")
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_SIDECAR_ENABLED", True)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_SIDECAR_SUFFIX", ".ocr.txt")
     monkeypatch.setattr(
         vault_module.subprocess,
         "run",
@@ -107,11 +133,169 @@ def test_read_file_uses_external_ocr_fallback_for_image_only_pdf(vault_dir, monk
     content, metadata = read_file("scan.pdf")
 
     assert content == "OCR text from scan"
-    assert metadata["content_source"] == "pdf_ocr_fallback"
+    assert metadata["content_source"] == "pdf_ocr_sidecar"
     assert metadata["extractable_text"] is False
     assert metadata["ocr"]["applied"] is True
     assert metadata["ocr"]["command"] == "fake-ocr"
     assert metadata["ocr"]["languages"] == ["deu", "eng"]
+    assert metadata["ocr"]["sidecar_path"] == "scan.pdf.ocr.txt"
+    assert (vault_dir / "scan.pdf.ocr.txt").exists()
+
+
+def test_pdf_ocr_sidecar_cache_hit_skips_second_ocr_run(vault_dir, monkeypatch):
+    """A valid OCR sidecar should be reused without invoking OCR again."""
+    (vault_dir / "scan.pdf").write_bytes(build_simple_pdf_bytes("ignored"))
+    _enable_ocr_sidecar(monkeypatch)
+    calls = []
+
+    def _run(*args, **kwargs):
+        calls.append(args)
+        return type("Completed", (), {"returncode": 0, "stdout": "Cached OCR text\n", "stderr": ""})()
+
+    monkeypatch.setattr(vault_module.subprocess, "run", _run)
+
+    first_content, first_metadata = read_file("scan.pdf")
+    second_content, second_metadata = read_file("scan.pdf")
+
+    assert first_content == "Cached OCR text"
+    assert second_content == "Cached OCR text"
+    assert len(calls) == 1
+    assert first_metadata["ocr"]["cache_hit"] is False
+    assert second_metadata["ocr"]["cache_hit"] is True
+    assert "# Source: " in (vault_dir / "scan.pdf.ocr.txt").read_text(encoding="utf-8")
+
+
+def test_pdf_ocr_sidecar_invalidates_when_pdf_changes(vault_dir, monkeypatch):
+    """Changing the source PDF should invalidate and rewrite the sidecar."""
+    pdf_file = vault_dir / "scan.pdf"
+    pdf_file.write_bytes(build_simple_pdf_bytes("ignored"))
+    _enable_ocr_sidecar(monkeypatch)
+    outputs = iter(["First OCR text\n", "Second OCR text\n"])
+
+    monkeypatch.setattr(
+        vault_module.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Completed", (), {"returncode": 0, "stdout": next(outputs), "stderr": ""})(),
+    )
+
+    first_content, _ = read_file("scan.pdf")
+    pdf_file.write_bytes(build_simple_pdf_bytes("changed"))
+    second_content, second_metadata = read_file("scan.pdf")
+
+    assert first_content == "First OCR text"
+    assert second_content == "Second OCR text"
+    assert second_metadata["ocr"]["cache_hit"] is False
+
+
+def test_pdf_ocr_sidecar_disabled_preserves_on_demand_behavior(vault_dir, monkeypatch):
+    """Operators can disable sidecars and keep the older OCR-on-every-read behavior."""
+    (vault_dir / "scan.pdf").write_bytes(build_simple_pdf_bytes("ignored"))
+    _enable_ocr_sidecar(monkeypatch)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_SIDECAR_ENABLED", False)
+    calls = []
+
+    def _run(*args, **kwargs):
+        calls.append(args)
+        return type("Completed", (), {"returncode": 0, "stdout": "OCR text\n", "stderr": ""})()
+
+    monkeypatch.setattr(vault_module.subprocess, "run", _run)
+
+    read_file("scan.pdf")
+    read_file("scan.pdf")
+
+    assert len(calls) == 2
+    assert not (vault_dir / "scan.pdf.ocr.txt").exists()
+
+
+def test_pdf_ocr_missing_binary_raises_stable_error(vault_dir, monkeypatch):
+    """A missing OCR binary should not create a sidecar and should expose a stable error code."""
+    (vault_dir / "scan.pdf").write_bytes(build_simple_pdf_bytes("ignored"))
+    _enable_ocr_sidecar(monkeypatch)
+
+    def _missing(*args, **kwargs):
+        raise FileNotFoundError("fake-ocr")
+
+    monkeypatch.setattr(vault_module.subprocess, "run", _missing)
+
+    with pytest.raises(vault_module.OcrError) as exc:
+        read_file("scan.pdf")
+
+    assert exc.value.error_code == "ocr_tool_unavailable"
+    assert not (vault_dir / "scan.pdf.ocr.txt").exists()
+
+
+def test_pdf_ocr_timeout_raises_stable_error(vault_dir, monkeypatch):
+    """OCR timeout should be reported with a stable error code."""
+    (vault_dir / "scan.pdf").write_bytes(build_simple_pdf_bytes("ignored"))
+    _enable_ocr_sidecar(monkeypatch)
+
+    def _timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["fake-ocr"], timeout=10)
+
+    monkeypatch.setattr(vault_module.subprocess, "run", _timeout)
+
+    with pytest.raises(vault_module.OcrError) as exc:
+        read_file("scan.pdf")
+
+    assert exc.value.error_code == "ocr_timeout"
+    assert not (vault_dir / "scan.pdf.ocr.txt").exists()
+
+
+def test_pdf_ocr_failure_raises_stable_error(vault_dir, monkeypatch):
+    """Non-zero OCR exit should be reported as ocr_failed."""
+    (vault_dir / "scan.pdf").write_bytes(build_simple_pdf_bytes("ignored"))
+    _enable_ocr_sidecar(monkeypatch)
+    monkeypatch.setattr(
+        vault_module.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Completed", (), {"returncode": 2, "stdout": "", "stderr": "boom"})(),
+    )
+
+    with pytest.raises(vault_module.OcrError) as exc:
+        read_file("scan.pdf")
+
+    assert exc.value.error_code == "ocr_failed"
+    assert "boom" in str(exc.value)
+    assert not (vault_dir / "scan.pdf.ocr.txt").exists()
+
+
+def test_pdf_ocr_sidecar_lock_prevents_duplicate_ocr_runs(vault_dir, monkeypatch):
+    """Concurrent reads of the same uncached scan should only invoke OCR once."""
+    (vault_dir / "scan.pdf").write_bytes(build_simple_pdf_bytes("ignored"))
+    _enable_ocr_sidecar(monkeypatch)
+    calls = []
+    barrier = threading.Barrier(2)
+
+    def _run(*args, **kwargs):
+        calls.append(args)
+        return type("Completed", (), {"returncode": 0, "stdout": "Locked OCR text\n", "stderr": ""})()
+
+    monkeypatch.setattr(vault_module.subprocess, "run", _run)
+    results = []
+
+    def _read():
+        barrier.wait(timeout=5)
+        results.append(read_file("scan.pdf")[0])
+
+    threads = [threading.Thread(target=_read), threading.Thread(target=_read)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert results == ["Locked OCR text", "Locked OCR text"]
+    assert len(calls) == 1
+
+
+def test_list_directory_hides_ocr_sidecars_by_default(vault_dir):
+    """OCR sidecars are searchable files, but default directory listings hide them."""
+    (vault_dir / "scan.pdf.ocr.txt").write_text("OCR text\n", encoding="utf-8")
+
+    default_items = list_directory("", depth=1)
+    explicit_items = list_directory("", depth=1, include_ocr_sidecars=True)
+
+    assert "scan.pdf.ocr.txt" not in {item["name"] for item in default_items}
+    assert "scan.pdf.ocr.txt" in {item["name"] for item in explicit_items}
 
 
 def test_write_atomic_new_file(vault_dir):

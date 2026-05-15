@@ -1513,7 +1513,7 @@ def vault_semantic_search(
 
 @mcp.tool(
     name="vault_list",
-    description="List directory contents in the vault. Supports recursion depth, file/dir filtering, and glob patterns. Excludes .obsidian, .trash, .git directories.",
+    description="List directory contents in the vault. Supports recursion depth, file/dir filtering, glob patterns, and include_ocr_sidecars for generated PDF OCR sidecars. Excludes .obsidian, .trash, .git directories.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
 def vault_list(
@@ -1522,20 +1522,36 @@ def vault_list(
     include_files: bool = True,
     include_dirs: bool = True,
     pattern: str | None = None,
+    include_ocr_sidecars: bool = False,
 ) -> str:
     """List vault directory contents."""
-    inp = VaultListInput(path=path, depth=depth, include_files=include_files, include_dirs=include_dirs, pattern=pattern)
+    inp = VaultListInput(
+        path=path,
+        depth=depth,
+        include_files=include_files,
+        include_dirs=include_dirs,
+        pattern=pattern,
+        include_ocr_sidecars=include_ocr_sidecars,
+    )
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
         return limited
     return _run_logged_tool(
         "vault_list",
-        lambda: _vault_list(inp.path, inp.depth, inp.include_files, inp.include_dirs, inp.pattern),
+        lambda: _vault_list(
+            inp.path,
+            inp.depth,
+            inp.include_files,
+            inp.include_dirs,
+            inp.pattern,
+            inp.include_ocr_sidecars,
+        ),
         path=inp.path,
         depth=inp.depth,
         include_files=inp.include_files,
         include_dirs=inp.include_dirs,
         pattern=inp.pattern,
+        include_ocr_sidecars=inp.include_ocr_sidecars,
     )
 
 

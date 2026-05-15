@@ -454,6 +454,10 @@ class VaultListInput(BaseModel):
         description="Optional glob pattern to filter results (e.g. '*.md')",
         max_length=100,
     )
+    include_ocr_sidecars: bool = Field(
+        default=False,
+        description="Include generated PDF OCR sidecar files such as '*.pdf.ocr.txt'",
+    )
 
 
 class VaultMoveInput(BaseModel):

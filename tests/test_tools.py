@@ -14,6 +14,7 @@ from starlette.testclient import TestClient
 from .conftest import build_simple_pdf_bytes
 from obsidian_vault_mcp import config
 import obsidian_vault_mcp.server as server
+import obsidian_vault_mcp.vault as vault_module
 from obsidian_vault_mcp import audit, hooks
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
 from obsidian_vault_mcp.tools.daily import vault_daily_note_append, vault_daily_note_path, vault_daily_note_read
@@ -1321,6 +1322,32 @@ def test_vault_read_rejects_other_binary_file_types(vault_dir):
     )
 
 
+def test_vault_read_reports_ocr_error_code(vault_dir, monkeypatch):
+    """OCR failures should be visible as stable tool error codes, not generic 500s."""
+    (vault_dir / "scan.pdf").write_bytes(build_simple_pdf_bytes("ignored"))
+
+    class _ImageOnlyPage:
+        def extract_text(self):
+            return ""
+
+    class _ImageOnlyReader:
+        def __init__(self, _path):
+            self.is_encrypted = False
+            self.pages = [_ImageOnlyPage()]
+
+    monkeypatch.setattr("pypdf.PdfReader", _ImageOnlyReader)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_ENABLED", True)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_CMD", "missing-ocr")
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_SIDECAR_ENABLED", True)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_SIDECAR_SUFFIX", ".ocr.txt")
+    monkeypatch.setattr(vault_module.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+
+    result = json.loads(vault_read("scan.pdf"))
+
+    assert result["error_code"] == "ocr_tool_unavailable"
+    assert result["path"] == "scan.pdf"
+
+
 def test_vault_list_returns_items(vault_dir):
     """vault_list returns directory contents."""
     result = json.loads(vault_list(""))
@@ -1328,6 +1355,26 @@ def test_vault_list_returns_items(vault_dir):
     names = [item["name"] for item in result["items"]]
     assert "test-note.md" in names
     assert ".obsidian" not in names
+
+
+def test_vault_list_can_include_ocr_sidecars(vault_dir):
+    """Generated OCR sidecars stay hidden unless explicitly requested."""
+    (vault_dir / "scan.pdf.ocr.txt").write_text("OCR text\n", encoding="utf-8")
+
+    hidden = json.loads(vault_list(""))
+    visible = json.loads(vault_list("", include_ocr_sidecars=True))
+
+    assert "scan.pdf.ocr.txt" not in {item["name"] for item in hidden["items"]}
+    assert "scan.pdf.ocr.txt" in {item["name"] for item in visible["items"]}
+
+
+def test_vault_search_finds_ocr_sidecars_by_default(vault_dir):
+    """Default text search includes generated OCR sidecars even though list hides them."""
+    (vault_dir / "scan.pdf.ocr.txt").write_text("Unique OCR Needle\n", encoding="utf-8")
+
+    result = json.loads(vault_search("Unique OCR Needle"))
+
+    assert any(item["path"] == "scan.pdf.ocr.txt" for item in result["results"])
 
 
 def test_vault_tree_returns_nested_structure(vault_dir):

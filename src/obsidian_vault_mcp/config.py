@@ -77,6 +77,8 @@ VAULT_PDF_OCR_ENABLED = _env_bool("VAULT_PDF_OCR_ENABLED", False)
 VAULT_PDF_OCR_CMD = os.environ.get("VAULT_PDF_OCR_CMD", "").strip()
 VAULT_PDF_OCR_TIMEOUT = _env_int("VAULT_PDF_OCR_TIMEOUT", 120)
 VAULT_PDF_OCR_LANGUAGES = os.environ.get("VAULT_PDF_OCR_LANGUAGES", "deu+eng").strip()
+VAULT_PDF_OCR_SIDECAR_ENABLED = _env_bool("VAULT_PDF_OCR_SIDECAR_ENABLED", VAULT_PDF_OCR_ENABLED)
+VAULT_PDF_OCR_SIDECAR_SUFFIX = os.environ.get("VAULT_PDF_OCR_SIDECAR_SUFFIX", ".ocr.txt").strip() or ".ocr.txt"
 
 # OAuth 2.0 client credentials (for Claude app integration)
 VAULT_OAUTH_CLIENT_ID = os.environ.get("VAULT_OAUTH_CLIENT_ID", "vault-mcp-client")
