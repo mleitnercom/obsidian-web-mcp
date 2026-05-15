@@ -38,8 +38,6 @@ DEFAULT_ALLOWED_BINARY_MEDIA_TYPES = {
     "application/pdf": {".pdf"},
 }
 
-MAX_BINARY_CHUNK_SIZE = 256 * 1024
-DEFAULT_BINARY_PART_SIZE = 16 * 1024
 UPLOAD_STAGING_DIRNAME = "upload-staging"
 UPLOAD_EXPIRY_SECONDS = 24 * 60 * 60
 DIRECT_UPLOAD_TYPE = "direct"
@@ -149,14 +147,6 @@ def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _validate_sha256_hex(value: str, field_name: str = "expected_sha256") -> str:
     """Validate and normalize a SHA-256 hex digest."""
     normalized = value.strip().lower()
@@ -229,35 +219,6 @@ def _load_upload(upload_id: str) -> tuple[dict, Path, Path, Path]:
         raise ValueError(f"Unknown upload_id: {upload_id}")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     return metadata, upload_dir, metadata_path, parts_dir
-
-
-def _part_path(parts_dir: Path, part_number: int) -> Path:
-    return parts_dir / f"{part_number:06d}.part"
-
-
-def _upload_status_payload(metadata: dict, parts_dir: Path) -> dict:
-    total_parts = metadata["total_parts"]
-    received_parts = []
-    bytes_received = 0
-    for part_number in range(total_parts):
-        path = _part_path(parts_dir, part_number)
-        if path.exists():
-            received_parts.append(part_number)
-            bytes_received += path.stat().st_size
-    missing_parts = [part for part in range(total_parts) if part not in set(received_parts)]
-    return {
-        "upload_id": metadata["upload_id"],
-        "path": metadata["path"],
-        "media_type": metadata["media_type"],
-        "total_size": metadata["total_size"],
-        "part_size": metadata["part_size"],
-        "total_parts": total_parts,
-        "received_parts": received_parts,
-        "missing_parts": missing_parts,
-        "bytes_received": bytes_received,
-        "complete": not missing_parts,
-        "expires_in_seconds": max(0, int(metadata["created_at"] + UPLOAD_EXPIRY_SECONDS - time.time())),
-    }
 
 
 def vault_request_upload_url(
@@ -568,205 +529,6 @@ def vault_write_binary(
     except Exception as e:
         logger.error(f"vault_write_binary error for {path}: {e}")
         return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type})
-
-
-def vault_upload_init(
-    path: str,
-    media_type: str,
-    total_size: int,
-    part_size: int | None = None,
-    overwrite: bool = False,
-    create_dirs: bool = True,
-) -> str:
-    """Initialize a resumable binary upload session."""
-    try:
-        _cleanup_stale_uploads()
-        resolved = _validate_binary_target(path, media_type)
-        if total_size <= 0:
-            return vault_json_dumps({"error": "total_size must be greater than 0", "path": path})
-        if total_size > config.MAX_BINARY_SIZE:
-            return vault_json_dumps(
-                {
-                    "error": f"Content size {total_size} bytes exceeds limit of {config.MAX_BINARY_SIZE} bytes",
-                    "path": path,
-                    "media_type": media_type,
-                }
-            )
-        if resolved.exists() and not overwrite:
-            return vault_json_dumps(
-                {
-                    "error": f"File already exists: {path}. Set overwrite=true to replace it.",
-                    "path": path,
-                    "media_type": media_type,
-                }
-            )
-        chosen_part_size = min(part_size or DEFAULT_BINARY_PART_SIZE, total_size)
-        if chosen_part_size <= 0 or chosen_part_size > config.MAX_UPLOAD_PART_SIZE:
-            return vault_json_dumps(
-                {
-                    "error": f"part_size must be between 1 and {config.MAX_UPLOAD_PART_SIZE} bytes",
-                    "path": path,
-                    "media_type": media_type,
-                }
-            )
-        upload_id = str(uuid.uuid4())
-        upload_dir, metadata_path, parts_dir = _upload_paths(upload_id)
-        parts_dir.mkdir(parents=True, exist_ok=False)
-        metadata = {
-            "upload_id": upload_id,
-            "path": path,
-            "media_type": media_type,
-            "total_size": total_size,
-            "part_size": chosen_part_size,
-            "total_parts": (total_size + chosen_part_size - 1) // chosen_part_size,
-            "overwrite": overwrite,
-            "create_dirs": create_dirs,
-            "created_at": time.time(),
-        }
-        _write_json_atomic(metadata_path, metadata)
-        return vault_json_dumps(_upload_status_payload(metadata, parts_dir))
-    except ValueError as e:
-        return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type})
-    except Exception as e:
-        logger.error(f"vault_upload_init error for {path}: {e}")
-        return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type})
-
-
-def vault_upload_part(upload_id: str, part_number: int, data: str, part_sha256: str | None = None) -> str:
-    """Store one idempotent part for a resumable binary upload."""
-    try:
-        _cleanup_stale_uploads()
-        metadata, _upload_dir, _metadata_path, parts_dir = _load_upload(upload_id)
-        total_parts = metadata["total_parts"]
-        if part_number < 0 or part_number >= total_parts:
-            return vault_json_dumps({"error": f"part_number must be between 0 and {total_parts - 1}", "upload_id": upload_id})
-        decoded = _decode_base64(data)
-        if len(decoded) > config.MAX_UPLOAD_PART_SIZE:
-            return vault_json_dumps(
-                {
-                    "error": f"Part size {len(decoded)} bytes exceeds limit of {config.MAX_UPLOAD_PART_SIZE} bytes",
-                    "upload_id": upload_id,
-                    "part_number": part_number,
-                }
-            )
-        if part_sha256 and _sha256_bytes(decoded).lower() != part_sha256.lower():
-            return vault_json_dumps({"error": "Part checksum mismatch", "upload_id": upload_id, "part_number": part_number})
-        expected_size = metadata["part_size"]
-        if part_number < total_parts - 1 and len(decoded) != expected_size:
-            return vault_json_dumps(
-                {
-                    "error": f"Non-final parts must be exactly {expected_size} bytes",
-                    "upload_id": upload_id,
-                    "part_number": part_number,
-                }
-            )
-        final_expected = metadata["total_size"] - expected_size * (total_parts - 1)
-        if part_number == total_parts - 1 and len(decoded) != final_expected:
-            return vault_json_dumps(
-                {
-                    "error": f"Final part must be exactly {final_expected} bytes",
-                    "upload_id": upload_id,
-                    "part_number": part_number,
-                }
-            )
-
-        part_path = _part_path(parts_dir, part_number)
-        if part_path.exists():
-            existing_checksum = _sha256_file(part_path)
-            new_checksum = _sha256_bytes(decoded)
-            if existing_checksum == new_checksum:
-                status = _upload_status_payload(metadata, parts_dir)
-                status.update({"part_number": part_number, "stored": False, "duplicate": True})
-                return vault_json_dumps(status)
-            return vault_json_dumps({"error": "Part already exists with different checksum", "upload_id": upload_id, "part_number": part_number})
-
-        tmp_path = part_path.with_suffix(".tmp")
-        tmp_path.write_bytes(decoded)
-        tmp_path.replace(part_path)
-        status = _upload_status_payload(metadata, parts_dir)
-        status.update({"part_number": part_number, "stored": True, "duplicate": False})
-        return vault_json_dumps(status)
-    except ValueError as e:
-        return vault_json_dumps({"error": str(e), "upload_id": upload_id})
-    except Exception as e:
-        logger.error(f"vault_upload_part error for {upload_id}: {e}")
-        return vault_json_dumps({"error": str(e), "upload_id": upload_id})
-
-
-def vault_upload_status(upload_id: str) -> str:
-    """Return resumable upload progress and missing parts."""
-    try:
-        metadata, _upload_dir, _metadata_path, parts_dir = _load_upload(upload_id)
-        return vault_json_dumps(_upload_status_payload(metadata, parts_dir))
-    except ValueError as e:
-        return vault_json_dumps({"error": str(e), "upload_id": upload_id})
-    except Exception as e:
-        logger.error(f"vault_upload_status error for {upload_id}: {e}")
-        return vault_json_dumps({"error": str(e), "upload_id": upload_id})
-
-
-def vault_upload_commit(upload_id: str, expected_sha256: str) -> str:
-    """Verify and atomically commit a resumable binary upload."""
-    try:
-        metadata, upload_dir, _metadata_path, parts_dir = _load_upload(upload_id)
-        status = _upload_status_payload(metadata, parts_dir)
-        if not status["complete"]:
-            return vault_json_dumps({"error": "Upload is incomplete", **status})
-        if len(expected_sha256) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in expected_sha256):
-            return vault_json_dumps({"error": "expected_sha256 must be a 64-character hex SHA-256 digest", "upload_id": upload_id})
-
-        assembled = bytearray()
-        for part_number in range(metadata["total_parts"]):
-            assembled.extend(_part_path(parts_dir, part_number).read_bytes())
-        content = bytes(assembled)
-        if len(content) != metadata["total_size"]:
-            return vault_json_dumps({"error": "Assembled upload size mismatch", "upload_id": upload_id, "size": len(content)})
-        actual_sha256 = _sha256_bytes(content)
-        if actual_sha256.lower() != expected_sha256.lower():
-            return vault_json_dumps(
-                {
-                    "error": "Upload checksum mismatch",
-                    "upload_id": upload_id,
-                    "expected_sha256": expected_sha256,
-                    "actual_sha256": actual_sha256,
-                }
-            )
-        is_new, size = write_bytes_atomic(
-            metadata["path"],
-            content,
-            create_dirs=metadata["create_dirs"],
-            overwrite=metadata["overwrite"],
-        )
-        shutil.rmtree(upload_dir)
-        fire_post_write("created" if is_new else "updated", [metadata["path"]])
-        return vault_json_dumps(
-            {
-                "upload_id": upload_id,
-                "path": metadata["path"],
-                "created": is_new,
-                "size": size,
-                "media_type": metadata["media_type"],
-                "sha256": actual_sha256,
-            }
-        )
-    except ValueError as e:
-        return vault_json_dumps({"error": str(e), "upload_id": upload_id})
-    except Exception as e:
-        logger.error(f"vault_upload_commit error for {upload_id}: {e}")
-        return vault_json_dumps({"error": str(e), "upload_id": upload_id})
-
-
-def vault_upload_abort(upload_id: str) -> str:
-    """Abort and remove a resumable upload session."""
-    try:
-        metadata, upload_dir, _metadata_path, _parts_dir = _load_upload(upload_id)
-        shutil.rmtree(upload_dir)
-        return vault_json_dumps({"upload_id": upload_id, "path": metadata["path"], "aborted": True})
-    except ValueError as e:
-        return vault_json_dumps({"error": str(e), "upload_id": upload_id})
-    except Exception as e:
-        logger.error(f"vault_upload_abort error for {upload_id}: {e}")
-        return vault_json_dumps({"error": str(e), "upload_id": upload_id})
 
 
 def vault_import_url(

@@ -1,44 +1,37 @@
-# Headless Linux (Proxmox) Deployment Example
+# Headless Linux on Proxmox
 
-This guide shows one proven pattern for running Obsidian + obsidian-web-mcp on a headless Linux VM.
-It is designed for remote Claude/Cowork usage via HTTPS.
+Back to [README](../../README.md).
 
-This is an example architecture, not a required setup.
+This is a sanitized deployment pattern for running Obsidian, Obsidian Sync, and `obsidian-web-mcp` on a headless Linux VM.
 
-## Architecture
+No real hostnames, vault paths, tokens, or API keys are included here. Replace placeholders before use.
 
-```text
-Obsidian Sync <-> Linux VM (Proxmox)
-                 |- Obsidian (headless via Xvfb)
-                 `- obsidian-web-mcp (:8420)
-                         |
-                    Cloudflare Tunnel
-                         |
-                 https://vault-mcp.example.com
-                         |
-                     Claude/Cowork
-```
+## VM Baseline
 
-## 1) VM Baseline
-
-- Ubuntu 24.04 LTS Server
-- 2 vCPU, 2-3 GB RAM, 20 GB disk
-- Correct timezone and up-to-date packages
+| Parameter | Example |
+|---|---|
+| OS | Ubuntu 24.04 LTS Server |
+| CPU | 2 vCPU |
+| RAM | 3-4 GB recommended |
+| Disk | 20 GB+ |
+| Network | bridged DHCP or static |
 
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo timedatectl set-timezone Europe/Vienna
 ```
 
-## 2) Install Xvfb (for headless Obsidian)
+## Xvfb
+
+Obsidian/Electron needs an X display even when running headless.
 
 ```bash
 sudo apt install -y xvfb libgtk-3-0 libnotify4 libnss3 libxss1 \
   libxtst6 xdg-utils libatspi2.0-0 libdrm2 libgbm1 \
-  libsecret-1-0 libasound2t64 fonts-liberation wget curl libfuse2t64
+  libsecret-1-0 libasound2t64 fonts-liberation wget curl
 ```
 
-Create a systemd service:
+Create `/etc/systemd/system/xvfb.service`:
 
 ```ini
 [Unit]
@@ -55,23 +48,22 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Enable and start:
-
 ```bash
-sudo systemctl enable xvfb
-sudo systemctl start xvfb
-echo 'export DISPLAY=:99' | sudo tee /etc/profile.d/display.sh
+sudo systemctl enable --now xvfb
 ```
 
-## 3) Install and initialize Obsidian
+## Obsidian
+
+Install an Obsidian AppImage under the service user, for example:
 
 ```bash
 mkdir -p ~/apps
-wget -O ~/apps/Obsidian.AppImage "https://github.com/obsidianmd/obsidian-releases/releases/latest/download/Obsidian.AppImage"
+wget -O ~/apps/Obsidian.AppImage "REPLACE_WITH_OBSIDIAN_APPIMAGE_URL"
 chmod +x ~/apps/Obsidian.AppImage
+sudo apt install -y libfuse2t64
 ```
 
-Create `obsidian.service`:
+Create `/etc/systemd/system/obsidian.service`:
 
 ```ini
 [Unit]
@@ -81,10 +73,10 @@ Requires=xvfb.service
 
 [Service]
 Type=simple
-User=<your-user>
+User=REPLACE_WITH_SERVICE_USER
 Environment=DISPLAY=:99
 Environment=ELECTRON_DISABLE_GPU=1
-ExecStart=/home/<your-user>/apps/Obsidian.AppImage --no-sandbox
+ExecStart=/home/REPLACE_WITH_SERVICE_USER/apps/Obsidian.AppImage --no-sandbox
 Restart=always
 RestartSec=10
 
@@ -92,7 +84,7 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-For first-time setup (vault selection + Sync login), use temporary VNC:
+For the first Obsidian Sync setup, temporarily use VNC:
 
 ```bash
 sudo apt install -y x11vnc
@@ -100,54 +92,45 @@ x11vnc -display :99 -nopw -listen 0.0.0.0 -shared -forever &
 DISPLAY=:99 ELECTRON_DISABLE_GPU=1 ~/apps/Obsidian.AppImage --no-sandbox &
 ```
 
-After setup:
+Open the vault folder, enable Obsidian Sync, wait for sync completion, then stop the manual process and enable the service:
 
 ```bash
 pkill x11vnc
 pkill -f Obsidian
-sudo systemctl enable obsidian
-sudo systemctl start obsidian
+sudo systemctl enable --now obsidian
 ```
 
-## 4) Install obsidian-web-mcp
+## MCP Server
 
 ```bash
 sudo apt install -y python3 python3-pip python3-venv git
-git clone https://github.com/mleitnercom/obsidian-web-mcp.git
+cd /home/REPLACE_WITH_SERVICE_USER
+git clone https://github.com/mleitnercom/obsidian-web-mcp.git obsidian-web-mcp
 cd obsidian-web-mcp
 python3 -m venv venv
-source venv/bin/activate
-pip install .
+./venv/bin/pip install -e .
 ```
 
-Important: if you change source code later, run `pip install .` again before restarting the service.
-
-## 5) Configure and run as service
-
-Generate secrets:
-
-```bash
-python -c "import secrets; print(secrets.token_hex(32))"
-```
-
-Example `obsidian-mcp.service`:
+Create `/etc/systemd/system/obsidian-mcp.service`:
 
 ```ini
 [Unit]
 Description=Obsidian Web MCP Server
-After=obsidian.service
+After=network.target
 Wants=obsidian.service
 
 [Service]
 Type=simple
-User=<your-user>
-WorkingDirectory=/home/<your-user>/obsidian-web-mcp
-Environment=PATH=/home/<your-user>/obsidian-web-mcp/venv/bin:/usr/bin
-Environment=VAULT_PATH=/home/<your-user>/Vault
-Environment=VAULT_MCP_TOKEN=<set-a-random-64-hex-token>
-Environment=VAULT_OAUTH_CLIENT_SECRET=<set-a-random-64-hex-token>
+User=REPLACE_WITH_SERVICE_USER
+WorkingDirectory=/home/REPLACE_WITH_SERVICE_USER/obsidian-web-mcp
+Environment=PATH=/home/REPLACE_WITH_SERVICE_USER/obsidian-web-mcp/venv/bin:/usr/bin
+Environment=VAULT_PATH=REPLACE_WITH_VAULT_PATH
+Environment=VAULT_MCP_TOKEN=REPLACE_WITH_RANDOM_TOKEN
+Environment=VAULT_OAUTH_CLIENT_SECRET=REPLACE_WITH_RANDOM_SECRET
+Environment=VAULT_PUBLIC_BASE_URL=https://REPLACE_WITH_HOSTNAME
+Environment=VAULT_ALLOWED_HOSTS=127.0.0.1:*,localhost:*,[::1]:*,REPLACE_WITH_HOSTNAME
 Environment=VAULT_MCP_PORT=8420
-ExecStart=/home/<your-user>/obsidian-web-mcp/venv/bin/vault-mcp
+ExecStart=/home/REPLACE_WITH_SERVICE_USER/obsidian-web-mcp/venv/bin/vault-mcp
 Restart=always
 RestartSec=5
 
@@ -155,90 +138,59 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Enable and start:
-
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable obsidian-mcp
-sudo systemctl start obsidian-mcp
+sudo systemctl enable --now obsidian-mcp
+curl -s http://127.0.0.1:8420/health
 ```
 
-## 6) Cloudflare Tunnel and Claude/Cowork
+## Reverse Proxy or Tunnel
 
-- Expose your MCP endpoint through a tunnel hostname (for example `vault-mcp.example.com`).
-- Configure Claude connector URL with `/mcp`:
-  - `https://vault-mcp.example.com/mcp`
+Forward public HTTPS traffic to:
 
-Without `/mcp`, clients may hit `/` and fail tool calls.
+```text
+http://REPLACE_WITH_VM_IP:8420
+```
 
-## Operational Notes
+Use the public connector URL:
 
-- Increase inotify watchers for large vaults:
+```text
+https://REPLACE_WITH_HOSTNAME/mcp
+```
+
+## Optional Local REST API
+
+Install and enable the Obsidian Local REST API plugin in the headless vault. Then add a root-only systemd drop-in for the MCP service:
+
+```ini
+[Service]
+Environment=VAULT_OBSIDIAN_REST_URL=https://127.0.0.1:27124
+Environment=VAULT_OBSIDIAN_REST_API_KEY=REPLACE_WITH_LOCAL_REST_API_KEY
+Environment=VAULT_OBSIDIAN_REST_VERIFY_TLS=false
+Environment=VAULT_TEMPLATER_FOLDER=Templates
+```
+
+Permissions:
+
+```bash
+sudo chmod 600 /etc/systemd/system/obsidian-mcp.service.d/local-rest.conf
+sudo systemctl daemon-reload
+sudo systemctl restart obsidian-mcp
+```
+
+## Maintenance
+
+```bash
+sudo systemctl status obsidian
+sudo systemctl status obsidian-mcp
+sudo journalctl -u obsidian-mcp -n 100 --no-pager
+```
+
+For large vaults, raise inotify limits:
 
 ```bash
 echo "fs.inotify.max_user_watches=524288" | sudo tee /etc/sysctl.d/99-inotify.conf
 sudo sysctl --system
+sudo systemctl restart obsidian
+sudo systemctl restart obsidian-mcp
 ```
-
-- Keep VNC disabled unless needed for troubleshooting.
-- Rotate `VAULT_MCP_TOKEN` and `VAULT_OAUTH_CLIENT_SECRET` regularly.
-- Avoid publishing your connector URL.
-
-### Optional nightly semantic rebuild
-
-If semantic search is enabled, the normal path is still watcher-based incremental refresh.
-
-For an extra safety net, you can also schedule a nightly full rebuild with the included systemd templates in [`scripts/systemd/`](../../scripts/systemd):
-
-- `obsidian-mcp-semantic-reindex.service`
-- `obsidian-mcp-semantic-reindex.timer`
-
-Example install:
-
-```bash
-sudo cp scripts/systemd/obsidian-mcp-semantic-reindex.service /etc/systemd/system/
-sudo cp scripts/systemd/obsidian-mcp-semantic-reindex.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now obsidian-mcp-semantic-reindex.timer
-```
-
-Before enabling:
-
-- replace `<your-user>` in the service file
-- update `WorkingDirectory`, `PATH`, and `VAULT_PATH`
-- adjust the `OnCalendar=` schedule if `04:00` is not suitable
-
-The timer simply runs:
-
-```bash
-vault-semantic reindex --mode full
-```
-
-For stability-sensitive deployments, prefer this timer/manual path and keep live semantic auto-refresh disabled in the MCP service:
-
-```ini
-Environment=VAULT_SEMANTIC_AUTO_REINDEX=0
-Environment=VAULT_SEMANTIC_BUILD_ON_DEMAND=0
-Environment=VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX=0
-```
-
-In that mode, the running MCP service only loads an existing semantic cache and answers semantic queries from that cache. It does not start a multi-hour rebuild inside normal request handling.
-
-To watch or test it manually:
-
-```bash
-systemctl list-timers obsidian-mcp-semantic-reindex.timer
-sudo systemctl start obsidian-mcp-semantic-reindex.service
-sudo journalctl -fu obsidian-mcp-semantic-reindex.service
-sudo journalctl -u obsidian-mcp-semantic-reindex.service -n 50 --no-pager
-```
-
-## Security Notes
-
-- For internet-exposed setups, configure:
-  - `VAULT_OAUTH_AUTH_USERNAME`
-  - `VAULT_OAUTH_AUTH_PASSWORD`
-- Dynamic OAuth client registrations are persisted by default so ChatGPT/Claude connectors survive service restarts.
-- Persisted dynamic OAuth client secrets are stored hashed at rest; only short-lived authorization codes and browser login sessions remain purely in memory.
-- Authorization codes and temporary browser login sessions remain in-memory and are still cleared on restart.
-- Requests are authenticated and rate-limited; path traversal and symlink traversal are blocked.

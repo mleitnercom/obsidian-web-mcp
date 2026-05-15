@@ -29,7 +29,6 @@ MUTATION_OPERATIONS = {
     "vault_delete",
     "vault_delete_directory",
     "vault_batch_frontmatter_update",
-    "vault_upload_commit",
     "POST /upload/{id}",
     "vault_import_url",
     "vault_import_file",
@@ -167,8 +166,6 @@ def infer_target_path(operation: str, context: dict[str, Any], result: dict[str,
     result = result or {}
     if operation == "vault_move":
         return result.get("destination") or context.get("destination")
-    if operation == "vault_upload_commit":
-        return result.get("path") or context.get("path")
     if operation == "POST /upload/{id}":
         return result.get("path") or context.get("path")
     if operation in {"vault_batch_replace", "vault_batch_frontmatter_update"}:

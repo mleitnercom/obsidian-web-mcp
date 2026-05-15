@@ -12,7 +12,6 @@ from .config import (
     MAX_CONTENT_SIZE,
     MAX_LIST_DEPTH,
     MAX_SEARCH_RESULTS,
-    MAX_UPLOAD_PART_SIZE,
     SEMANTIC_MAX_RESULTS,
     MAX_TREE_DEPTH,
     VAULT_UPLOAD_URL_MAX_TTL_SECONDS,
@@ -91,19 +90,6 @@ class VaultWriteBinaryInput(BaseModel):
     )
 
 
-class VaultUploadInitInput(BaseModel):
-    """Initialize a resumable binary upload session."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    path: str = Field(..., description="Relative path from vault root including filename and extension", min_length=1, max_length=500)
-    media_type: str = Field(..., description="MIME type of the binary content", min_length=3, max_length=200)
-    total_size: int = Field(..., ge=1, le=MAX_BINARY_SIZE, description="Total decoded byte size of the complete file")
-    part_size: int | None = Field(default=None, ge=1, le=MAX_UPLOAD_PART_SIZE, description="Optional decoded byte size per part")
-    overwrite: bool = Field(default=False, description="If true, allow replacing an existing file on commit")
-    create_dirs: bool = Field(default=True, description="Create parent directories on commit if they do not exist")
-
-
 class VaultRequestUploadUrlInput(BaseModel):
     """Create a signed direct HTTP upload URL for binary content."""
 
@@ -116,42 +102,6 @@ class VaultRequestUploadUrlInput(BaseModel):
     create_dirs: bool = Field(default=True, description="Create parent directories if they do not exist")
     expected_sha256: str | None = Field(default=None, description="Optional SHA-256 checksum of the uploaded content", min_length=64, max_length=64)
     ttl_seconds: int | None = Field(default=None, ge=1, le=VAULT_UPLOAD_URL_MAX_TTL_SECONDS, description="Optional URL lifetime in seconds")
-
-
-class VaultUploadPartInput(BaseModel):
-    """Upload one part for a resumable binary upload session."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    upload_id: str = Field(..., description="Upload session id returned by vault_upload_init", min_length=1, max_length=80)
-    part_number: int = Field(..., ge=0, description="Zero-based part number")
-    data: str = Field(..., description="Base64-encoded decoded part bytes", min_length=1, max_length=((MAX_UPLOAD_PART_SIZE + 2) // 3) * 4 + 1024)
-    part_sha256: str | None = Field(default=None, description="Optional SHA-256 checksum of the decoded part", min_length=64, max_length=64)
-
-
-class VaultUploadStatusInput(BaseModel):
-    """Inspect progress for a resumable binary upload session."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    upload_id: str = Field(..., description="Upload session id returned by vault_upload_init", min_length=1, max_length=80)
-
-
-class VaultUploadCommitInput(BaseModel):
-    """Commit a complete resumable binary upload session."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    upload_id: str = Field(..., description="Upload session id returned by vault_upload_init", min_length=1, max_length=80)
-    expected_sha256: str = Field(..., description="SHA-256 checksum of the complete decoded file", min_length=64, max_length=64)
-
-
-class VaultUploadAbortInput(BaseModel):
-    """Abort a resumable binary upload session."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    upload_id: str = Field(..., description="Upload session id returned by vault_upload_init", min_length=1, max_length=80)
 
 
 class VaultImportUrlInput(BaseModel):
