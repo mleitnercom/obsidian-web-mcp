@@ -169,6 +169,31 @@ def _search_multiple_roots(
     return matches[:max_results]
 
 
+def _search_path(
+    query: str,
+    search_path: Path,
+    file_pattern: str,
+    max_results: int,
+    context_lines: int,
+) -> list[dict]:
+    """Search one path using ripgrep when available, with Python fallback."""
+    if shutil.which("rg"):
+        matches = _search_ripgrep(query, search_path, file_pattern, max_results, context_lines)
+    else:
+        matches = None
+    if matches is None:
+        matches = _search_python(query, search_path, file_pattern, max_results, context_lines)
+    return matches
+
+
+def _default_search_patterns(file_pattern: str) -> list[str]:
+    """Include generated OCR sidecars in the default search without broadening custom globs."""
+    if file_pattern != "*.md":
+        return [file_pattern]
+    sidecar_pattern = f"*{config.VAULT_PDF_OCR_SIDECAR_SUFFIX}"
+    return ["*.md", sidecar_pattern]
+
+
 def _get_frontmatter_excerpt(file_path: Path, max_keys: int = 3) -> dict | None:
     """Read frontmatter from a file, returning first N key-value pairs."""
     try:
@@ -209,16 +234,15 @@ def vault_search(
         if search_path is not None and not search_path.is_dir():
             return vault_json_dumps({"error": f"Search path is not a directory: {path_prefix}"})
 
-        if search_path is None:
-            matches = _search_multiple_roots(query, search_roots, file_pattern, max_results, context_lines)
-        else:
-            if shutil.which("rg"):
-                matches = _search_ripgrep(query, search_path, file_pattern, max_results, context_lines)
+        matches = []
+        for pattern in _default_search_patterns(file_pattern):
+            remaining = max_results - len(matches)
+            if remaining <= 0:
+                break
+            if search_path is None:
+                matches.extend(_search_multiple_roots(query, search_roots, pattern, remaining, context_lines))
             else:
-                matches = None
-
-            if matches is None:
-                matches = _search_python(query, search_path, file_pattern, max_results, context_lines)
+                matches.extend(_search_path(query, search_path, pattern, remaining, context_lines))
 
         for match in matches:
             file_full_path = config.VAULT_PATH / match["path"]

@@ -4,7 +4,7 @@ import logging
 
 import frontmatter
 
-from ..vault import resolve_vault_path, read_file, vault_json_dumps as json_dumps
+from ..vault import OcrError, resolve_vault_path, read_file, vault_json_dumps as json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,8 @@ def vault_read(path: str) -> str:
         return json_dumps({"error": str(e), "path": path})
     except FileNotFoundError:
         return json_dumps({"error": f"File not found: {path}", "path": path})
+    except OcrError as e:
+        return json_dumps({"error": str(e), "error_code": e.error_code, "path": path})
     except Exception as e:
         logger.error(f"vault_read error for {path}: {e}")
         return json_dumps({"error": str(e), "path": path})
@@ -70,6 +72,9 @@ def vault_batch_read(paths: list[str], include_content: bool = True) -> str:
             found += 1
         except (ValueError, FileNotFoundError) as e:
             results.append({"path": path, "error": str(e)})
+            missing += 1
+        except OcrError as e:
+            results.append({"path": path, "error": str(e), "error_code": e.error_code})
             missing += 1
         except Exception as e:
             results.append({"path": path, "error": str(e)})

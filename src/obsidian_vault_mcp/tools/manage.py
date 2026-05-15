@@ -53,6 +53,7 @@ def vault_list(
     include_files: bool = True,
     include_dirs: bool = True,
     pattern: str | None = None,
+    include_ocr_sidecars: bool = False,
 ) -> str:
     """List directory contents in the vault."""
     try:
@@ -62,6 +63,7 @@ def vault_list(
             include_files=include_files,
             include_dirs=include_dirs,
             pattern=pattern,
+            include_ocr_sidecars=include_ocr_sidecars,
         )
         return vault_json_dumps({"items": items, "total": len(items)})
     except ValueError as e:
