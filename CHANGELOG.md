@@ -5,6 +5,23 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.6.7] - 2026-05-14
+
+### Features
+- Add `vault_template_list`, `vault_template_render`, and `vault_template_apply` for a strictly scoped server-side template flow.
+- Add `vault_dataview_query` for Dataview TABLE DQL via Obsidian Local REST API.
+- Add `VAULT_OBSIDIAN_REST_URL`, `VAULT_OBSIDIAN_REST_API_KEY`, `VAULT_OBSIDIAN_REST_VERIFY_TLS`, `VAULT_OBSIDIAN_REST_TIMEOUT`, `VAULT_TEMPLATER_FOLDER`, and `VAULT_DATAVIEW_TIMEOUT`.
+
+### Reliability / Operator UX
+- Template rendering is intentionally simple `{{ }}` variable substitution, not full Templater execution; Templater `<%` syntax fails closed with `error_code="template_render_unavailable"` and no write.
+- `vault_template_apply` writes through the existing verified `vault_write` path and respects `overwrite=false` with `error_code="target_exists"`.
+- `/health` now reports Local REST API configuration/reachability and warns when TLS verification is disabled for a non-loopback URL.
+- Dataview script queries remain out of the schema; `query_type` is strictly `enum=["dql"]`.
+
+### Docs / Tests
+- Document the Local REST API configuration and the Simple-Renderer limitation.
+- Add regression coverage for template path policy, variable edge cases, Templater-syntax rejection, Dataview REST error mapping, health status, and schema discoverability.
+
 ## [v0.6.6] - 2026-05-14
 
 ### Features

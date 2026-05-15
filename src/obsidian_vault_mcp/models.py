@@ -273,6 +273,102 @@ class VaultDailyNoteAppendInput(BaseModel):
     )
 
 
+class VaultTemplateListInput(BaseModel):
+    """List simple template files from the configured template folder."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    folder: str | None = Field(
+        default=None,
+        description="Optional vault-relative template folder override. Defaults to VAULT_TEMPLATER_FOLDER.",
+        max_length=500,
+    )
+    recursive: bool = Field(
+        default=True,
+        description="If true, include markdown templates in nested folders.",
+    )
+
+
+class VaultTemplateRenderInput(BaseModel):
+    """Render one template with simple variable substitution."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    template_path: str = Field(
+        ...,
+        description="Template path relative to VAULT_TEMPLATER_FOLDER or the vault root.",
+        min_length=1,
+        max_length=500,
+    )
+    target_path_hint: str | None = Field(
+        default=None,
+        description="Optional intended output path used for built-in {{target_path}} and {{title}} tokens.",
+        max_length=500,
+    )
+    variables: dict[str, str | int | float | bool | None] | None = Field(
+        default=None,
+        description="Optional values for {{key}} or {{variables.key}} tokens. Missing variables fail hard.",
+    )
+    engine: Literal["simple"] = Field(
+        default="simple",
+        description="Allowed value: simple. Simple variable substitution only; not full Templater execution.",
+    )
+
+
+class VaultTemplateApplyInput(BaseModel):
+    """Render one simple template and write the resulting note."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    template_path: str = Field(
+        ...,
+        description="Template path relative to VAULT_TEMPLATER_FOLDER or the vault root.",
+        min_length=1,
+        max_length=500,
+    )
+    target_path: str = Field(
+        ...,
+        description="Vault-relative note path to create or overwrite.",
+        min_length=1,
+        max_length=500,
+    )
+    variables: dict[str, str | int | float | bool | None] | None = Field(
+        default=None,
+        description="Optional values for {{key}} or {{variables.key}} tokens. Missing variables fail hard.",
+    )
+    overwrite: bool = Field(
+        default=False,
+        description="If true, allow replacing an existing target file.",
+    )
+    engine: Literal["simple"] = Field(
+        default="simple",
+        description="Allowed value: simple. Simple variable substitution only; not full Templater execution.",
+    )
+
+
+class VaultDataviewQueryInput(BaseModel):
+    """Run a Dataview DQL TABLE query through Obsidian Local REST API."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    query: str = Field(
+        ...,
+        description="Dataview DQL TABLE query. TABLE WITHOUT ID is not supported.",
+        min_length=1,
+        max_length=10_000,
+    )
+    query_type: Literal["dql"] = Field(
+        default="dql",
+        description="Allowed value: dql.",
+    )
+    timeout_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        le=120,
+        description="Optional per-query timeout in seconds. Defaults to VAULT_DATAVIEW_TIMEOUT.",
+    )
+
+
 class VaultAnalyticsSummaryInput(BaseModel):
     """Build a compact analytics summary for a vault path."""
 
