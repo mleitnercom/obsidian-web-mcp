@@ -24,14 +24,17 @@ from pydantic import Field
 from . import config
 from .audit import (
     MUTATION_OPERATIONS,
+    audit_health_payload,
     before_target_path,
     build_audit_record,
     infer_target_path,
+    should_audit_operation,
     snapshot_path,
     write_audit_record,
 )
 from .config import VAULT_MCP_PORT, VAULT_MCP_TOKEN, VAULT_PATH
 from .frontmatter_index import FrontmatterIndex
+from .hooks import clear_post_write_hooks, flush_post_write_hooks
 from .obsidian_rest import obsidian_rest_reachable, obsidian_rest_tls_warning
 from .rate_limit import check_rate_limit, current_auth_principal, current_request_metadata
 from .retrieval import SemanticSearchEngine
@@ -166,7 +169,9 @@ def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
     """Run one MCP tool call with consistent start/end/error logging."""
     started = time.monotonic()
     audit_before = None
-    audit_before_path = None
+    audit_after = None
+    is_mutation = name in MUTATION_OPERATIONS
+    should_audit = should_audit_operation(name)
     if name in MUTATION_OPERATIONS:
         audit_before_path = before_target_path(name, context)
         audit_before = snapshot_path(audit_before_path)
@@ -192,23 +197,30 @@ def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
     except Exception:
         duration = time.monotonic() - started
         logger.exception("Tool failed: %s after %.3fs", name, duration)
-        if name in MUTATION_OPERATIONS:
+        if should_audit:
             target_path = infer_target_path(name, context)
-            write_audit_record(
-                build_audit_record(
-                    operation=name,
-                    target_path=target_path,
-                    before=audit_before,
-                    after=snapshot_path(target_path),
-                    operation_status="error",
-                    error="tool exception",
-                )
+            if is_mutation:
+                audit_after = snapshot_path(target_path)
+            record = build_audit_record(
+                operation=name,
+                target_path=target_path,
+                before=audit_before,
+                after=audit_after,
+                operation_status="error",
+                error="tool exception",
             )
+            write_audit_record(record)
+            if is_mutation:
+                flush_post_write_hooks(record)
+            else:
+                clear_post_write_hooks()
+        else:
+            clear_post_write_hooks()
         raise
 
     duration = time.monotonic() - started
     logger.info("Tool complete: %s in %.3fs (%s bytes)", name, duration, len(result))
-    if name in MUTATION_OPERATIONS:
+    if should_audit:
         parsed_result: dict[str, Any] = {}
         try:
             payload = json.loads(result)
@@ -218,16 +230,26 @@ def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
             parsed_result = {}
         target_path = infer_target_path(name, context, parsed_result)
         operation_status = "error" if "error" in parsed_result else "success"
-        write_audit_record(
-            build_audit_record(
-                operation=name,
-                target_path=target_path,
-                before=audit_before,
-                after=snapshot_path(target_path),
-                operation_status=operation_status,
-                error=parsed_result.get("error") if operation_status == "error" else None,
-            )
+        if is_mutation:
+            audit_after = snapshot_path(target_path)
+        else:
+            audit_before = snapshot_path(target_path)
+            audit_after = {"size": None, "checksum": None}
+        record = build_audit_record(
+            operation=name,
+            target_path=target_path,
+            before=audit_before,
+            after=audit_after,
+            operation_status=operation_status,
+            error=parsed_result.get("error") if operation_status == "error" else None,
         )
+        write_audit_record(record)
+        if is_mutation:
+            flush_post_write_hooks(record)
+        else:
+            clear_post_write_hooks()
+    else:
+        clear_post_write_hooks()
     return result
 
 
@@ -313,6 +335,7 @@ def _health_payload() -> dict:
             "enabled": bool(config.VAULT_MCP_POST_WRITE_CMD),
             "timeout_seconds": config.VAULT_MCP_POST_WRITE_TIMEOUT,
         },
+        "audit": audit_health_payload(),
         "uptime_seconds": round(time.monotonic() - _server_started_at, 3),
     }
     if config.VAULT_OBSIDIAN_REST_URL:
@@ -1620,16 +1643,16 @@ def build_app():
             signature=request.query_params.get("signature", ""),
         )
         target_path = result.get("path")
-        write_audit_record(
-            build_audit_record(
-                operation="POST /upload/{id}",
-                target_path=target_path,
-                before={"size": None, "checksum": None},
-                after=snapshot_path(target_path),
-                operation_status="error" if "error" in result else "success",
-                error=result.get("error"),
-            )
+        audit_record = build_audit_record(
+            operation="POST /upload/{id}",
+            target_path=target_path,
+            before={"size": None, "checksum": None},
+            after=snapshot_path(target_path),
+            operation_status="error" if "error" in result else "success",
+            error=result.get("error"),
         )
+        write_audit_record(audit_record)
+        flush_post_write_hooks(audit_record)
         if "error" in result:
             logger.warning("Direct upload rejected: %s (%s)", upload_id, result["error"])
         else:
