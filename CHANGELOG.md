@@ -5,6 +5,23 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.6.8] - 2026-05-15
+
+### Features
+- Complete the audit pipeline with post-write hook coupling: when both `VAULT_MCP_POST_WRITE_CMD` and `VAULT_AUDIT_LOG_PATH` are set, the hook receives the same JSONL audit record on stdin.
+- Add opt-in read auditing via `VAULT_AUDIT_LOG_INCLUDE_READS=true` for read, list, search, semantic search, analytics, and Canvas read operations.
+- Add Obsidian Canvas tools: `vault_canvas_read`, `vault_canvas_add_node`, and `vault_canvas_add_edge`.
+
+### Reliability / Operator UX
+- `/health` detailed output now reports audit status, including log path, last successful audit write, rolling 24h write-error count, rolling 24h bytes written, and whether read auditing is enabled.
+- Audit health counters are process-local and reset on service restart; `/health` does not read the audit log from disk.
+- Canvas writes preserve existing node/edge order and extra fields, generate collision-safe alphanumeric IDs when omitted, and write through the existing read-back verification path.
+- Canvas write tools participate in mutation audit logging; `vault_canvas_read` participates in read audit only when `VAULT_AUDIT_LOG_INCLUDE_READS=true`.
+
+### Docs / Tests
+- Add regression coverage for hook stdin forwarding, hook failure non-rollback, read-audit opt-in/default-off behavior, audit health rolling counters, Canvas schema discoverability, and Canvas roundtrips.
+- Document v0.6.8 smoke scope for Audit Pipeline and Canvas.
+
 ## [v0.6.7] - 2026-05-14
 
 ### Features
