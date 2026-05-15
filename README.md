@@ -1,603 +1,222 @@
 # obsidian-web-mcp
 
-Production-hardened fork of `obsidian-web-mcp` for MCP access to an Obsidian vault over HTTP(S), with practical fixes for real deployments behind reverse proxies and tunnels.
+Production-hardened fork of [`jimprosser/obsidian-web-mcp`](https://github.com/jimprosser/obsidian-web-mcp): an HTTP-based MCP server that exposes an Obsidian vault to LLM clients such as Claude, ChatGPT, and Codex over OAuth 2.0.
 
-## Release
+**Latest release:** [v0.7.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.7.0) (2026-05-15)
 
-Latest: [v0.6.9](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.9) (2026-05-15).
+## At a Glance
 
-## Status
+### Why this fork
 
-This fork exists because the upstream project appears inactive and did not include several fixes needed for stable production use.
+This fork turns the upstream "MCP over HTTP" server into a vault-aware workflow substrate. It keeps the filesystem as the source of truth, adds production guardrails for Obsidian Sync, and exposes higher-level workflows for tasks, daily notes, templates, Dataview, Canvas, audit, and binary uploads.
 
-The current fork includes pragmatic fixes and compatibility work in areas such as frontmatter date serialization, OAuth/discovery behavior, reverse proxy or tunnel deployments, and Claude/ChatGPT connector usage.
+### What's different from upstream
 
-Recent editing-oriented work in this fork also builds on ideas already explored in other active forks: the format-stable frontmatter round-trip and lighter-weight edit primitives follow the same general direction as `jjsmackay`, while the optional post-write hook was informed by `cruciblemining` and tightened here to execute without a shell.
+- **Atomic writes with read-back verification.** Text writes fail loudly if the bytes read back do not match the intended content.
+- **Synchronous frontmatter index refresh.** Edits, moves, deletes, and renames refresh the index immediately instead of waiting on eventually-consistent watcher state.
+- **Extended `vault_search_frontmatter`.** Supports comparison operators, list-membership operators, and multi-field AND filters.
+- **Restart-stable OAuth state.** Dynamic client registrations can persist across service restarts.
+- **Vault scope policy.** `VAULT_INCLUDED_ROOTS` and `VAULT_EXCLUDED_PATH_PREFIXES` enforce a no-leak boundary across reads, writes, search, analytics, frontmatter indexing, and semantic indexing.
+- **Format-stable frontmatter updates.** `ruamel.yaml` preserves quote style, key order, comments, and flow-style lists where possible.
 
-## Upstream
+### What's additional
 
-An issue report and a PR were already submitted upstream, with related issue threads cross-referenced there.
+- **Daily Notes tools.** `vault_daily_note_path`, `vault_daily_note_read`, and `vault_daily_note_append`.
+- **Audit JSON Lines.** Mutation audit with hashed token id, client id, operation, target path, sizes, checksums, and optional read audit.
+- **Optional Plugin Bridge.** Templater-style simple rendering and Dataview TABLE DQL via Obsidian Local REST API.
+- **Canvas tools.** Read `.canvas` JSON and append nodes or edges with validation and write verification.
+- **Direct binary upload.** `vault_request_upload_url` plus signed single-use `POST /upload/{id}` for real agent/local files.
+- **PDF extraction and OCR sidecars.** `vault_read` extracts PDF text and can cache external OCR output as `*.pdf.ocr.txt`.
+- **Vault analytics and hygiene.** Broken links, missing frontmatter, tag variants, and encoding issues.
+- **Optional semantic search.** CPU-first `fastembed` backend with persistent FAISS cache.
+- **Health endpoint.** Local detailed health includes OAuth, audit, and Plugin Bridge reachability; remote callers get minimal liveness unless explicitly opted in.
 
-This fork should be understood as a practical maintained fork unless and until the upstream project becomes active again and incorporates the relevant fixes.
+## Migration from v0.6.x
 
-## Scope Of Maintenance
+`v0.7.0` removes the legacy resumable MCP upload tools:
 
-This is a public fork maintained for real operational needs, not a broad support project.
+- `vault_upload_init`
+- `vault_upload_part`
+- `vault_upload_status`
+- `vault_upload_commit`
+- `vault_upload_abort`
 
-Changes are driven primarily by production use, stability, and connector interoperability.
+Use `vault_request_upload_url` and then `POST` the file bytes to the returned signed `/upload/{id}` URL. This is the recommended path for binary files because it avoids MCP argument-size limits and base64 overhead.
 
-Some implementation and documentation work in this fork may be developed with LLM coding assistance. Changes are reviewed and tested before release.
+## Application Scenarios
 
-## Why This Exists
+### Tasks and TODO Tracking
 
-There are many Obsidian MCP servers. Most are local stdio servers -- they work when Claude Code is running on the same machine as your vault. That's useful, but it means:
+Treat tasks as markdown files with structured YAML frontmatter:
 
-- **Claude.ai (web) can't reach your vault.** The browser-based Claude has no way to connect to a local stdio server.
-- **Claude on your phone can't reach your vault.** Same problem.
-- **If you use Obsidian Sync, local MCP servers can corrupt files.** Non-atomic writes create partial files that Sync propagates to every device.
+```yaml
+---
+id: 2026-05-fix-broken-link-logic
+title: Fix broken link classification
+status: next
+priority: 3
+due: 2026-05-20
+project: vault-tooling
+---
+```
 
-This server solves all three. It runs as a persistent HTTP service on the machine where your vault lives, tunneled securely through Cloudflare, and authenticates via OAuth 2.0 -- the same protocol Claude uses for Gmail, Google Calendar, and other integrations. The result: your vault becomes a first-class MCP connector available everywhere Claude is.
+Then query them with `vault_search_frontmatter`, including AND filters and list operators.
+
+### Daily Notes Capture
+
+Use `vault_daily_note_append` to add structured notes to today's daily note. The path is controlled by `VAULT_DAILY_NOTES_FOLDER` and `VAULT_DAILY_NOTES_FORMAT`; new files can start with `VAULT_DAILY_NOTES_TEMPLATE`.
+
+### Audit Trail
+
+Set `VAULT_AUDIT_LOG_PATH` to write append-only JSONL records for mutations. `VAULT_AUDIT_LOG_INCLUDE_READS=true` optionally records reads, search, list, analytics, and Canvas reads. See [docs/audit.md](docs/audit.md).
+
+### Template-Driven Capture
+
+The template tools intentionally implement simple `{{token}}` substitution, not full Templater execution. Templates containing `<% %>` are rejected with `template_render_unavailable` instead of being half-rendered.
+
+### Vault Hygiene
+
+Use `vault_analytics_summary`, `vault_analytics_findings`, and the `vault-semantic doctor` CLI to inspect broken wikilinks, tag variants, missing frontmatter, and markdown encoding issues.
 
 ## Architecture
 
-```
-+----------+     +------------+     +-----------------+     +------------------+
-| Obsidian | <-> | Filesystem | <-> | obsidian-web-mcp| <-> | Cloudflare       |
-| (app)    |     | (*.md)     |     | (MCP over HTTPS)|     | Tunnel           |
-+----------+     +------------+     +-----------------+     +------------------+
-                                                                   |
-                                                            +------+-------+
-                                                            | Claude       |
-                                                            | (web/desktop/|
-                                                            |  mobile)     |
-                                                            +--------------+
-```
+```text
+LLM client
+  | OAuth 2.0 / MCP over HTTPS
+  v
+obsidian-web-mcp
+  | main path: atomic filesystem reads/writes
+  v
+Obsidian vault files
 
-Your vault files never leave your machine. Cloudflare Tunnel creates an outbound-only connection from your server to Cloudflare's edge -- no inbound ports opened, no public IP exposed, no port forwarding. Claude connects to the Cloudflare edge, which relays requests through the tunnel to your server.
-
-Obsidian and the MCP server both operate on the same directory of markdown files. The server uses atomic writes (write-to-temp-then-rename) so Obsidian Sync and the server never conflict.
-
-## Security Model
-
-This is a server that provides network access to your personal notes. Security is not optional.
-
-**Authentication is enforced on every request.** The server implements OAuth 2.0 authorization code flow with PKCE for initial client authentication (what Claude uses when you connect the integration), plus bearer token validation on every subsequent MCP tool call. No request reaches a tool function without a valid token.
-
-**OAuth authorization supports two secure single-user modes.** If you set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD`, `/oauth/authorize` requires browser login before issuing an authorization code. You can keep an extra explicit consent click (`VAULT_OAUTH_REQUIRE_APPROVAL=true`, default) or disable it for connector compatibility (`VAULT_OAUTH_REQUIRE_APPROVAL=false`). If you leave login credentials unset, the server falls back to single-user auto-approve mode for compatibility.
-
-**OAuth state is split between persistent registrations and short-lived in-memory grants.** Dynamic OAuth client registrations are persisted by default so connectors can survive service restarts, but their generated client secrets are stored hashed at rest rather than in clear text. Authorization codes and browser login sessions remain in memory and are still cleared on restart.
-
-**Your vault is never exposed directly to the internet.** The recommended deployment uses a Cloudflare Tunnel -- an outbound-only encrypted connection. Your machine opens no inbound ports. You can layer Cloudflare Access on top for additional authentication (SSO, device posture checks, IP restrictions) if you want defense in depth.
-
-**Path traversal is blocked at the filesystem layer.** Every file operation resolves paths against the vault root directory and rejects any attempt to escape it -- `..` traversal, symlink following, null byte injection, and dotfile access (`.obsidian`, `.git`, `.trash`) are all caught before they reach the filesystem. The server will never read or write outside your vault directory.
-
-**Vault exposure can be scoped intentionally.** `VAULT_INCLUDED_ROOTS` can restrict MCP access to specific subtrees inside the vault, while `VAULT_EXCLUDED_PATH_PREFIXES` can carve out scratch or machinery folders under otherwise allowed roots. These checks apply to reads, writes, listing, search, indexing, analytics, and semantic retrieval so they act as a real boundary, not just a UI filter.
-
-**Reverse-proxy trust is explicit.** Forwarded headers are only trusted from IPs in `VAULT_TRUSTED_PROXY_IPS` (default `127.0.0.1,::1`) instead of trusting all upstreams.
-
-**Writes are atomic.** Every file write goes to a temporary file first, then atomically replaces the target via `os.replace()`. This guarantees that neither Obsidian nor Obsidian Sync ever sees a partially-written file -- the operation either completes fully or doesn't happen at all.
-
-**Safety limits prevent abuse.** By default, writes are capped at 1MB per file, batch operations at 20 files per request, search results at 50 matches, and directory recursion at 5 levels. These limits are configurable via environment variables for larger vaults or more permissive deployments. Deletions are soft -- files move to `.trash/` rather than being permanently removed, matching Obsidian's own behavior. The delete tool also requires an explicit `confirm=true` parameter as a safety gate.
-
-**Authentication fails closed.** If the authenticated Starlette app cannot be constructed at startup, the process exits instead of falling back to an unauthenticated MCP server.
-
-**MCP transport compatibility is preserved.** The server answers `GET /` and `HEAD /` with an MCP protocol probe response for newer clients, while keeping normal tool access behind the authenticated HTTP app.
-
-**A lightweight health endpoint is available.** `GET /health` stays readable without bearer auth. Direct loopback access gets the detailed operator snapshot, while external or proxied callers get only a minimal liveness payload unless `VAULT_HEALTH_ALLOW_REMOTE_DETAILS=true` is set intentionally.
-
-**Optional push heartbeats are supported.** If `VAULT_MCP_HEARTBEAT_URL` is configured, the server emits periodic GET pings to a push-style monitoring endpoint while also surfacing the current heartbeat state in `/health`.
-
-**Optional post-write hooks are supported.** If `VAULT_MCP_POST_WRITE_CMD` is configured, the server can trigger a local follow-up command after vault mutations such as writes, deletes, moves, and appends. The command is executed without a shell and receives mutation metadata via environment variables. This is intentionally a trusted-operator feature for single-user or otherwise tightly controlled deployments: it is opt-in and constrained, but authenticated write activity can still trigger a local follow-up command.
-
-**Optional append-only audit logs are supported.** If `VAULT_AUDIT_LOG_PATH` is configured, mutating tools append one JSON-lines record per operation, including before/after size and SHA-256 checksum where a single target file is available. If the variable is empty, audit logging is disabled and mutations continue normally.
-
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `vault_read` | Read a file, returning content, metadata, and parsed YAML frontmatter; PDFs are read through built-in text extraction |
-| `vault_batch_read` | Read multiple files in one call; handles missing files gracefully and includes extracted PDF text when applicable |
-| `vault_analytics_summary` | Return a compact hygiene summary covering frontmatter, wikilinks, tags, and encoding issues, including a broken-link breakdown |
-| `vault_analytics_findings` | Return detailed findings for one analytics category such as broken wikilinks or encoding issues, including wikilink classification details |
-| `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
-| `vault_write_binary` | Write an allowed binary file such as PNG, JPEG, WebP, GIF, SVG, PDF, or configured extra media types from base64 input |
-| `vault_request_upload_url` | Create a short-lived signed HTTP upload URL so agents can POST local files directly without squeezing bytes through MCP tool arguments |
-| `vault_upload_init` / `vault_upload_part` / `vault_upload_status` / `vault_upload_commit` / `vault_upload_abort` | Deprecated legacy resumable binary upload flow. Use `vault_request_upload_url` plus signed `POST /upload/{id}` instead; removal is planned for `v0.7.0` |
-| `vault_import_file` | Import an allowed binary file from a local allowlisted filesystem path without base64-wrapping it into the tool call |
-| `vault_import_url` | Import an allowed binary file from an HTTP(S) URL by letting the server download and verify it |
-| `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content, preserving existing YAML formatting where possible |
-| `vault_str_replace` | Replace one exact string in a file without rewriting the whole note body in the request; optional `replace_all=true` supports file-local bulk normalization |
-| `vault_batch_replace` | Run exact string replacements across multiple files in one call |
-| `vault_patch` | Replace one unique exact text occurrence in a file for a targeted edit |
-| `vault_append` | Append content to the end of a file, optionally creating it first |
-| `vault_daily_note_path` | Return today's configured daily-note path using the server's local date |
-| `vault_daily_note_read` | Read today's daily note; missing notes return `error_code="daily_note_not_found"` and `status_code=404` |
-| `vault_daily_note_append` | Append to today's daily note, creating it with `VAULT_DAILY_NOTES_TEMPLATE` if missing via the verified append path |
-| `vault_template_list` | List Markdown templates from `VAULT_TEMPLATER_FOLDER` without executing Templater |
-| `vault_template_render` | Render a template using simple `{{ }}` variable substitution; not full Templater execution |
-| `vault_template_apply` | Render a simple template and write it through the verified `vault_write` path |
-| `vault_dataview_query` | Run a Dataview TABLE DQL query through Obsidian Local REST API and return structured JSON |
-| `vault_search` | Full-text search across vault files (uses ripgrep when available and falls back to Python when needed) |
-| `vault_semantic_search` | Optional semantic, keyword, or hybrid search backed by a persistent FAISS index (supports `path_prefix`, `filter_tags`, `search_mode`, `min_score`) |
-| `vault_search_frontmatter` | Query the in-memory frontmatter index by field value, substring, or field existence |
-| `vault_list` | List directory contents with recursion depth, glob filtering, file/dir toggles, and explicit OCR-sidecar visibility |
-| `vault_tree` | Return a compact nested JSON tree of folders and files for quick orientation |
-| `vault_reindex` | Rebuild the semantic cache, but keep it disabled by default in live MCP operation because MCP-triggered refreshes can be long-running |
-| `vault_move` | Move or rename a file or directory within the vault |
-| `vault_delete` | Soft-delete a file by moving it to `.trash/` (requires explicit confirmation) |
-| `vault_delete_directory` | Soft-delete an empty directory by moving it to `.trash/` (requires explicit confirmation) |
-
-## Prerequisites
-
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- An Obsidian vault (any directory of markdown files)
-- [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) (only needed for remote access)
-- A domain managed by Cloudflare (only needed for remote access)
-
-## Quick Start
-
-### Local development
-
-```bash
-# Clone and enter the project
-git clone https://github.com/mleitnercom/obsidian-web-mcp.git
-cd obsidian-web-mcp
-
-# Generate auth tokens
-export VAULT_MCP_TOKEN=$(python -c "import secrets; print(secrets.token_hex(32))")
-export VAULT_OAUTH_CLIENT_SECRET=$(python -c "import secrets; print(secrets.token_hex(32))")
-
-# Point at your vault
-export VAULT_PATH="$HOME/Obsidian/MyVault"
-
-# Run the server
-uv run vault-mcp
+Optional:
+obsidian-web-mcp <-> Obsidian Local REST API <-> Obsidian plugins
 ```
 
-If you prefer `pip` instead of `uv`:
+The filesystem path is the primary path. The Plugin Bridge is additive and optional. If Local REST API is not configured, Plugin Bridge tools return capability errors instead of stack traces.
 
-```bash
-python -m pip install -e .
-vault-mcp
+## Capabilities
+
+| Tool | Purpose |
+|---|---|
+| `vault_analytics_summary` | Compact vault hygiene summary |
+| `vault_analytics_findings` | Detailed analytics findings by category |
+| `vault_read` | Read text, markdown, or PDF content with metadata and frontmatter |
+| `vault_batch_read` | Read multiple files in one call |
+| `vault_canvas_read` | Read parsed Obsidian `.canvas` JSON |
+| `vault_canvas_add_node` | Add a node to a Canvas file |
+| `vault_canvas_add_edge` | Add an edge to a Canvas file |
+| `vault_write` | Write text with optional frontmatter merge and verification |
+| `vault_write_binary` | Write smaller base64 binary payloads |
+| `vault_request_upload_url` | Create a signed direct upload URL for binary files |
+| `vault_import_url` | Import an allowed binary file from HTTP(S) |
+| `vault_import_file` | Import an allowed local/mounted file into the vault |
+| `vault_batch_frontmatter_update` | Update frontmatter fields across files |
+| `vault_batch_replace` | Replace exact strings across files |
+| `vault_str_replace` | Replace exact strings in one file |
+| `vault_patch` | Replace one unique exact occurrence |
+| `vault_append` | Append content to a file |
+| `vault_daily_note_path` | Resolve today's daily-note path |
+| `vault_daily_note_read` | Read today's daily note without creating it |
+| `vault_daily_note_append` | Append to today's daily note, creating it if needed |
+| `vault_template_list` | List markdown templates |
+| `vault_template_render` | Render a template with simple substitution |
+| `vault_template_apply` | Render and write a new note |
+| `vault_dataview_query` | Run Dataview TABLE DQL through Local REST API |
+| `vault_search` | Full-text search with context; includes OCR sidecars by default |
+| `vault_search_frontmatter` | Frontmatter search with comparison/list/AND filters |
+| `vault_semantic_search` | Optional hybrid semantic and keyword search |
+| `vault_list` | List directory contents; OCR sidecars hidden by default |
+| `vault_tree` | Compact nested directory tree |
+| `vault_reindex` | Rebuild optional semantic-search cache when enabled |
+| `vault_move` | Move or rename files/directories |
+| `vault_delete` | Soft-delete a file into `.trash/` |
+| `vault_delete_directory` | Soft-delete an empty directory into `.trash/` |
+
+## Optional Plugin Bridge
+
+The Plugin Bridge uses the Obsidian Local REST API plugin. Configure:
+
+```env
+VAULT_OBSIDIAN_REST_URL=https://127.0.0.1:27124
+VAULT_OBSIDIAN_REST_API_KEY=REPLACE_WITH_LOCAL_REST_API_KEY
+VAULT_OBSIDIAN_REST_VERIFY_TLS=false
+VAULT_TEMPLATER_FOLDER=Templates
 ```
 
-To enable optional semantic search:
+Constraints are deliberate:
 
-```bash
-python -m pip install -e .[semantic]
-export VAULT_SEMANTIC_SEARCH_ENABLED=1
-```
+- Templater tools use server-side simple substitution, not full Templater execution.
+- `vault_dataview_query` supports DQL TABLE queries only.
+- DataviewJS is not exposed.
+- `TABLE WITHOUT ID` is not supported by Local REST API.
 
-Optional (only if you want the heavier sentence-transformers backend):
-
-```bash
-python -m pip install -e .[semantic-sentence]
-```
-
-The server starts on port 8420 by default. It serves MCP over Streamable HTTP at `/mcp/`.
-
-`vault_read` supports normal text/markdown files and also extracts text from `.pdf` files via `pypdf`. If a PDF has no text layer, an optional external OCR fallback can be enabled with `VAULT_PDF_OCR_ENABLED=true` plus `VAULT_PDF_OCR_CMD`. When sidecars are enabled, successful OCR output is cached next to the PDF as `*.pdf.ocr.txt` with source metadata, so unchanged scan PDFs do not trigger OCR repeatedly. Other known binary formats are still rejected with a clear error instead of a misleading UTF-8 decode failure.
-
-For binary ingestion there are now four practical paths:
-
-- `vault_write_binary` for smaller files that comfortably fit into one tool call
-- `vault_request_upload_url` for real agent/local uploads: request a signed URL, then `POST` the file bytes directly to that URL
-- `vault_upload_*` is deprecated as of `v0.6.9`; migrate to `vault_request_upload_url` because removal is planned for `v0.7.0`
-- `vault_import_file` for files that already exist on a mounted or local filesystem path visible to the MCP server
-
-Frontmatter-aware write paths now preserve formatting much better than the older PyYAML-style rewrite flow. `vault_write(merge_frontmatter=true)` and `vault_batch_frontmatter_update` keep quote styles, key order, inline comments, and flow-style lists where possible by round-tripping YAML with `ruamel.yaml`.
-
-For semantic troubleshooting, the maintenance CLI can scan the vault for non-UTF-8 markdown files, write a JSON report, and run an explicit repair pass for common legacy encodings:
-
-```bash
-vault-semantic doctor --scan-utf8
-vault-semantic doctor --scan-utf8 --report-path ./reports/utf8-doctor.json
-vault-semantic doctor --repair-utf8 --repair-encoding cp1252 --dry-run
-```
-
-For vault hygiene beyond pure search, the server also exposes analytics endpoints for frontmatter gaps, broken wikilinks, suspicious tag variants, and encoding issues. Broken-link analytics distinguish likely repairable path mismatches, genuinely missing targets, and ambiguous basename/path matches that still need operator judgement.
+See [docs/plugin-bridge.md](docs/plugin-bridge.md).
 
 ## Configuration
 
-All configuration is via environment variables:
+All configuration is via environment variables. See [docs/configuration.md](docs/configuration.md) for the complete table.
 
-### Core
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `VAULT_PATH` | Yes | `~/Obsidian/MyVault` | Vault root path |
-| `VAULT_MCP_TOKEN` | Yes | (none) | Bearer token for MCP requests |
-| `VAULT_MCP_PORT` | No | `8420` | HTTP listen port |
-
-### Vault Scope Policy
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `VAULT_INCLUDED_ROOTS` | No | `.` | Comma-separated allowlist of vault subtrees exposed through MCP; `.` keeps full-vault behavior |
-| `VAULT_EXCLUDED_PATH_PREFIXES` | No | (empty) | Comma-separated relative path prefixes excluded even when they sit under an included root |
-
-### OAuth and Connector State
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `VAULT_OAUTH_CLIENT_ID` | No | `vault-mcp-client` | OAuth client ID |
-| `VAULT_OAUTH_CLIENT_SECRET` | Yes | (none) | OAuth client secret |
-| `VAULT_OAUTH_AUTH_USERNAME` | No | (none) | Optional authorize-login username |
-| `VAULT_OAUTH_AUTH_PASSWORD` | No | (none) | Optional authorize-login password |
-| `VAULT_OAUTH_REQUIRE_APPROVAL` | No | `true` | Keep extra allow click after login |
-| `VAULT_OAUTH_SESSION_SECRET` | No | `VAULT_OAUTH_CLIENT_SECRET` | Cookie-signing secret for browser login |
-| `VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS` | No | `true` | Persist dynamic client registrations |
-| `VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH` | No | `VAULT_SEMANTIC_CACHE_PATH/oauth_registered_clients.json` | Registration store file |
-| `VAULT_REGISTERED_CLIENT_TTL_SECONDS` | No | `0` | Dynamic client lifetime; `0` disables expiry |
-| `VAULT_MAX_REGISTERED_CLIENTS` | No | `128` | Max retained dynamic clients |
-
-### Public URL, Proxy, and Host Validation
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `VAULT_PUBLIC_BASE_URL` | No | (auto-detected) | Public HTTPS base URL |
-| `VAULT_TRUSTED_PROXY_IPS` | No | `127.0.0.1,::1` | Proxy IPs trusted for forwarded headers |
-| `VAULT_ALLOWED_HOSTS` | No | `127.0.0.1:*,localhost:*,[::1]:*` | Hosts allowed by rebinding protection |
-| `VAULT_PDF_OCR_ENABLED` | No | `false` | Enable external OCR fallback for image-only PDFs |
-| `VAULT_PDF_OCR_CMD` | No | (empty) | External command that prints OCR text to stdout; `{path}` placeholder is optional |
-| `VAULT_PDF_OCR_TIMEOUT` | No | `120` | Timeout in seconds for the external OCR command |
-| `VAULT_PDF_OCR_LANGUAGES` | No | `deu+eng` | Language hint passed to the OCR command via env |
-| `VAULT_PDF_OCR_SIDECAR_ENABLED` | No | same as `VAULT_PDF_OCR_ENABLED` | Cache successful OCR output next to PDFs as sidecar text files |
-| `VAULT_PDF_OCR_SIDECAR_SUFFIX` | No | `.ocr.txt` | Suffix for generated OCR sidecar files |
-
-### Health and Post-Write Automation
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `VAULT_MCP_HEARTBEAT_URL` | No | (empty) | Optional push heartbeat URL |
-| `VAULT_MCP_HEARTBEAT_INTERVAL` | No | `60` | Heartbeat interval in seconds |
-| `VAULT_HEALTH_ALLOW_REMOTE_DETAILS` | No | `false` | Let non-local callers see the detailed `/health` payload |
-| `VAULT_MCP_POST_WRITE_CMD` | No | (empty) | Optional local post-write command |
-| `VAULT_MCP_POST_WRITE_TIMEOUT` | No | `30` | Post-write hook timeout in seconds |
-
-### Semantic Search
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `VAULT_SEMANTIC_SEARCH_ENABLED` | No | `false` | Enable semantic search |
-| `VAULT_SEMANTIC_EMBED_BACKEND` | No | `fastembed` | `auto`, `sentence`, or `fastembed` |
-| `VAULT_SEMANTIC_EMBED_MODEL` | No | `BAAI/bge-small-en-v1.5` | Embedding model |
-| `VAULT_SEMANTIC_CACHE_PATH` | No | `VAULT_PATH/.obsidian-vault-mcp` | Semantic cache directory |
-| `VAULT_SEMANTIC_CHUNK_SIZE` | No | `900` | Target chunk size |
-| `VAULT_SEMANTIC_CHUNK_OVERLAP` | No | `150` | Chunk overlap |
-| `VAULT_SEMANTIC_EMBED_BATCH_SIZE` | No | `64` | Embedding batch size |
-| `VAULT_SEMANTIC_MAX_RESULTS` | No | `20` | Hard semantic result cap |
-| `VAULT_SEMANTIC_AUTO_REINDEX` | No | `false` | Allow watcher-driven refreshes |
-| `VAULT_SEMANTIC_BUILD_ON_DEMAND` | No | `false` | Build cache on first semantic query |
-| `VAULT_SEMANTIC_ALLOW_MCP_REINDEX` | No | `false` | Allow `vault_reindex(...)` via MCP |
-| `VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX` | No | `false` | Allow `vault_reindex(full=true)` once MCP reindexing is enabled |
-| `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | No | `4` | Debounce for auto-updates |
-
-### Limits and Rate Limits
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `VAULT_MAX_CONTENT_SIZE` | No | `1000000` | Max bytes per text write |
-| `VAULT_MAX_BINARY_SIZE` | No | `10485760` | Max decoded bytes for `vault_write_binary` |
-| `VAULT_MAX_UPLOAD_PART_SIZE` | No | `524288` | Max decoded bytes per resumable upload part |
-| `VAULT_IMPORT_URL_TIMEOUT_SECONDS` | No | `30` | Timeout for server-side URL imports |
-| `VAULT_IMPORT_URL_ALLOW_PRIVATE` | No | `false` | Allow URL imports from private/local network addresses |
-| `VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON` | No | (empty) | JSON object mapping extra MIME types to allowed file extensions, merged into the built-in binary allowlist |
-| `VAULT_IMPORT_FILE_ALLOWED_ROOTS` | No | (empty) | Comma-separated absolute source roots that `vault_import_file` may read from |
-| `VAULT_UPLOAD_URL_SECRET` | No | `VAULT_MCP_TOKEN` fallback | HMAC secret for short-lived direct upload URLs; set a dedicated secret in production |
-| `VAULT_UPLOAD_URL_TTL_SECONDS` | No | `900` | Default lifetime for direct upload URLs |
-| `VAULT_UPLOAD_URL_MAX_TTL_SECONDS` | No | `3600` | Maximum lifetime callers may request for direct upload URLs |
-| `VAULT_DAILY_NOTES_FOLDER` | No | (empty) | Folder for daily notes relative to the vault root |
-| `VAULT_DAILY_NOTES_FORMAT` | No | `%Y-%m-%d` | Server-local `strftime` format for daily-note filenames; `.md` is appended unless the format already ends in `.md` or `.markdown` |
-| `VAULT_DAILY_NOTES_TEMPLATE` | No | (empty) | Optional `strftime`-expanded text used when `vault_daily_note_append` creates a missing daily note |
-| `VAULT_AUDIT_LOG_PATH` | No | (empty) | Optional append-only JSON-lines audit file for mutating operations; empty disables audit logging |
-| `VAULT_OBSIDIAN_REST_URL` | No | (empty) | Obsidian Local REST API base URL; empty disables Local REST-backed tools with `capability_unavailable` |
-| `VAULT_OBSIDIAN_REST_API_KEY` | No | (empty) | API key sent as `Authorization: Bearer <key>` to Obsidian Local REST API |
-| `VAULT_OBSIDIAN_REST_VERIFY_TLS` | No | `false` | Verify TLS certificates for Local REST calls; `/health` warns if false for non-loopback URLs |
-| `VAULT_OBSIDIAN_REST_TIMEOUT` | No | `15` | Default timeout in seconds for Local REST calls |
-| `VAULT_TEMPLATER_FOLDER` | No | (empty) | Vault-relative folder used by `vault_template_list`, `vault_template_render`, and `vault_template_apply` |
-| `VAULT_DATAVIEW_TIMEOUT` | No | `15` | Timeout in seconds for `vault_dataview_query` |
-| `VAULT_MAX_BATCH_SIZE` | No | `20` | Max files in batch operations |
-| `VAULT_MAX_SEARCH_RESULTS` | No | `50` | Hard search result cap |
-| `VAULT_DEFAULT_SEARCH_RESULTS` | No | `20` | Default search result count |
-| `VAULT_MAX_LIST_DEPTH` | No | `5` | Max recursion depth for `vault_list` |
-| `VAULT_MAX_TREE_DEPTH` | No | `10` | Max recursion depth for `vault_tree` |
-| `VAULT_CONTEXT_LINES` | No | `2` | Default search context lines |
-| `VAULT_RATE_LIMIT_READ` | No | `100` | Read requests per token per minute |
-| `VAULT_RATE_LIMIT_WRITE` | No | `30` | Write requests per token per minute |
-| `VAULT_RATE_LIMIT_OAUTH_AUTHORIZE` | No | `30` | `/oauth/authorize` per IP per minute |
-| `VAULT_RATE_LIMIT_OAUTH_TOKEN` | No | `30` | `/oauth/token` per IP per minute |
-| `VAULT_RATE_LIMIT_OAUTH_REGISTER` | No | `10` | `/oauth/register` per IP per minute |
-
-Example operator extensions:
+Minimal local example:
 
 ```bash
-export VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON='{"application/vnd.openxmlformats-officedocument.wordprocessingml.document":[".docx"],"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"],"application/vnd.openxmlformats-officedocument.presentationml.presentation":[".pptx"]}'
-export VAULT_IMPORT_FILE_ALLOWED_ROOTS="/sessions/shared/uploads,/srv/obsidian-imports"
-export VAULT_UPLOAD_URL_SECRET="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+export VAULT_PATH=/path/to/ObsidianVault
+export VAULT_MCP_TOKEN=REPLACE_WITH_RANDOM_TOKEN
+export VAULT_OAUTH_CLIENT_SECRET=REPLACE_WITH_RANDOM_SECRET
+vault-mcp
 ```
 
-### Templates and Dataview
+## Security Model
 
-The P2 template tools intentionally use a small server-side renderer, not full Templater execution. Supported tokens are `{{date}}`, `{{datetime}}`, `{{title}}`, `{{target_path}}`, `{{key}}`, and `{{variables.key}}`. Templates containing Templater `<%` syntax are rejected with `error_code="template_render_unavailable"` and are not written.
+The server blocks path traversal, dotfile access, symlink escape, null bytes, and configured excluded subtrees. Writes are atomic and verified. Deletes are soft by default. Binary writes and uploads enforce media-type and size limits. See [docs/security.md](docs/security.md) and [docs/oauth.md](docs/oauth.md).
 
-`vault_dataview_query` uses Obsidian Local REST API's Dataview TABLE-DQL endpoint. `query_type` is strictly `dql`; script-style Dataview execution is not exposed.
+## Audit
 
-```bash
-export VAULT_OBSIDIAN_REST_URL="https://127.0.0.1:27124"
-export VAULT_OBSIDIAN_REST_API_KEY="your-local-rest-api-key"
-export VAULT_OBSIDIAN_REST_VERIFY_TLS=false
-export VAULT_TEMPLATER_FOLDER="Templates"
-```
+Audit records are append-only JSON Lines when `VAULT_AUDIT_LOG_PATH` is set. A post-write hook can receive the exact same JSON record on stdin, but the server itself does not forward audit data anywhere by default. See [docs/audit.md](docs/audit.md).
 
-Generate tokens with: `python -c "import secrets; print(secrets.token_hex(32))"`
+## Deployment
 
-If you want to expose only part of a larger vault, for example:
-
-```bash
-export VAULT_INCLUDED_ROOTS="notes,projects"
-export VAULT_EXCLUDED_PATH_PREFIXES="notes/_tmp/,projects/archive/"
-```
-
-With that configuration:
-
-- `vault_list("")` shows only `notes/` and `projects/`
-- reads/writes/searches outside those roots are rejected
-- excluded prefixes stay hidden from list/search/indexing even when they live under an allowed root
-
-## Connecting Clients
-
-This section is about attaching a client to a running server.
-Deployment comes later and covers how to keep the server and tunnel running reliably.
-
-### Connecting to Claude
-
-The Claude desktop and mobile apps can connect to remote MCP servers via OAuth.
-
-1. Start the server (locally or behind a tunnel)
-2. Open Claude and go to **Settings > Integrations > Add Integration**
-3. Enter your server URL (e.g. `https://vault-mcp.yourdomain.com`)
-4. Enter the OAuth client ID and client secret you configured
-5. Claude will discover the OAuth endpoints automatically and open a browser window
-6. If authorize-login credentials are configured, sign in in the browser window (and approve if `VAULT_OAUTH_REQUIRE_APPROVAL=true`); otherwise the server auto-approves the authorization
-7. Claude now has access to the vault toolset -- on desktop and mobile
-
-For local-only use (no tunnel), point Claude at `http://localhost:8420`.
-
-If Claude or ChatGPT asks to reauthenticate after a server restart, verify these first:
-
-1. `VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS=true`
-2. `VAULT_REGISTERED_CLIENT_TTL_SECONDS=0`
-3. `VAULT_PUBLIC_BASE_URL` is set explicitly for your public tunnel hostname
-4. `GET /health` shows `oauth.registered_client_store_exists=true` and `oauth.restart_stable_reconnects=true`
-
-This fork now exposes those restart-relevant OAuth settings in `/health` and logs them once during startup so operator mistakes are easier to spot. With those settings in place, a plain server restart should not invalidate persisted client registrations or the bearer token itself; if reconnects still happen, the remaining cause is more likely client-side token or connector state than missing server-side persistence.
-
-ChatGPT has also proven a bit stricter than Claude during connector refresh. In practice it may probe both `/` and `/mcp`, use SSE-style root discovery, and send permissive refresh headers such as `Accept: */*` while reloading actions. This fork now answers those refresh probes more defensively so the ChatGPT "Aktualisieren" flow can still rediscover actions cleanly.
-
-If a ChatGPT connector was originally created before `VAULT_REGISTERED_CLIENT_TTL_SECONDS=0`, one one-time re-registration may still be needed because the older dynamic client registration may already have expired from the persisted store. After that, the current recommended settings should keep reconnects stable across normal server restarts.
-
-### Connecting to ChatGPT
-
-ChatGPT can use the same deployed MCP endpoint, but connector behavior may vary a bit more by rollout and client version than Claude does.
-
-Practical recommendations:
-
-1. Start with the same base URL you would use for Claude, ideally over HTTPS with a stable public hostname.
-2. Keep OAuth discovery reachable at the public base URL and set `VAULT_PUBLIC_BASE_URL` explicitly if you are behind a tunnel or reverse proxy.
-3. If a connector flow is sensitive to extra approval clicks, try `VAULT_OAUTH_REQUIRE_APPROVAL=false` while keeping `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD` enabled.
-4. If the connector expects `/authorize` instead of `/oauth/authorize`, this fork already provides the compatibility alias.
-
-In practice, the fixes in this fork around OAuth discovery, forwarded-host handling, `/authorize` compatibility, and date serialization were added specifically to improve real client interoperability, including ChatGPT-style connector flows.
-
-## Remote Access with Cloudflare Tunnel
-
-To make the server accessible from anywhere:
-
-```bash
-# Install cloudflared
-brew install cloudflare/cloudflare/cloudflared
-
-# Set your desired hostname and run the interactive setup
-export VAULT_MCP_HOSTNAME="vault-mcp.yourdomain.com"
-./scripts/setup-tunnel.sh
-```
-
-The script authenticates with Cloudflare, creates a tunnel, writes the config, and sets up the DNS record. You will need a domain managed by Cloudflare.
-
-For a publicly reachable deployment, set `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD` so the browser-based OAuth step requires an explicit login before Claude receives an authorization code.
-
-After setup, set `VAULT_ALLOWED_HOSTS` to include your tunnel hostname so DNS rebinding protection accepts requests from your domain, for example:
-
-```bash
-export VAULT_ALLOWED_HOSTS="127.0.0.1:*,localhost:*,[::1]:*,vault-mcp.yourdomain.com"
-```
-
-## Production Deployment (macOS)
-
-For always-on operation, use launchd to run both the MCP server and the Cloudflare Tunnel as persistent background services that start at login and restart on failure.
-
-### 1. Edit the plist templates
-
-```bash
-cp scripts/launchd/com.example.vault-mcp.plist ~/Library/LaunchAgents/
-cp scripts/launchd/com.example.cloudflared-vault.plist ~/Library/LaunchAgents/
-```
-
-Open each plist and replace the placeholder tokens:
-- `REPLACE_WITH_UV_PATH` -- path to `uv` binary (run `which uv`)
-- `REPLACE_WITH_PROJECT_PATH` -- absolute path to this project directory
-- `REPLACE_WITH_VAULT_PATH` -- absolute path to your Obsidian vault
-- `REPLACE_WITH_TOKEN` -- your `VAULT_MCP_TOKEN` value
-- `REPLACE_WITH_OAUTH_SECRET` -- your `VAULT_OAUTH_CLIENT_SECRET` value
-- `REPLACE_WITH_HOME` -- your home directory (e.g. `/Users/yourname`)
-- `REPLACE_WITH_CLOUDFLARED_PATH` -- path to `cloudflared` binary (run `which cloudflared`)
-
-### 2. Load the services
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.example.vault-mcp.plist
-launchctl load ~/Library/LaunchAgents/com.example.cloudflared-vault.plist
-```
-
-Both services are configured with `RunAtLoad` (start at login) and `KeepAlive` (restart on failure). They will survive reboots.
-
-### 3. Verify
-
-```bash
-# Check both services are running
-launchctl list | grep vault
-
-# Test the server responds
-curl -s http://localhost:8420/.well-known/oauth-authorization-server
-
-# Check logs
-tail -f ~/Library/Logs/vault-mcp-error.log
-```
-
-## Deployment Examples
-
-- Headless Linux VM on Proxmox (Obsidian + Xvfb + systemd + tunnel):
-  [`docs/deploy/headless-linux-proxmox.md`](docs/deploy/headless-linux-proxmox.md)
-
-## Obsidian Sync Compatibility
-
-The server coexists with Obsidian Sync (or any file-based sync mechanism) without conflict. All writes use atomic file replacement (`write-to-temp-then-rename`), which means:
-
-- Obsidian never sees a half-written file
-- If Sync and the MCP server write to the same file simultaneously, the last write wins (standard filesystem semantics) but neither write is corrupted
-- The frontmatter index watches for filesystem changes via `watchdog` and updates automatically when Sync brings in new files
-
-## Mutation Hooks
-
-If you want lightweight automation after vault mutations, configure:
-
-```bash
-export VAULT_MCP_POST_WRITE_CMD="/usr/local/bin/obsidian-post-write"
-export VAULT_MCP_POST_WRITE_TIMEOUT=30
-```
-
-The hook runs after writes, binary writes, append/patch/replace operations, moves, and deletes.
-
-The command is executed without `shell=True`. It receives:
-
-- `MCP_OPERATION` such as `created`, `updated`, `moved`, or `deleted`
-- `MCP_PATHS` as a colon-separated list of vault-relative paths
-- `MCP_PATHS_JSON` as a JSON array of the same paths
-
-This is useful for Git sync, backup triggers, or forwarding audit events, but it is intentionally opt-in and local to the machine that hosts the vault.
-
-## Semantic Search
-
-Semantic search is optional and disabled by default. The current implementation is CPU-first and uses:
-
-- `fastembed` for embeddings by default
-- optional `sentence-transformers` backend if explicitly installed/enabled
-- `faiss-cpu` for vector similarity search
-- `rank-bm25` for keyword scoring
-
-Set `VAULT_SEMANTIC_EMBED_BACKEND` to control backend choice:
-
-- `fastembed` (default): require fastembed
-- `auto`: prefer fastembed, fall back to sentence-transformers if installed
-- `sentence`: require sentence-transformers
-
-Queries are answered with a hybrid score that blends semantic similarity with keyword relevance. The semantic index is persisted on disk so normal searches stay fast after restart.
-Semantic initialization is lazy: the index builds on first semantic-tool use, not during normal OAuth/tool discovery.
-
-`vault_reindex(full=true)` performs a full rebuild. `vault_reindex(full=false)` performs an incremental refresh based on changed/deleted files, but both paths are disabled by default for live MCP clients because the incremental path still triggers a long-running vector rebuild in practice.
-
-For production stability, this fork now defaults to a conservative semantic lifecycle:
-
-- the live MCP service loads an existing semantic cache if present
-- the live MCP service does not auto-build a missing cache during normal tool requests
-- watcher-driven semantic auto-refresh is disabled by default
-- full rebuilds are expected to run manually or via the optional nightly timer
-- MCP-triggered `vault_reindex(...)` is disabled by default; prefer `vault-semantic reindex --mode incremental/full`
-
-If you explicitly want the older live-update behavior, enable it with:
-
-```bash
-export VAULT_SEMANTIC_AUTO_REINDEX=1
-export VAULT_SEMANTIC_BUILD_ON_DEMAND=1
-export VAULT_SEMANTIC_ALLOW_MCP_REINDEX=true
-export VAULT_SEMANTIC_ALLOW_MCP_FULL_REINDEX=true
-```
-
-`vault_semantic_search` accepts `search_mode=hybrid` (default), `semantic`, or `keyword`.
-
-For operator workflows, the project also exposes:
-
-- `vault-semantic status|reindex|search|doctor`
-- `vault-semantic-benchmark "query text"`
-
-For Linux deployments, an optional nightly full rebuild can be used as the recommended maintenance path for semantic cache refreshes on larger or more stability-sensitive systems.
-
-Example systemd templates are included in [`scripts/systemd/`](scripts/systemd):
-
-- `obsidian-mcp-semantic-reindex.service`
-- `obsidian-mcp-semantic-reindex.timer`
-
-They run `vault-semantic reindex --mode full` once per night. Adjust the placeholders and calendar time before enabling them.
-
-Useful operational commands:
-
-```bash
-systemctl list-timers obsidian-mcp-semantic-reindex.timer
-sudo systemctl start obsidian-mcp-semantic-reindex.service
-sudo journalctl -fu obsidian-mcp-semantic-reindex.service
-sudo journalctl -u obsidian-mcp-semantic-reindex.service -n 50 --no-pager
-```
+For a sanitized headless Linux + Proxmox + Obsidian Sync deployment pattern, see [docs/deploy/headless-linux-proxmox.md](docs/deploy/headless-linux-proxmox.md).
 
 ## Development
 
-### Running tests
-
 ```bash
-uv run pytest tests/ -v
+python -m pip install -e .
+python -m pytest -q
 ```
 
-If you are using `pip` instead of `uv`, run:
+Optional semantic dependencies:
 
 ```bash
-python -m pytest tests/ -v
+python -m pip install -e .[semantic]
 ```
-
-Tests use temporary directories and never touch your real vault.
 
 ### Project structure
 
-```
+```text
 src/obsidian_vault_mcp/
-    auth.py                 # Bearer token middleware (Starlette)
-    config.py               # Environment variable configuration
-    frontmatter_io.py       # YAML round-trip helpers that preserve frontmatter formatting
-    hooks.py                # Optional post-write hook dispatcher
-    frontmatter_index.py    # In-memory YAML frontmatter index with filesystem watcher
-    models.py               # Pydantic input validation models
-    oauth.py                # OAuth 2.0 authorization code flow with PKCE
-    retrieval/              # Optional FAISS-based semantic retrieval engine
-    server.py               # FastMCP server setup, tool registration, entry point
-    vault.py                # Core filesystem operations (path security, atomic writes)
-    tools/
-        manage.py           # list, move, delete tools
-        read.py             # read, batch_read tools
-        search.py           # full-text search, frontmatter search tools
-        semantic_search.py  # optional semantic search + reindex tools
-        write.py            # write, append, patch, replace, and frontmatter update tools
-tests/
-    test_chunker.py         # Semantic chunking tests
-    conftest.py             # Shared fixtures (temp vault with sample files)
-    test_frontmatter.py     # Frontmatter index and query tests
-    test_semantic_search.py # Semantic search tool tests
-    test_tools.py           # Integration tests for tool functions
-    test_vault.py           # Path resolution and file operation tests
-scripts/
-    setup-tunnel.sh         # Interactive Cloudflare Tunnel setup
-    launchd/                # macOS launchd plist templates
+    audit.py              # JSONL audit pipeline and health counters
+    auth.py               # Bearer-token middleware
+    config.py             # Environment configuration
+    frontmatter_index.py  # In-memory frontmatter index and watcher
+    frontmatter_io.py     # ruamel.yaml round-trip helpers
+    hooks.py              # Post-write hook dispatcher
+    models.py             # Pydantic input models
+    oauth.py              # OAuth 2.0 endpoints and discovery
+    obsidian_rest.py      # Local REST API client
+    rate_limit.py         # Per-token in-memory rate limiting
+    server.py             # FastMCP setup, routes, and tool registration
+    vault.py              # Filesystem operations and path policy
+    retrieval/            # Optional semantic search engine
+    tools/                # Tool implementations
+tests/                    # Unit and integration tests
+docs/                     # Detailed guides
 ```
+
+## Release Notes
+
+See [CHANGELOG.md](CHANGELOG.md) and the [GitHub Releases](https://github.com/mleitnercom/obsidian-web-mcp/releases).
 
 ## License
 
-MIT -- see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

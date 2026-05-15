@@ -204,7 +204,6 @@ Use the smallest transfer path that fits the source:
 
 - `vault_write_binary` for small files where one base64 payload is reliable enough.
 - `vault_request_upload_url` for agent-local files or larger attachments: the MCP tool returns a short-lived signed URL, and the agent `POST`s the bytes directly to `/upload/{id}` with the matching `Content-Type`.
-- `vault_upload_init` / `vault_upload_part` / `vault_upload_status` / `vault_upload_commit` only as a legacy fallback when a caller cannot use direct HTTP upload. Parts are idempotent, can arrive out of order, and `status` reports missing part numbers after interruptions.
 - `vault_import_url` when the file is reachable through HTTP(S). The server downloads the file directly, verifies the requested media type, enforces `VAULT_MAX_BINARY_SIZE`, and can verify an expected SHA-256 checksum.
 
 Security notes:
@@ -212,7 +211,7 @@ Security notes:
 - Direct upload URLs are bearer-auth exempt but HMAC signed, single-use, and short-lived. Set a dedicated `VAULT_UPLOAD_URL_SECRET` in production; otherwise the server falls back to `VAULT_MCP_TOKEN`.
 - URL imports block private, loopback, link-local, reserved, and multicast addresses by default.
 - Set `VAULT_IMPORT_URL_ALLOW_PRIVATE=true` only for trusted single-user deployments where importing from internal URLs is intentional.
-- Keep `VAULT_MAX_UPLOAD_PART_SIZE` modest enough for ChatGPT/Claude tool-call limits when legacy chunked uploads are still used; the default is `524288` decoded bytes.
+- The legacy resumable MCP upload tools were removed in `v0.7.0`; use signed direct uploads instead.
 
 ## Release Baseline
 

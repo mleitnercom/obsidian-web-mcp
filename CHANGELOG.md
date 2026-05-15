@@ -5,6 +5,18 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.7.0] - 2026-05-15
+
+### BREAKING CHANGES
+- Removed `vault_upload_init`, `vault_upload_part`, `vault_upload_status`, `vault_upload_commit`, and `vault_upload_abort`. Migrate to `vault_request_upload_url` plus signed `POST /upload/{id}`.
+
+### Changed
+- Fully restructured the README around At a Glance, Application Scenarios, Capabilities, Plugin Bridge, Configuration, Security, and Audit.
+- Updated binary upload guidance so the signed direct-upload flow is the only recommended large-file path.
+
+### Added
+- Added `docs/` guides for audit, OAuth, Plugin Bridge, configuration, security, and headless Linux/Proxmox deployment.
+
 ## [v0.6.10] - 2026-05-15
 
 ### Features

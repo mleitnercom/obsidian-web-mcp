@@ -28,10 +28,6 @@ from obsidian_vault_mcp.tools.write import (
     vault_patch,
     vault_request_upload_url,
     vault_str_replace,
-    vault_upload_commit,
-    vault_upload_init,
-    vault_upload_part,
-    vault_upload_status,
     vault_write,
     vault_write_binary,
 )
@@ -444,46 +440,6 @@ def test_vault_write_binary_accepts_operator_configured_extra_media_type(vault_d
     assert (vault_dir / "imports" / "report.xlsx").read_bytes() == content
 
 
-def test_resumable_upload_supports_status_retry_and_commit(vault_dir, monkeypatch):
-    """Resumable uploads should tolerate out-of-order parts and duplicate retries."""
-    monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
-    content = b"abcdefghijklmnopqrstuvwxyz"
-    checksum = hashlib.sha256(content).hexdigest()
-
-    init = json.loads(
-        vault_upload_init(
-            "assets/blob.pdf",
-            "application/pdf",
-            total_size=len(content),
-            part_size=10,
-        )
-    )
-
-    assert "error" not in init
-    upload_id = init["upload_id"]
-    assert init["missing_parts"] == [0, 1, 2]
-
-    part_1 = base64.b64encode(content[10:20]).decode("ascii")
-    result = json.loads(vault_upload_part(upload_id, 1, part_1))
-    assert result["missing_parts"] == [0, 2]
-
-    duplicate = json.loads(vault_upload_part(upload_id, 1, part_1))
-    assert duplicate["duplicate"] is True
-    assert duplicate["missing_parts"] == [0, 2]
-
-    json.loads(vault_upload_part(upload_id, 0, base64.b64encode(content[:10]).decode("ascii")))
-    status = json.loads(vault_upload_status(upload_id))
-    assert status["missing_parts"] == [2]
-
-    json.loads(vault_upload_part(upload_id, 2, base64.b64encode(content[20:]).decode("ascii")))
-    commit = json.loads(vault_upload_commit(upload_id, checksum))
-
-    assert "error" not in commit
-    assert commit["sha256"] == checksum
-    assert (vault_dir / "assets" / "blob.pdf").read_bytes() == content
-    assert "error" in json.loads(vault_upload_status(upload_id))
-
-
 def test_vault_request_upload_url_returns_signed_public_url(vault_dir, monkeypatch):
     """Direct uploads should return a short-lived URL that agents can POST to outside MCP args."""
     monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
@@ -508,97 +464,8 @@ def test_vault_request_upload_url_returns_signed_public_url(vault_dir, monkeypat
     assert result["method"] == "POST"
 
 
-def test_resumable_upload_rejects_wrong_duplicate_part(vault_dir, monkeypatch):
-    """A repeated part number with different bytes should be rejected."""
-    monkeypatch.setattr(write_tools.config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
-    init = json.loads(vault_upload_init("assets/blob.png", "image/png", total_size=4, part_size=4))
-    upload_id = init["upload_id"]
-
-    json.loads(vault_upload_part(upload_id, 0, base64.b64encode(b"aaaa").decode("ascii")))
-    result = json.loads(vault_upload_part(upload_id, 0, base64.b64encode(b"bbbb").decode("ascii")))
-
-    assert "different checksum" in result["error"]
-
-
-def test_vault_upload_init_uses_small_default_part_size(vault_dir, monkeypatch):
-    """Init should return a tool-call-friendly default part size for multi-part uploads."""
-    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
-
-    result = json.loads(
-        vault_upload_init(
-            "assets/default-parts.pdf",
-            "application/pdf",
-            340758,
-        )
-    )
-
-    assert "error" not in result
-    assert result["part_size"] == 16 * 1024
-    assert result["total_parts"] == 21
-
-
-def test_vault_upload_init_honors_explicit_part_size(vault_dir, monkeypatch):
-    """Init should preserve an explicit smaller part size request."""
-    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
-
-    result = json.loads(
-        vault_upload_init(
-            "assets/custom-parts.pdf",
-            "application/pdf",
-            50000,
-            part_size=8192,
-        )
-    )
-
-    assert "error" not in result
-    assert result["part_size"] == 8192
-    assert result["total_parts"] == 7
-
-
-def test_deprecated_upload_tools_return_warning_flags(vault_dir, monkeypatch):
-    """Legacy MCP upload wrappers should keep working while returning migration hints."""
-    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
-    content = b"abcd"
-    checksum = hashlib.sha256(content).hexdigest()
-
-    with _authenticated_tool_context():
-        init = json.loads(server.vault_upload_init("assets/deprecated.pdf", "application/pdf", total_size=4, part_size=4))
-        assert init["deprecated"] is True
-        assert "removed in v0.7.0" in init["deprecation_warning"]
-        assert "vault_request_upload_url" in init["deprecation_warning"]
-
-        upload_id = init["upload_id"]
-        part = json.loads(server.vault_upload_part(upload_id, 0, base64.b64encode(content).decode("ascii")))
-        status = json.loads(server.vault_upload_status(upload_id))
-        commit = json.loads(server.vault_upload_commit(upload_id, checksum))
-
-        init_abort = json.loads(server.vault_upload_init("assets/deprecated-abort.pdf", "application/pdf", total_size=4, part_size=4))
-        abort = json.loads(server.vault_upload_abort(init_abort["upload_id"]))
-
-    for payload in (part, status, commit):
-        assert payload["deprecated"] is True
-        assert "signed POST /upload/{id}" in payload["deprecation_warning"]
-
-    assert abort["deprecated"] is True
-    assert abort["aborted"] is True
-
-
-def test_deprecated_upload_tools_log_warning(vault_dir, monkeypatch, caplog):
-    """Deprecated upload tool use should be visible in logs with client family."""
-    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", vault_dir / ".obsidian-vault-mcp")
-
-    with _authenticated_tool_context():
-        with caplog.at_level("WARNING", logger="obsidian_vault_mcp.server"):
-            result = json.loads(server.vault_upload_init("assets/warn.pdf", "application/pdf", total_size=4, part_size=4))
-
-    assert "error" not in result
-    messages = [record.getMessage() for record in caplog.records]
-    assert any("Deprecated tool called: vault_upload_init" in message for message in messages)
-    assert any("client_family='pytest'" in message for message in messages)
-
-
-def test_deprecated_upload_tool_schemas_are_discoverable():
-    """MCP tool descriptions should clearly mark legacy upload tools as deprecated."""
+def test_legacy_upload_tool_schemas_are_removed():
+    """v0.7.0 removes the legacy resumable upload MCP tools from discovery."""
     from obsidian_vault_mcp.server import mcp
 
     for name in (
@@ -608,10 +475,7 @@ def test_deprecated_upload_tool_schemas_are_discoverable():
         "vault_upload_commit",
         "vault_upload_abort",
     ):
-        tool = mcp._tool_manager.get_tool(name)
-        assert tool is not None
-        assert tool.description.startswith("DEPRECATED")
-        assert "vault_request_upload_url" in tool.description
+        assert mcp._tool_manager.get_tool(name) is None
 
 
 def test_vault_import_url_downloads_and_writes_binary(vault_dir, monkeypatch):
@@ -775,15 +639,6 @@ def test_audit_log_records_mutation_operations(vault_dir, monkeypatch, tmp_path)
         lambda: server.vault_batch_frontmatter_update([{"path": "audit/frontmatter.md", "fields": {"status": "new"}}]),
         ["audit/frontmatter.md"],
     )
-
-    content = b"abcdefghijklmnopqrstuvwxyz"
-    checksum = hashlib.sha256(content).hexdigest()
-    init = json.loads(vault_upload_init("audit/upload.pdf", "application/pdf", total_size=len(content), part_size=10))
-    upload_id = init["upload_id"]
-    json.loads(vault_upload_part(upload_id, 0, base64.b64encode(content[:10]).decode("ascii")))
-    json.loads(vault_upload_part(upload_id, 1, base64.b64encode(content[10:20]).decode("ascii")))
-    json.loads(vault_upload_part(upload_id, 2, base64.b64encode(content[20:]).decode("ascii")))
-    run_and_assert("vault_upload_commit", lambda: server.vault_upload_commit(upload_id, checksum), "audit/upload.pdf")
 
     source = tmp_path / "source.pdf"
     source.write_bytes(b"%PDF local")
