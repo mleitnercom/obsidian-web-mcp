@@ -440,6 +440,13 @@ mcp = FastMCP(
 # --- Register all tools ---
 
 from .tools.read import vault_read as _vault_read, vault_batch_read as _vault_batch_read
+from .tools.canvas import (
+    CanvasEdgePayload,
+    CanvasNodePayload,
+    vault_canvas_add_edge as _vault_canvas_add_edge,
+    vault_canvas_add_node as _vault_canvas_add_node,
+    vault_canvas_read as _vault_canvas_read,
+)
 from .tools.analytics import (
     vault_analytics_findings as _vault_analytics_findings,
     vault_analytics_summary as _vault_analytics_summary,
@@ -620,6 +627,70 @@ def vault_batch_read(paths: list[str], include_content: bool = True) -> str:
         lambda: _vault_batch_read(inp.paths, inp.include_content),
         paths=len(inp.paths),
         include_content=inp.include_content,
+    )
+
+
+@mcp.tool(
+    name="vault_canvas_read",
+    description=(
+        "Read an Obsidian .canvas file and return parsed JSON nodes and edges. "
+        "Error codes: file_not_found, invalid_canvas_format, path_not_allowed."
+    ),
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def vault_canvas_read(path: str) -> str:
+    """Read an Obsidian Canvas file."""
+    inp = VaultReadInput(path=path)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _run_logged_tool("vault_canvas_read", lambda: _vault_canvas_read(inp.path), path=inp.path)
+
+
+@mcp.tool(
+    name="vault_canvas_add_node",
+    description=(
+        "Append a node to an Obsidian .canvas file, creating the file if missing. "
+        "Node requires type, x, y, width, height; optional alphanumeric id is generated when omitted. "
+        "Preserves existing nodes/edges order and extra fields. "
+        "Error codes: invalid_node_schema, write_verification_failed, path_not_allowed."
+    ),
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_canvas_add_node(path: str, node: CanvasNodePayload) -> str:
+    """Add a node to an Obsidian Canvas file."""
+    inp = VaultReadInput(path=path)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_canvas_add_node",
+        lambda: _vault_canvas_add_node(inp.path, node.model_dump(exclude_none=True, mode="json")),
+        path=inp.path,
+    )
+
+
+@mcp.tool(
+    name="vault_canvas_add_edge",
+    description=(
+        "Append an edge to an existing Obsidian .canvas file. "
+        "Edge requires fromNode, toNode, and fromSide/toSide enum values: top, right, bottom, left; "
+        "optional alphanumeric id is generated when omitted. "
+        "Error codes: file_not_found, invalid_edge_schema, invalid_edge_reference, "
+        "write_verification_failed, path_not_allowed."
+    ),
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_canvas_add_edge(path: str, edge: CanvasEdgePayload) -> str:
+    """Add an edge to an existing Obsidian Canvas file."""
+    inp = VaultReadInput(path=path)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_canvas_add_edge",
+        lambda: _vault_canvas_add_edge(inp.path, edge.model_dump(exclude_none=True, mode="json")),
+        path=inp.path,
     )
 
 
