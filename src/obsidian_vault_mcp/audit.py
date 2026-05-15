@@ -33,6 +33,8 @@ MUTATION_OPERATIONS = {
     "POST /upload/{id}",
     "vault_import_url",
     "vault_import_file",
+    "vault_canvas_add_node",
+    "vault_canvas_add_edge",
 }
 
 READ_OPERATIONS = {
@@ -45,6 +47,7 @@ READ_OPERATIONS = {
     "vault_tree",
     "vault_analytics_summary",
     "vault_analytics_findings",
+    "vault_canvas_read",
 }
 
 _AUDIT_WINDOW = timedelta(hours=24)

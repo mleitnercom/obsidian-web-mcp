@@ -2,13 +2,36 @@
 
 import json
 import re
+from contextlib import contextmanager
 
-from obsidian_vault_mcp import server
+from obsidian_vault_mcp import config, server
+from obsidian_vault_mcp.rate_limit import (
+    reset_current_auth_principal,
+    reset_current_request_metadata,
+    set_current_auth_principal,
+    set_current_request_metadata,
+)
 from obsidian_vault_mcp.tools.canvas import (
+    CanvasNodePayload,
     vault_canvas_add_edge,
     vault_canvas_add_node,
     vault_canvas_read,
 )
+
+
+@contextmanager
+def _authenticated_tool_context():
+    principal = set_current_auth_principal("canvas-audit-token")
+    metadata = set_current_request_metadata({"client_family": "pytest", "request_id": "canvas-req"})
+    try:
+        yield
+    finally:
+        reset_current_request_metadata(metadata)
+        reset_current_auth_principal(principal)
+
+
+def _read_jsonl(path):
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def test_canvas_roundtrip_preserves_existing_order_and_fields(vault_dir):
@@ -201,3 +224,25 @@ def test_canvas_tools_are_discoverable_with_schema_hints():
     assert edge_def["properties"]["toSide"]["enum"] == ["top", "right", "bottom", "left"]
     assert "top, right, bottom, left" in edge_def["properties"]["fromSide"]["description"]
     assert "top, right, bottom, left" in edge_def["properties"]["toSide"]["description"]
+
+
+def test_canvas_write_tools_emit_audit_records(vault_dir, monkeypatch, tmp_path):
+    """Canvas write wrappers should participate in the v0.6.8 audit pipeline."""
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_PATH", str(audit_path))
+
+    with _authenticated_tool_context():
+        result = json.loads(
+            server.vault_canvas_add_node(
+                "audit.canvas",
+                CanvasNodePayload(type="text", text="Audited", x=0, y=0, width=200, height=120),
+            )
+        )
+
+    assert "error" not in result
+    records = _read_jsonl(audit_path)
+    assert len(records) == 1
+    assert records[0]["operation"] == "vault_canvas_add_node"
+    assert records[0]["target_path"] == "audit.canvas"
+    assert records[0]["operation_status"] == "success"
+    assert records[0]["client_id"] == "pytest"
