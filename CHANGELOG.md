@@ -13,7 +13,7 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 ### Reliability / Operator UX
 - Legacy upload tool responses now include `deprecated=true` and a client-visible migration warning while preserving existing functionality.
 - Deprecated upload tool calls emit a server WARNING with the tool name and client family so operators can identify clients that still need migration.
-- MCP tool descriptions are prefixed with `DEPRECATED — use vault_request_upload_url instead.` for schema discoverability.
+- MCP tool descriptions are prefixed with `DEPRECATED - use vault_request_upload_url instead.` for schema discoverability.
 
 ## [v0.6.8] - 2026-05-15
 

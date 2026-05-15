@@ -831,7 +831,7 @@ def vault_request_upload_url(
 @mcp.tool(
     name="vault_upload_init",
     description=(
-        "DEPRECATED — use vault_request_upload_url instead. Legacy fallback: start a resumable "
+        "DEPRECATED - use vault_request_upload_url instead. Legacy fallback: start a resumable "
         "base64 binary upload session. This tool will be removed in v0.7.0."
     ),
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
@@ -873,7 +873,7 @@ def vault_upload_init(
 @mcp.tool(
     name="vault_upload_part",
     description=(
-        "DEPRECATED — use vault_request_upload_url instead. Upload one idempotent base64 part "
+        "DEPRECATED - use vault_request_upload_url instead. Upload one idempotent base64 part "
         "for a resumable binary upload. This tool will be removed in v0.7.0."
     ),
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
@@ -908,7 +908,7 @@ def vault_upload_part(
 @mcp.tool(
     name="vault_upload_status",
     description=(
-        "DEPRECATED — use vault_request_upload_url instead. Return resumable binary upload "
+        "DEPRECATED - use vault_request_upload_url instead. Return resumable binary upload "
         "progress, including received and missing part numbers. This tool will be removed in v0.7.0."
     ),
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -930,7 +930,7 @@ def vault_upload_status(upload_id: str) -> str:
 @mcp.tool(
     name="vault_upload_commit",
     description=(
-        "DEPRECATED — use vault_request_upload_url instead. Commit a complete resumable binary "
+        "DEPRECATED - use vault_request_upload_url instead. Commit a complete resumable binary "
         "upload after verifying total size and SHA-256 checksum. This tool will be removed in v0.7.0."
     ),
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
@@ -952,7 +952,7 @@ def vault_upload_commit(upload_id: str, expected_sha256: str) -> str:
 @mcp.tool(
     name="vault_upload_abort",
     description=(
-        "DEPRECATED — use vault_request_upload_url instead. Abort and remove a staged resumable "
+        "DEPRECATED - use vault_request_upload_url instead. Abort and remove a staged resumable "
         "binary upload session. This tool will be removed in v0.7.0."
     ),
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
