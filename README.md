@@ -4,7 +4,7 @@ Production-hardened fork of `obsidian-web-mcp` for MCP access to an Obsidian vau
 
 ## Release
 
-Latest: [v0.6.8](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.8) (2026-05-15).
+Latest: [v0.6.9](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.6.9) (2026-05-15).
 
 ## Status
 
@@ -102,7 +102,7 @@ This is a server that provides network access to your personal notes. Security i
 | `vault_write` | Write a file with optional frontmatter merging; creates parent dirs |
 | `vault_write_binary` | Write an allowed binary file such as PNG, JPEG, WebP, GIF, SVG, PDF, or configured extra media types from base64 input |
 | `vault_request_upload_url` | Create a short-lived signed HTTP upload URL so agents can POST local files directly without squeezing bytes through MCP tool arguments |
-| `vault_upload_init` / `vault_upload_part` / `vault_upload_status` / `vault_upload_commit` / `vault_upload_abort` | Legacy resumable binary upload flow with missing-part recovery and SHA-256 verification; prefer `vault_request_upload_url` for real agent file uploads |
+| `vault_upload_init` / `vault_upload_part` / `vault_upload_status` / `vault_upload_commit` / `vault_upload_abort` | Deprecated legacy resumable binary upload flow. Use `vault_request_upload_url` plus signed `POST /upload/{id}` instead; removal is planned for `v0.7.0` |
 | `vault_import_file` | Import an allowed binary file from a local allowlisted filesystem path without base64-wrapping it into the tool call |
 | `vault_import_url` | Import an allowed binary file from an HTTP(S) URL by letting the server download and verify it |
 | `vault_batch_frontmatter_update` | Update YAML frontmatter fields on multiple files without touching body content, preserving existing YAML formatting where possible |
@@ -183,7 +183,7 @@ For binary ingestion there are now four practical paths:
 
 - `vault_write_binary` for smaller files that comfortably fit into one tool call
 - `vault_request_upload_url` for real agent/local uploads: request a signed URL, then `POST` the file bytes directly to that URL
-- `vault_upload_*` as a legacy fallback for payloads that must still be chunked through MCP arguments
+- `vault_upload_*` is deprecated as of `v0.6.9`; migrate to `vault_request_upload_url` because removal is planned for `v0.7.0`
 - `vault_import_file` for files that already exist on a mounted or local filesystem path visible to the MCP server
 
 Frontmatter-aware write paths now preserve formatting much better than the older PyYAML-style rewrite flow. `vault_write(merge_frontmatter=true)` and `vault_batch_frontmatter_update` keep quote styles, key order, inline comments, and flow-style lists where possible by round-tripping YAML with `ruamel.yaml`.

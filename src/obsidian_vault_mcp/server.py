@@ -41,6 +41,11 @@ from .retrieval import SemanticSearchEngine
 from .vault import vault_json_dumps
 
 logger = logging.getLogger(__name__)
+UPLOAD_DEPRECATION_WARNING = (
+    "DEPRECATED: This tool will be removed in v0.7.0. "
+    "Use vault_request_upload_url + signed POST /upload/{id} instead. "
+    "See README for migration."
+)
 
 # Global frontmatter index instance
 frontmatter_index = FrontmatterIndex()
@@ -268,6 +273,29 @@ def _tool_rate_limit_error(scope: str, limit: int) -> str | None:
     except ValueError as e:
         return vault_json_dumps({"error": str(e)})
     return None
+
+
+def _with_upload_deprecation(result: str) -> str:
+    """Add a client-visible deprecation warning to legacy upload tool responses."""
+    try:
+        payload = json.loads(result)
+    except Exception:
+        payload = {"result": result}
+    if not isinstance(payload, dict):
+        payload = {"result": payload}
+    payload["deprecated"] = True
+    payload["deprecation_warning"] = UPLOAD_DEPRECATION_WARNING
+    return vault_json_dumps(payload)
+
+
+def _log_deprecated_upload_tool(name: str) -> None:
+    """Log legacy upload tool usage so operators can identify clients to migrate."""
+    metadata = current_request_metadata() or {}
+    logger.warning(
+        "Deprecated tool called: %s client_family=%r",
+        name,
+        metadata.get("client_family"),
+    )
 
 
 async def _heartbeat_loop(url: str, interval: int) -> None:
@@ -802,7 +830,10 @@ def vault_request_upload_url(
 
 @mcp.tool(
     name="vault_upload_init",
-    description="Legacy fallback: start a resumable base64 binary upload session. Prefer vault_request_upload_url for real agent file uploads because it avoids MCP argument-size limits.",
+    description=(
+        "DEPRECATED — use vault_request_upload_url instead. Legacy fallback: start a resumable "
+        "base64 binary upload session. This tool will be removed in v0.7.0."
+    ),
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
 )
 def vault_upload_init(
@@ -822,12 +853,15 @@ def vault_upload_init(
         overwrite=overwrite,
         create_dirs=create_dirs,
     )
+    _log_deprecated_upload_tool("vault_upload_init")
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
-        return limited
+        return _with_upload_deprecation(limited)
     return _run_logged_tool(
         "vault_upload_init",
-        lambda: _vault_upload_init(inp.path, inp.media_type, inp.total_size, inp.part_size, inp.overwrite, inp.create_dirs),
+        lambda: _with_upload_deprecation(
+            _vault_upload_init(inp.path, inp.media_type, inp.total_size, inp.part_size, inp.overwrite, inp.create_dirs)
+        ),
         path=inp.path,
         media_type=inp.media_type,
         total_size=inp.total_size,
@@ -838,7 +872,10 @@ def vault_upload_init(
 
 @mcp.tool(
     name="vault_upload_part",
-    description="Upload one idempotent base64 part for a resumable binary upload. Parts are zero-based and may be retried safely with the same bytes.",
+    description=(
+        "DEPRECATED — use vault_request_upload_url instead. Upload one idempotent base64 part "
+        "for a resumable binary upload. This tool will be removed in v0.7.0."
+    ),
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
 )
 def vault_upload_part(
@@ -854,12 +891,13 @@ def vault_upload_part(
         data=data,
         part_sha256=part_sha256,
     )
+    _log_deprecated_upload_tool("vault_upload_part")
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
-        return limited
+        return _with_upload_deprecation(limited)
     return _run_logged_tool(
         "vault_upload_part",
-        lambda: _vault_upload_part(inp.upload_id, inp.part_number, inp.data, inp.part_sha256),
+        lambda: _with_upload_deprecation(_vault_upload_part(inp.upload_id, inp.part_number, inp.data, inp.part_sha256)),
         upload_id=inp.upload_id,
         part_number=inp.part_number,
         base64_bytes=len(inp.data),
@@ -869,54 +907,66 @@ def vault_upload_part(
 
 @mcp.tool(
     name="vault_upload_status",
-    description="Return resumable binary upload progress, including received and missing part numbers.",
+    description=(
+        "DEPRECATED — use vault_request_upload_url instead. Return resumable binary upload "
+        "progress, including received and missing part numbers. This tool will be removed in v0.7.0."
+    ),
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
 def vault_upload_status(upload_id: str) -> str:
     """Return resumable upload progress."""
     inp = VaultUploadStatusInput(upload_id=upload_id)
+    _log_deprecated_upload_tool("vault_upload_status")
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
-        return limited
+        return _with_upload_deprecation(limited)
     return _run_logged_tool(
         "vault_upload_status",
-        lambda: _vault_upload_status(inp.upload_id),
+        lambda: _with_upload_deprecation(_vault_upload_status(inp.upload_id)),
         upload_id=inp.upload_id,
     )
 
 
 @mcp.tool(
     name="vault_upload_commit",
-    description="Commit a complete resumable binary upload after verifying total size and SHA-256 checksum.",
+    description=(
+        "DEPRECATED — use vault_request_upload_url instead. Commit a complete resumable binary "
+        "upload after verifying total size and SHA-256 checksum. This tool will be removed in v0.7.0."
+    ),
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
 )
 def vault_upload_commit(upload_id: str, expected_sha256: str) -> str:
     """Commit a complete resumable upload."""
     inp = VaultUploadCommitInput(upload_id=upload_id, expected_sha256=expected_sha256)
+    _log_deprecated_upload_tool("vault_upload_commit")
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
-        return limited
+        return _with_upload_deprecation(limited)
     return _run_logged_tool(
         "vault_upload_commit",
-        lambda: _vault_upload_commit(inp.upload_id, inp.expected_sha256),
+        lambda: _with_upload_deprecation(_vault_upload_commit(inp.upload_id, inp.expected_sha256)),
         upload_id=inp.upload_id,
     )
 
 
 @mcp.tool(
     name="vault_upload_abort",
-    description="Abort and remove a staged resumable binary upload session.",
+    description=(
+        "DEPRECATED — use vault_request_upload_url instead. Abort and remove a staged resumable "
+        "binary upload session. This tool will be removed in v0.7.0."
+    ),
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
 )
 def vault_upload_abort(upload_id: str) -> str:
     """Abort a resumable upload."""
     inp = VaultUploadAbortInput(upload_id=upload_id)
+    _log_deprecated_upload_tool("vault_upload_abort")
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
-        return limited
+        return _with_upload_deprecation(limited)
     return _run_logged_tool(
         "vault_upload_abort",
-        lambda: _vault_upload_abort(inp.upload_id),
+        lambda: _with_upload_deprecation(_vault_upload_abort(inp.upload_id)),
         upload_id=inp.upload_id,
     )
 

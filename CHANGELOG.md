@@ -5,6 +5,16 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.6.9] - 2026-05-15
+
+### Deprecated
+- Deprecated `vault_upload_init`, `vault_upload_part`, `vault_upload_status`, `vault_upload_commit`, and `vault_upload_abort`. Use `vault_request_upload_url` plus signed `POST /upload/{id}` instead. Removal is planned for `v0.7.0`.
+
+### Reliability / Operator UX
+- Legacy upload tool responses now include `deprecated=true` and a client-visible migration warning while preserving existing functionality.
+- Deprecated upload tool calls emit a server WARNING with the tool name and client family so operators can identify clients that still need migration.
+- MCP tool descriptions are prefixed with `DEPRECATED — use vault_request_upload_url instead.` for schema discoverability.
+
 ## [v0.6.8] - 2026-05-15
 
 ### Features
