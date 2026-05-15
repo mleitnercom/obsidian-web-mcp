@@ -9,13 +9,19 @@ import shlex
 import shutil
 import subprocess
 import threading
+from contextvars import ContextVar
 from collections.abc import Sequence
+from typing import Any
 
 from . import config
 
 logger = logging.getLogger(__name__)
 
 _PATH_SEP = ":"
+_pending_post_write_hooks: ContextVar[list[tuple[str, list[str]]] | None] = ContextVar(
+    "pending_post_write_hooks",
+    default=None,
+)
 
 
 def _prepare_command(command: str) -> list[str] | None:
@@ -41,7 +47,12 @@ def _prepare_command(command: str) -> list[str] | None:
     return args
 
 
-def _run_cmd(command: str, operation: str, paths: list[str]) -> None:
+def _run_cmd(
+    command: str,
+    operation: str,
+    paths: list[str],
+    audit_record: dict[str, Any] | None = None,
+) -> None:
     """Execute the configured post-write command in a daemon thread."""
     args = _prepare_command(command)
     if args is None:
@@ -51,6 +62,9 @@ def _run_cmd(command: str, operation: str, paths: list[str]) -> None:
     env["MCP_OPERATION"] = operation
     env["MCP_PATHS"] = _PATH_SEP.join(paths)
     env["MCP_PATHS_JSON"] = json.dumps(paths, ensure_ascii=False)
+    stdin_payload = None
+    if audit_record is not None:
+        stdin_payload = json.dumps(audit_record, ensure_ascii=False, sort_keys=True) + "\n"
 
     try:
         result = subprocess.run(
@@ -60,6 +74,7 @@ def _run_cmd(command: str, operation: str, paths: list[str]) -> None:
             cwd=str(config.VAULT_PATH),
             capture_output=True,
             text=True,
+            input=stdin_payload,
             timeout=config.VAULT_MCP_POST_WRITE_TIMEOUT,
         )
         if result.returncode != 0:
@@ -76,6 +91,24 @@ def _run_cmd(command: str, operation: str, paths: list[str]) -> None:
         logger.warning("post-write hook error: %s", exc)
 
 
+def _queue_hook(operation: str, paths: list[str]) -> None:
+    pending = _pending_post_write_hooks.get()
+    if pending is None:
+        pending = []
+        _pending_post_write_hooks.set(pending)
+    pending.append((operation, paths))
+
+
+def _start_hook(operation: str, paths: list[str], audit_record: dict[str, Any] | None = None) -> None:
+    worker = threading.Thread(
+        target=_run_cmd,
+        args=(config.VAULT_MCP_POST_WRITE_CMD, operation, paths, audit_record),
+        daemon=True,
+        name="mcp-post-write",
+    )
+    worker.start()
+
+
 def fire_post_write(operation: str, paths: Sequence[str]) -> None:
     """Dispatch the optional post-write hook fire-and-forget."""
     if not config.VAULT_MCP_POST_WRITE_CMD:
@@ -85,10 +118,23 @@ def fire_post_write(operation: str, paths: Sequence[str]) -> None:
     if not path_list:
         return
 
-    worker = threading.Thread(
-        target=_run_cmd,
-        args=(config.VAULT_MCP_POST_WRITE_CMD, operation, path_list),
-        daemon=True,
-        name="mcp-post-write",
-    )
-    worker.start()
+    if config.VAULT_AUDIT_LOG_PATH:
+        _queue_hook(operation, path_list)
+        return
+
+    _start_hook(operation, path_list)
+
+
+def flush_post_write_hooks(audit_record: dict[str, Any] | None = None) -> None:
+    """Dispatch queued post-write hooks with the matching audit record on stdin."""
+    pending = _pending_post_write_hooks.get() or []
+    _pending_post_write_hooks.set([])
+    if not config.VAULT_MCP_POST_WRITE_CMD:
+        return
+    for operation, paths in pending:
+        _start_hook(operation, paths, audit_record)
+
+
+def clear_post_write_hooks() -> None:
+    """Discard queued post-write hooks for the current request context."""
+    _pending_post_write_hooks.set([])

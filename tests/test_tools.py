@@ -4,7 +4,7 @@ import base64
 import hashlib
 import json
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from contextlib import contextmanager
 
 import pytest
@@ -14,6 +14,7 @@ from starlette.testclient import TestClient
 from .conftest import build_simple_pdf_bytes
 from obsidian_vault_mcp import config
 import obsidian_vault_mcp.server as server
+from obsidian_vault_mcp import audit, hooks
 from obsidian_vault_mcp.tools.read import vault_read, vault_batch_read
 from obsidian_vault_mcp.tools.daily import vault_daily_note_append, vault_daily_note_path, vault_daily_note_read
 import obsidian_vault_mcp.tools.daily as daily_tools
@@ -806,6 +807,129 @@ def test_audit_log_records_direct_upload_route(vault_dir, monkeypatch, tmp_path)
     assert record["target_path"] == "audit/direct.pdf"
     assert record["operation_status"] == "success"
     assert record["size_after"] == len(content)
+
+
+def test_audit_read_operations_are_opt_in(vault_dir, monkeypatch, tmp_path):
+    """Read tools should remain quiet by default and emit records only when opted in."""
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_PATH", str(audit_path))
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_INCLUDE_READS", False)
+
+    with _authenticated_tool_context():
+        result = json.loads(server.vault_read("test-note.md"))
+
+    assert "error" not in result
+    assert not audit_path.exists()
+
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_INCLUDE_READS", True)
+    with _authenticated_tool_context():
+        result = json.loads(server.vault_read("test-note.md"))
+
+    assert "error" not in result
+    record = _assert_one_audit_record(audit_path, "vault_read", "test-note.md")
+    assert record["size_before"] is not None
+    assert record["checksum_before"]
+    assert record["size_after"] is None
+    assert record["checksum_after"] is None
+
+
+def test_audit_read_operations_record_error_status(vault_dir, monkeypatch, tmp_path):
+    """Read audit records should mark client-visible read failures as errors."""
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_PATH", str(audit_path))
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_INCLUDE_READS", True)
+
+    with _authenticated_tool_context():
+        result = json.loads(server.vault_read("missing.md"))
+
+    assert "error" in result
+    record = _assert_one_audit_record(audit_path, "vault_read", "missing.md", status="error")
+    assert record["error"]
+    assert record["size_after"] is None
+
+
+def test_audit_hook_receives_matching_jsonl_record_without_rollback(vault_dir, monkeypatch, tmp_path):
+    """Audit-active post-write hooks should receive the same record as the JSONL file."""
+    audit_path = tmp_path / "audit.jsonl"
+    captured: dict[str, str] = {}
+
+    class ImmediateThread:
+        def __init__(self, target, args=(), kwargs=None, **_thread_kwargs):
+            self.target = target
+            self.args = args
+            self.kwargs = kwargs or {}
+
+        def start(self):
+            self.target(*self.args, **self.kwargs)
+
+    def fake_run(args, **kwargs):
+        captured["input"] = kwargs["input"]
+
+        class _Result:
+            returncode = 1
+            stderr = "hook failed"
+
+        return _Result()
+
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_PATH", str(audit_path))
+    monkeypatch.setattr(config, "VAULT_MCP_POST_WRITE_CMD", "python -V")
+    monkeypatch.setattr(hooks.shutil, "which", lambda executable: f"/usr/bin/{executable}")
+    monkeypatch.setattr(hooks.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(hooks.subprocess, "run", fake_run)
+
+    with _authenticated_tool_context():
+        result = json.loads(server.vault_write("audit/hook.md", "hook body\n"))
+
+    assert "error" not in result
+    record = _assert_one_audit_record(audit_path, "vault_write", "audit/hook.md")
+    assert json.loads(captured["input"]) == record
+
+
+def test_audit_health_reports_state_and_read_opt_in(vault_dir, monkeypatch, tmp_path):
+    """Detailed health should expose process-local audit counters only when audit is active."""
+    audit_path = tmp_path / "audit.jsonl"
+    audit.reset_audit_health_state()
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_PATH", str(audit_path))
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_INCLUDE_READS", True)
+
+    with _authenticated_tool_context():
+        result = json.loads(server.vault_write("audit/health.md", "health\n"))
+
+    assert "error" not in result
+    payload = server._health_payload()
+    assert payload["audit"]["enabled"] is True
+    assert payload["audit"]["log_path"] == str(audit_path)
+    assert payload["audit"]["last_write_at"]
+    assert payload["audit"]["write_errors_count_24h"] == 0
+    assert payload["audit"]["bytes_written_24h"] > 0
+    assert payload["audit"]["includes_reads"] is True
+
+
+def test_audit_health_rolling_window_and_write_errors(monkeypatch, tmp_path):
+    """Audit health counters are process-local and prune records outside 24 hours."""
+    audit_path = tmp_path / "audit.jsonl"
+    current = datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc)
+    audit.reset_audit_health_state()
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_PATH", str(audit_path))
+    monkeypatch.setattr(config, "VAULT_AUDIT_LOG_INCLUDE_READS", False)
+    monkeypatch.setattr(audit, "_now_utc", lambda: current)
+
+    old_record = {"operation": "old", "timestamp": current.isoformat()}
+    assert audit.write_audit_record(old_record) is True
+    current = current + timedelta(hours=23)
+    fresh_record = {"operation": "fresh", "timestamp": current.isoformat()}
+    assert audit.write_audit_record(fresh_record) is True
+    current = current + timedelta(hours=2)
+    monkeypatch.setattr(audit, "_audit_path", lambda: tmp_path)
+    assert audit.write_audit_record({"operation": "error", "timestamp": current.isoformat()}) is False
+    monkeypatch.setattr(audit, "_audit_path", lambda: audit_path)
+
+    payload = audit.audit_health_payload()
+    fresh_bytes = len(json.dumps(fresh_record, ensure_ascii=False, sort_keys=True).encode("utf-8")) + 1
+    assert payload["enabled"] is True
+    assert payload["write_errors_count_24h"] == 1
+    assert payload["bytes_written_24h"] == fresh_bytes
+    assert _read_jsonl(audit_path)[0]["operation"] == "old"
 
 
 def test_vault_str_replace_updates_unique_match(vault_dir):
