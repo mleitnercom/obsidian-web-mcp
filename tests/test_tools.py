@@ -264,6 +264,106 @@ def test_vault_search_frontmatter_tool_schema_exposes_extended_filters():
     assert filter_def["properties"]["match_type"]["enum"] == schema["properties"]["match_type"]["enum"]
     assert "AND filters" in schema["properties"]["filters"]["description"]
     assert "list_*" in schema["properties"]["value"]["description"]
+    assert schema["properties"]["max_results"]["maximum"] == 500
+    assert schema["properties"]["offset"]["minimum"] == 0
+
+
+def test_vault_search_frontmatter_accepts_200_results_and_paginates(vault_dir):
+    """Frontmatter search should support the briefing awareness-pass result size."""
+    from obsidian_vault_mcp.server import frontmatter_index
+
+    bulk_dir = vault_dir / "bulk"
+    bulk_dir.mkdir()
+    for i in range(220):
+        (bulk_dir / f"task-{i:03d}.md").write_text(
+            f"---\nstatus: active\nscope: bulk\npriority: {i % 5}\n---\n\nTask {i}.\n",
+            encoding="utf-8",
+        )
+
+    frontmatter_index.stop()
+    frontmatter_index._index.clear()
+    frontmatter_index.start()
+
+    with _authenticated_tool_context():
+        first_page = json.loads(
+            server.vault_search_frontmatter(
+                field="status",
+                value="active",
+                match_type="exact",
+                path_prefix="bulk/",
+                max_results=200,
+            )
+        )
+        second_page = json.loads(
+            server.vault_search_frontmatter(
+                field="status",
+                value="active",
+                match_type="exact",
+                path_prefix="bulk/",
+                max_results=50,
+                offset=first_page["next_offset"],
+            )
+        )
+
+    assert "error" not in first_page
+    assert first_page["returned"] == 200
+    assert first_page["total"] == 200
+    assert first_page["total_matches"] == 220
+    assert first_page["truncated"] is True
+    assert first_page["truncated_by_response_size"] is False
+    assert first_page["next_offset"] == 200
+
+    assert "error" not in second_page
+    assert second_page["returned"] == 20
+    assert second_page["total_matches"] == 220
+    assert second_page["offset"] == 200
+    assert second_page["truncated"] is False
+    assert second_page["next_offset"] is None
+
+    frontmatter_index.stop()
+    frontmatter_index._index.clear()
+
+
+def test_vault_search_frontmatter_reports_response_size_truncation(vault_dir, monkeypatch):
+    """Large frontmatter responses should be visibly truncated instead of silently cut."""
+    from obsidian_vault_mcp.server import frontmatter_index
+
+    bulk_dir = vault_dir / "large-frontmatter"
+    bulk_dir.mkdir()
+    for i in range(40):
+        (bulk_dir / f"task-{i:03d}.md").write_text(
+            "---\n"
+            "status: active\n"
+            "scope: size-cap\n"
+            f"title: Large frontmatter task {i}\n"
+            f"notes: {'x' * 800}\n"
+            "---\n\n"
+            f"Task {i}.\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(config, "MAX_FRONTMATTER_RESPONSE_BYTES", 8_000)
+    frontmatter_index.stop()
+    frontmatter_index._index.clear()
+    frontmatter_index.start()
+
+    result = json.loads(vault_search_frontmatter(
+        field="scope",
+        value="size-cap",
+        match_type="exact",
+        path_prefix="large-frontmatter/",
+        max_results=40,
+    ))
+
+    assert "error" not in result
+    assert 0 < result["returned"] < 40
+    assert result["total_matches"] == 40
+    assert result["truncated"] is True
+    assert result["truncated_by_response_size"] is True
+    assert result["next_offset"] == result["returned"]
+
+    frontmatter_index.stop()
+    frontmatter_index._index.clear()
 
 
 def test_daily_note_tool_schemas_are_discoverable():

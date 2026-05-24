@@ -1252,8 +1252,16 @@ def vault_search_frontmatter(
     ] = None,
     max_results: Annotated[
         int,
-        Field(description="Maximum number of matching files to return."),
+        Field(
+            ge=1,
+            le=config.MAX_FRONTMATTER_SEARCH_RESULTS,
+            description="Maximum number of matching files to return.",
+        ),
     ] = 20,
+    offset: Annotated[
+        int,
+        Field(ge=0, description="Number of matching files to skip before returning results."),
+    ] = 0,
 ) -> str:
     """Search by frontmatter fields."""
     inp = VaultSearchFrontmatterInput(
@@ -1263,6 +1271,7 @@ def vault_search_frontmatter(
         filters=filters,
         path_prefix=path_prefix,
         max_results=max_results,
+        offset=offset,
     )
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
@@ -1276,6 +1285,7 @@ def vault_search_frontmatter(
             [item.model_dump() for item in inp.filters] if inp.filters else None,
             inp.path_prefix,
             inp.max_results,
+            inp.offset,
         ),
         field=inp.field,
         value=inp.value,
@@ -1283,6 +1293,7 @@ def vault_search_frontmatter(
         filters=[item.model_dump() for item in inp.filters] if inp.filters else None,
         path_prefix=inp.path_prefix,
         max_results=inp.max_results,
+        offset=inp.offset,
     )
 
 

@@ -122,6 +122,8 @@ All configuration is read from environment variables at process startup.
 |---|---|---|
 | `VAULT_MAX_BATCH_SIZE` | `20` | Max batch items |
 | `VAULT_MAX_SEARCH_RESULTS` | `50` | Hard max search results |
+| `VAULT_MAX_FRONTMATTER_SEARCH_RESULTS` | `500` | Hard max frontmatter search results |
+| `VAULT_MAX_FRONTMATTER_RESPONSE_BYTES` | `200000` | Frontmatter response byte budget before pagination truncation |
 | `VAULT_DEFAULT_SEARCH_RESULTS` | `20` | Default search results |
 | `VAULT_MAX_LIST_DEPTH` | `5` | Max listing depth |
 | `VAULT_MAX_TREE_DEPTH` | `10` | Max tree depth |

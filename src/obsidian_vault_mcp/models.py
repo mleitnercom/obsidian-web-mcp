@@ -10,6 +10,7 @@ from .config import (
     MAX_BATCH_SIZE,
     MAX_BINARY_SIZE,
     MAX_CONTENT_SIZE,
+    MAX_FRONTMATTER_SEARCH_RESULTS,
     MAX_LIST_DEPTH,
     MAX_SEARCH_RESULTS,
     SEMANTIC_MAX_RESULTS,
@@ -620,8 +621,13 @@ class VaultSearchFrontmatterInput(BaseModel):
     max_results: int = Field(
         default=DEFAULT_SEARCH_RESULTS,
         ge=1,
-        le=MAX_SEARCH_RESULTS,
+        le=MAX_FRONTMATTER_SEARCH_RESULTS,
         description="Maximum number of matching files to return",
+    )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Number of matching files to skip before returning results",
     )
 
 

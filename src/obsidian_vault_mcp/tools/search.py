@@ -269,6 +269,7 @@ def vault_search_frontmatter(
     filters: list[dict] | None = None,
     path_prefix: str | None = None,
     max_results: int = 20,
+    offset: int = 0,
 ) -> str:
     """Search vault files by frontmatter field values using the in-memory index."""
     from ..server import frontmatter_index
@@ -282,23 +283,53 @@ def vault_search_frontmatter(
             path_prefix=path_prefix,
         )
 
+        total_matches = len(results)
         formatted = []
-        for item in results[:max_results]:
+        response_truncated_by_size = False
+        page = results[offset : offset + max_results]
+
+        for item in page:
             path = item["path"]
             fm = item["frontmatter"]
             title = fm.get("title", Path(path).stem)
-            formatted.append({
+            formatted_item = {
                 "path": path,
                 "frontmatter": fm,
                 "title": title,
-            })
+            }
+            candidate = [*formatted, formatted_item]
+            candidate_payload = {
+                "results": candidate,
+                "total": len(candidate),
+                "returned": len(candidate),
+                "total_matches": total_matches,
+                "offset": offset,
+                "max_results": max_results,
+                "next_offset": offset + len(candidate),
+                "truncated": offset + len(candidate) < total_matches,
+                "truncated_by_response_size": True,
+            }
+            candidate_size = len(vault_json_dumps(candidate_payload).encode("utf-8"))
+            if formatted and candidate_size > config.MAX_FRONTMATTER_RESPONSE_BYTES:
+                response_truncated_by_size = True
+                break
+            if candidate_size > config.MAX_FRONTMATTER_RESPONSE_BYTES:
+                response_truncated_by_size = offset + len(candidate) < total_matches
+            formatted = candidate
 
-        truncated = len(results) > max_results
+        next_offset = offset + len(formatted)
+        truncated = next_offset < total_matches
 
         return vault_json_dumps({
             "results": formatted,
             "total": len(formatted),
+            "returned": len(formatted),
+            "total_matches": total_matches,
+            "offset": offset,
+            "max_results": max_results,
+            "next_offset": next_offset if truncated else None,
             "truncated": truncated,
+            "truncated_by_response_size": response_truncated_by_size,
         })
     except Exception as e:
         logger.error(f"vault_search_frontmatter error: {e}")

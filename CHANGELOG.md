@@ -5,6 +5,16 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.7.2] - 2026-05-24
+
+### Changed
+- Raise the `vault_search_frontmatter` limit to 500 via a frontmatter-specific safety cap while keeping regular text search capped separately.
+- Add `offset`, `total_matches`, `returned`, and `next_offset` metadata so large frontmatter result sets can be paged without silent cuts.
+- Add a frontmatter response byte budget that sets `truncated=true` and `truncated_by_response_size=true` when a response is shortened for token safety.
+
+### Tests
+- Add synthetic 200+ frontmatter fixtures covering `max_results=200`, pagination, and response-size truncation.
+
 ## [v0.7.1] - 2026-05-24
 
 ### Fixed
