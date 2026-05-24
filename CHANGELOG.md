@@ -5,6 +5,12 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.7.1] - 2026-05-24
+
+### Fixed
+- Restore the public `vault_str_replace` MCP contract to `path`, `old_string`, `new_string`, and `replace_all`, matching existing Claude and ChatGPT clients.
+- Add regression coverage for documented `vault_str_replace` keyword calls and schema discovery.
+
 ## [v0.7.0] - 2026-05-15
 
 ### BREAKING CHANGES

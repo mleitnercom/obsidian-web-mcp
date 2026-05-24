@@ -282,6 +282,19 @@ def test_daily_note_tool_schemas_are_discoverable():
     assert "VAULT_DAILY_NOTES_TEMPLATE" in schema["properties"]["content"]["description"]
 
 
+def test_vault_str_replace_tool_schema_uses_documented_parameters():
+    """vault_str_replace should expose the stable old_string/new_string contract."""
+    from obsidian_vault_mcp.server import mcp
+
+    tool = mcp._tool_manager.get_tool("vault_str_replace")
+    schema = tool.parameters
+
+    assert "old_string" in schema["properties"]
+    assert "new_string" in schema["properties"]
+    assert "old_str" not in schema["properties"]
+    assert "new_str" not in schema["properties"]
+
+
 def test_vault_write_creates_file(vault_dir):
     """vault_write creates a new file."""
     result = json.loads(vault_write("tools-test.md", "---\ntitle: Test\n---\n\nContent."))
@@ -853,6 +866,23 @@ def test_vault_str_replace_updates_unique_match(vault_dir):
     assert "error" not in result
     assert result["replaced"] is True
     assert result["occurrences_found"] == 1
+    assert "updated note" in (vault_dir / "test-note.md").read_text(encoding="utf-8")
+
+
+def test_server_vault_str_replace_accepts_documented_parameter_names(vault_dir):
+    """The MCP server wrapper accepts old_string/new_string keyword calls."""
+    with _authenticated_tool_context():
+        result = json.loads(
+            server.vault_str_replace(
+                path="test-note.md",
+                old_string="test note",
+                new_string="updated note",
+            )
+        )
+
+    assert "error" not in result
+    assert result["path"] == "test-note.md"
+    assert result["replaced"] is True
     assert "updated note" in (vault_dir / "test-note.md").read_text(encoding="utf-8")
 
 

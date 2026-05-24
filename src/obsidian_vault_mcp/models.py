@@ -141,20 +141,20 @@ class VaultStrReplaceInput(BaseModel):
         min_length=1,
         max_length=500,
     )
-    old_str: str = Field(
+    old_string: str = Field(
         ...,
         description="Exact string to replace; must occur exactly once",
         min_length=1,
         max_length=MAX_CONTENT_SIZE,
     )
-    new_str: str = Field(
+    new_string: str = Field(
         default="",
         description="Replacement string; empty string deletes the matched text",
         max_length=MAX_CONTENT_SIZE,
     )
     replace_all: bool = Field(
         default=False,
-        description="If true, replace every occurrence of old_str instead of requiring a unique match",
+        description="If true, replace every occurrence of old_string instead of requiring a unique match",
     )
 
 

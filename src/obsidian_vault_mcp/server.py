@@ -906,21 +906,21 @@ def vault_batch_replace(updates: list[dict]) -> str:
 
 @mcp.tool(
     name="vault_str_replace",
-    description="Replace one exact string in a vault file. By default old_str must be unique; set replace_all=true to replace every occurrence.",
+    description="Replace one exact string in a vault file. By default old_string must be unique; set replace_all=true to replace every occurrence.",
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
 )
-def vault_str_replace(path: str, old_str: str, new_str: str = "", replace_all: bool = False) -> str:
+def vault_str_replace(path: str, old_string: str, new_string: str = "", replace_all: bool = False) -> str:
     """Replace an exact string in a vault file."""
-    inp = VaultStrReplaceInput(path=path, old_str=old_str, new_str=new_str, replace_all=replace_all)
+    inp = VaultStrReplaceInput(path=path, old_string=old_string, new_string=new_string, replace_all=replace_all)
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
         return limited
     return _run_logged_tool(
         "vault_str_replace",
-        lambda: _vault_str_replace(inp.path, inp.old_str, inp.new_str, inp.replace_all),
+        lambda: _vault_str_replace(inp.path, inp.old_string, inp.new_string, inp.replace_all),
         path=inp.path,
-        old_str_bytes=len(inp.old_str.encode("utf-8")),
-        new_str_bytes=len(inp.new_str.encode("utf-8")),
+        old_string_bytes=len(inp.old_string.encode("utf-8")),
+        new_string_bytes=len(inp.new_string.encode("utf-8")),
         replace_all=inp.replace_all,
     )
 
