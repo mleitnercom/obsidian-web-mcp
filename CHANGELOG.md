@@ -5,6 +5,20 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.7.3] - 2026-05-24
+
+### Security
+- PKCE (S256) is now mandatory for all OAuth authorize requests, not just public clients. Confidential clients (`client_secret_post`) must also present a `code_challenge`.
+- The `authorization_code` grant strictly validates `client_id` and `client_secret` before touching the auth code or running PKCE verification. The previous "PKCE substitutes for client_secret" path is removed.
+- Verified that the startup fallback to an unauthenticated `mcp.run()` is gone (was already removed in an earlier release; this release adds regression tests).
+- Added `MCP-Protocol-Version: 2025-06-18` probe response on `GET`/`HEAD /` if not already present.
+
+### Tests
+- New `tests/test_oauth_hardening.py` with 13 regression cases covering every accept/reject path of the OAuth flow.
+
+### References
+- Aligned with [jjsmackay/obsidian-web-mcp](https://github.com/jjsmackay/obsidian-web-mcp) commits `a9084d5`, `a525d64`.
+
 ## [v0.7.2] - 2026-05-24
 
 ### Changed

@@ -170,6 +170,8 @@ vault-mcp
 
 The server blocks path traversal, dotfile access, symlink escape, null bytes, and configured excluded subtrees. Writes are atomic and verified. Deletes are soft by default. Binary writes and uploads enforce media-type and size limits. See [docs/security.md](docs/security.md) and [docs/oauth.md](docs/oauth.md).
 
+OAuth client authentication is strictly enforced. PKCE with S256 is mandatory for every authorize request, regardless of client type. The authorization_code grant validates client_id and client_secret before any other check; PKCE alone does not satisfy client authentication for confidential clients. Startup failures crash the process rather than falling back to an unauthenticated server.
+
 ## Audit
 
 Audit records are append-only JSON Lines when `VAULT_AUDIT_LOG_PATH` is set. A post-write hook can receive the exact same JSON record on stdin, but the server itself does not forward audit data anywhere by default. See [docs/audit.md](docs/audit.md).
@@ -216,6 +218,12 @@ docs/                     # Detailed guides
 ## Release Notes
 
 See [CHANGELOG.md](CHANGELOG.md) and the [GitHub Releases](https://github.com/mleitnercom/obsidian-web-mcp/releases).
+
+## Credits
+
+### OAuth hardening alignment
+
+The OAuth client-authentication tightening in this fork follows the hardening strecke established in [jjsmackay/obsidian-web-mcp](https://github.com/jjsmackay/obsidian-web-mcp) (community fork), originally contributed by [David Ronen](https://github.com/dr-growth) and integrated by [Marcelo Toledo](https://github.com/jjsmackay). This fork implements the same security guarantees on top of its own OAuth code paths (hash-based client secrets, session cookies, persistent client registrations).
 
 ## License
 
