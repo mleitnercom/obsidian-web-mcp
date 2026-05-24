@@ -612,30 +612,30 @@ async def _handle_authorization_code(form, client_id: str, client_secret: str) -
         return JSONResponse({"error": "invalid_grant", "error_description": "redirect_uri mismatch"}, status_code=400)
 
     if auth_method == "client_secret_post":
-        if client_secret:
-            if not _client_secret_matches(client_secret, client):
-                logger.warning("OAuth token rejected for client_id=%r: invalid client_secret", client_id)
-                return JSONResponse({"error": "invalid_client"}, status_code=401)
-        elif not code_data["code_challenge"]:
-            logger.warning("OAuth token rejected for client_id=%r: client_secret missing and no PKCE challenge", client_id)
-            return JSONResponse({"error": "invalid_client", "error_description": "client_secret required"}, status_code=401)
+        if not client_secret or not _client_secret_matches(client_secret, client):
+            logger.warning("OAuth token rejected for client_id=%r: invalid client_secret", client_id)
+            return JSONResponse({"error": "invalid_client"}, status_code=401)
     elif auth_method == "none":
-        if not code_data["code_challenge"]:
-            logger.warning("OAuth token rejected for client_id=%r: public client missing PKCE challenge", client_id)
-            return JSONResponse({"error": "invalid_grant", "error_description": "PKCE required for public clients"}, status_code=400)
+        # Public client: no client_secret required. PKCE is guaranteed by
+        # the authorize endpoint (S256 enforced for every client).
+        pass
+    else:
+        return JSONResponse(
+            {"error": "invalid_client", "error_description": "unsupported auth method"},
+            status_code=401,
+        )
 
-    # Verify PKCE code_challenge if one was provided during authorization
-    if code_data["code_challenge"]:
-        if not code_verifier:
-            return JSONResponse({"error": "invalid_grant", "error_description": "code_verifier required"}, status_code=400)
+    # PKCE verification (code_challenge is always present after Aufgabe 1)
+    if not code_verifier:
+        return JSONResponse({"error": "invalid_grant", "error_description": "code_verifier required"}, status_code=400)
 
-        # S256: BASE64URL(SHA256(code_verifier)) must match code_challenge
-        import base64
-        digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
-        computed_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    # S256: BASE64URL(SHA256(code_verifier)) must match code_challenge
+    import base64
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    computed_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
-        if not hmac.compare_digest(computed_challenge, code_data["code_challenge"]):
-            return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"}, status_code=400)
+    if not hmac.compare_digest(computed_challenge, code_data["code_challenge"]):
+        return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"}, status_code=400)
 
     _auth_codes.pop(code, None)
     return JSONResponse({
