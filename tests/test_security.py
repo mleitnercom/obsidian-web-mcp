@@ -28,6 +28,16 @@ from obsidian_vault_mcp.rate_limit import (
 )
 
 
+def _pkce_pair():
+    """Return a (verifier, challenge) tuple suitable for S256 PKCE."""
+    import secrets
+
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
+
 async def _protected(_request):
     return JSONResponse({"ok": True})
 
@@ -497,6 +507,8 @@ def test_oauth_authorize_requires_login_when_configured(monkeypatch):
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "correct horse battery staple")
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_SESSION_SECRET", "session-secret")
 
+    _, challenge = _pkce_pair()
+
     app = Starlette(routes=oauth.oauth_routes)
     with TestClient(app) as client:
         registration = client.post(
@@ -510,6 +522,8 @@ def test_oauth_authorize_requires_login_when_configured(monkeypatch):
                 "response_type": "code",
                 "client_id": registration["client_id"],
                 "redirect_uri": "https://claude.example/callback",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
             },
         )
 
@@ -525,6 +539,8 @@ def test_oauth_authorize_alias_works(monkeypatch):
     oauth._registered_clients.clear()
     monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token")
 
+    _, challenge = _pkce_pair()
+
     app = Starlette(routes=oauth.oauth_routes)
     with TestClient(app) as client:
         registration = client.post(
@@ -538,6 +554,8 @@ def test_oauth_authorize_alias_works(monkeypatch):
                 "response_type": "code",
                 "client_id": registration["client_id"],
                 "redirect_uri": "https://claude.example/callback",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
             },
             follow_redirects=False,
         )
@@ -556,6 +574,8 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "correct horse battery staple")
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_SESSION_SECRET", "session-secret")
 
+    verifier, challenge = _pkce_pair()
+
     app = Starlette(routes=oauth.oauth_routes)
     with TestClient(app) as client:
         registration = client.post(
@@ -570,6 +590,8 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
                 "client_id": registration["client_id"],
                 "redirect_uri": "https://claude.example/callback",
                 "resource": "https://vault.example/mcp",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
                 "username": "michael",
                 "password": "correct horse battery staple",
             },
@@ -590,6 +612,8 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
                 "client_id": registration["client_id"],
                 "redirect_uri": "https://claude.example/callback",
                 "resource": "https://vault.example/mcp",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
                 "approve": "allow",
             },
             follow_redirects=False,
@@ -610,6 +634,7 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
                 "client_secret": registration["client_secret"],
                 "code": code,
                 "redirect_uri": "https://claude.example/callback",
+                "code_verifier": verifier,
             },
         )
 
@@ -626,6 +651,8 @@ def test_oauth_authorize_with_session_without_approval_shows_consent(monkeypatch
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "correct horse battery staple")
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_SESSION_SECRET", "session-secret")
 
+    _, challenge = _pkce_pair()
+
     app = Starlette(routes=oauth.oauth_routes)
     with TestClient(app) as client:
         registration = client.post(
@@ -639,6 +666,8 @@ def test_oauth_authorize_with_session_without_approval_shows_consent(monkeypatch
                 "response_type": "code",
                 "client_id": registration["client_id"],
                 "redirect_uri": "https://claude.example/callback",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
                 "username": "michael",
                 "password": "correct horse battery staple",
             },
@@ -651,6 +680,8 @@ def test_oauth_authorize_with_session_without_approval_shows_consent(monkeypatch
                 "response_type": "code",
                 "client_id": registration["client_id"],
                 "redirect_uri": "https://claude.example/callback",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
             },
             follow_redirects=False,
         )
@@ -669,6 +700,8 @@ def test_oauth_authorize_with_session_can_skip_consent_when_disabled(monkeypatch
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_SESSION_SECRET", "session-secret")
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_REQUIRE_APPROVAL", False)
 
+    _, challenge = _pkce_pair()
+
     app = Starlette(routes=oauth.oauth_routes)
     with TestClient(app) as client:
         registration = client.post(
@@ -682,6 +715,8 @@ def test_oauth_authorize_with_session_can_skip_consent_when_disabled(monkeypatch
                 "response_type": "code",
                 "client_id": registration["client_id"],
                 "redirect_uri": "https://claude.example/callback",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
                 "username": "michael",
                 "password": "correct horse battery staple",
             },
@@ -760,12 +795,15 @@ def test_oauth_public_pkce_client_can_exchange_code_without_secret(monkeypatch):
             json={"redirect_uris": ["https://claude.example/callback"]},
         ).json()
 
+        _, wrong_client_challenge = _pkce_pair()
         authorize = client.get(
             "/oauth/authorize",
             params={
                 "response_type": "code",
                 "client_id": registration["client_id"],
                 "redirect_uri": "https://claude.example/callback",
+                "code_challenge": wrong_client_challenge,
+                "code_challenge_method": "S256",
             },
             follow_redirects=False,
         )

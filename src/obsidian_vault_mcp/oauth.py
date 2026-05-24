@@ -511,9 +511,14 @@ async def oauth_authorize(request: Request):
     if allowed_redirect_uris is not None and redirect_uri not in allowed_redirect_uris:
         return JSONResponse({"error": "invalid_request", "error_description": "redirect_uri not registered"}, status_code=400)
 
-    if _client_token_auth_method(client) == "none" and not code_challenge:
+    if not code_challenge:
         return JSONResponse(
-            {"error": "invalid_request", "error_description": "code_challenge required for public PKCE clients"},
+            {"error": "invalid_request", "error_description": "code_challenge required"},
+            status_code=400,
+        )
+    if code_challenge_method != "S256":
+        return JSONResponse(
+            {"error": "invalid_request", "error_description": "only S256 code_challenge_method supported"},
             status_code=400,
         )
 
