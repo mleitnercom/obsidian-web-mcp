@@ -47,21 +47,38 @@ recurrence_anchor: quarter_end_plus_3d   # required for 'absolute'
 # recurrence_interval: 7d        # required for 'relative' ('Nd' days, 'Nm' months)
 due_offset_days: 0               # added to trigger date to compute the instance 'due'
 priority_initial: 2              # written into instance frontmatter as 'priority'
-instance_folder: 15_Tasks/pbs    # vault-relative folder for instances; defaults to the template's parent
+target_folder: 15_Tasks/pbs      # vault-relative folder for instances; defaults to the template's parent
 instance_title: "Q-Report {period}"  # optional; {template_id}, {period}, {trigger} are interpolated
-frontmatter_to_inherit:          # keys copied verbatim from template to instance
-  - scope
-  - project
+frontmatter_to_inherit:          # canonical: map of fields copied verbatim onto the instance
+  scope: pbs
+  project: governance
 tags_to_inherit:                 # appended to ['recurring-instance']
   - quarterly
   - reporting
-scope: pbs
-project: governance
 # last_run is managed by the tool; do not edit by hand
 ---
 
 # Optional body content
 ```
+
+### Schema aliases (legacy compatibility)
+
+Two keys accept a legacy form. The canonical form is preferred; the alias
+emits a deprecation warning surfaced in the tool's `warnings` field but
+still works:
+
+| Canonical (since v0.8.2) | Legacy alias | Behavior on conflict |
+|---|---|---|
+| `target_folder: 15_Tasks/pbs` | `instance_folder: 15_Tasks/pbs` | If both set, `target_folder` wins + warning. |
+| `frontmatter_to_inherit:`<br>`  scope: pbs`<br>`  project: governance` | `frontmatter_to_inherit:`<br>`  - scope`<br>`  - project`<br>(values read from template's top-level frontmatter) | Dict form wins when both forms are usable. |
+
+The dict form for `frontmatter_to_inherit` is DRY: values live once in the
+inheritance map, not duplicated as top-level template frontmatter. The list
+form remains available for templates predating v0.8.2.
+
+If `frontmatter_to_inherit` is configured but resolves to no fields (e.g. all
+listed keys are typos in the legacy form), the tool emits a warning rather
+than silently producing an empty inheritance.
 
 ### Absolute anchors
 

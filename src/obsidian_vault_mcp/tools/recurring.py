@@ -335,16 +335,44 @@ def _list_template_paths(folder: str) -> list[str]:
     return paths
 
 
-def _instance_dir_for(template_meta: dict[str, Any], template_path: str) -> str:
+def _instance_dir_for(
+    template_meta: dict[str, Any],
+    template_path: str,
+    warnings: list[str] | None = None,
+) -> str:
     """Return the directory (vault-relative, POSIX) where instances should be written.
 
-    Resolution order:
-      1. ``instance_folder`` in the template frontmatter (explicit).
-      2. Parent directory of the template itself (sibling layout).
+    Schema resolution (canonical key first, legacy alias second):
+      1. ``target_folder`` (canonical, Tasks-Schema v0.7+).
+      2. ``instance_folder`` (legacy alias, emits a deprecation warning
+         when used without ``target_folder``).
+      3. Parent directory of the template itself (sibling fallback).
+
+    When both keys are present, ``target_folder`` wins and a warning is
+    appended so the operator can clean up the duplicate.
     """
-    explicit = template_meta.get("instance_folder")
-    if isinstance(explicit, str) and explicit.strip():
-        return explicit.strip().strip("/\\")
+    target = template_meta.get("target_folder")
+    alias = template_meta.get("instance_folder")
+
+    canonical = target if isinstance(target, str) and target.strip() else None
+    legacy = alias if isinstance(alias, str) and alias.strip() else None
+
+    if canonical is not None and legacy is not None:
+        if warnings is not None:
+            warnings.append(
+                "both 'target_folder' and 'instance_folder' set; "
+                "'target_folder' takes precedence"
+            )
+        return canonical.strip().strip("/\\")
+    if canonical is not None:
+        return canonical.strip().strip("/\\")
+    if legacy is not None:
+        if warnings is not None:
+            warnings.append(
+                "'instance_folder' is a legacy alias; prefer 'target_folder'"
+            )
+        return legacy.strip().strip("/\\")
+
     parent = PurePosixPath(template_path).parent.as_posix()
     return parent if parent and parent != "." else ""
 
@@ -360,11 +388,79 @@ def _build_instance_filename(template_id: str, period_key: str) -> str:
     return f"recurring-{safe_id}-{safe_period}.md"
 
 
-def _instance_relpath(template_meta: dict[str, Any], template_path: str, filename: str) -> str:
-    folder = _instance_dir_for(template_meta, template_path)
+def _instance_relpath(
+    template_meta: dict[str, Any],
+    template_path: str,
+    filename: str,
+    warnings: list[str] | None = None,
+) -> str:
+    folder = _instance_dir_for(template_meta, template_path, warnings)
     if folder:
         return f"{folder}/{filename}"
     return filename
+
+
+def _resolve_inheritance(
+    template_meta: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any]:
+    """Build the inherited frontmatter map per the canonical-with-alias schema.
+
+    Canonical form (Tasks-Schema v0.7+): ``frontmatter_to_inherit`` is a dict
+    of ``key: value`` pairs copied verbatim onto the instance. DRY: values
+    live once in the template's inheritance map, not duplicated into
+    top-level template frontmatter.
+
+    Legacy alias: ``frontmatter_to_inherit`` as a list of key names; the
+    tool looks up each key in the rest of the template frontmatter. Emits
+    a deprecation warning.
+
+    Returns the resolved ``{key: value}`` map (possibly empty). Warnings
+    are appended to the supplied list, including a "configured but
+    nothing copied" alarm that prevents lautloses Scheitern.
+    """
+    raw = template_meta.get("frontmatter_to_inherit")
+    if raw is None:
+        return {}
+
+    inherited: dict[str, Any] = {}
+
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            if not isinstance(key, str) or not key.strip():
+                warnings.append(
+                    "'frontmatter_to_inherit' contains a non-string key; ignored"
+                )
+                continue
+            inherited[key] = value
+        if not inherited:
+            warnings.append(
+                "'frontmatter_to_inherit' is configured as a dict but resolved to no fields"
+            )
+        return inherited
+
+    if isinstance(raw, list):
+        warnings.append(
+            "'frontmatter_to_inherit' as a list of keys is a legacy form; "
+            "prefer the dict {key: value} form"
+        )
+        for key in raw:
+            if not isinstance(key, str) or not key.strip():
+                continue
+            if key in template_meta:
+                inherited[key] = template_meta[key]
+        if not inherited:
+            warnings.append(
+                "'frontmatter_to_inherit' (list form) is configured but no listed "
+                "key was present in the template frontmatter; nothing inherited"
+            )
+        return inherited
+
+    warnings.append(
+        "'frontmatter_to_inherit' must be a dict (canonical) or list (legacy); "
+        f"got {type(raw).__name__}; ignored"
+    )
+    return inherited
 
 
 def _build_instance_content(
@@ -373,11 +469,17 @@ def _build_instance_content(
     template_meta: dict[str, Any],
     period_key: str,
     trigger_date: date,
+    warnings: list[str] | None = None,
 ) -> str:
-    """Render the instance markdown (frontmatter + optional body header)."""
+    """Render the instance markdown (frontmatter + optional body header).
+
+    Inheritance is resolved via :func:`_resolve_inheritance`; warnings about
+    legacy / mis-shaped inheritance configuration are appended to the
+    supplied list so the calling tool can surface them in its response.
+    """
+    sink: list[str] = warnings if warnings is not None else []
     due_offset = int(template_meta.get("due_offset_days", 0) or 0)
     priority_initial = template_meta.get("priority_initial")
-    inherit_keys = template_meta.get("frontmatter_to_inherit") or []
     tags_to_inherit = template_meta.get("tags_to_inherit") or []
     title_template = template_meta.get("instance_title")
 
@@ -400,15 +502,11 @@ def _build_instance_content(
     if priority_initial is not None:
         metadata["priority"] = priority_initial
 
-    # Inherit explicit frontmatter keys from the template.
-    if isinstance(inherit_keys, list):
-        for key in inherit_keys:
-            if not isinstance(key, str):
-                continue
-            if key in template_meta:
-                metadata[key] = template_meta[key]
+    # Inherit explicit frontmatter fields from the template (dict or legacy list).
+    for key, value in _resolve_inheritance(template_meta, sink).items():
+        metadata[key] = value
 
-    # Tags: marker tag + inherited tags + any tags inside an inherit_keys "tags" entry.
+    # Tags: marker tag + inherited tags.
     tags: list[str] = ["recurring-instance"]
     if isinstance(tags_to_inherit, list):
         for tag in tags_to_inherit:
@@ -568,13 +666,14 @@ def _process_template(
     created: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
 
     template_id = template_meta.get("id") or template_meta.get("template_id")
     if not template_id:
         errors.append(
             {"path": template_path, "error": "template missing 'id' or 'template_id' frontmatter"}
         )
-        return {"created": created, "skipped": skipped, "errors": errors}
+        return {"created": created, "skipped": skipped, "errors": errors, "warnings": warnings}
     template_id = str(template_id)
 
     anchor_mode = (template_meta.get("recurrence_anchor_mode") or "").strip().lower()
@@ -589,7 +688,7 @@ def _process_template(
                 ),
             }
         )
-        return {"created": created, "skipped": skipped, "errors": errors}
+        return {"created": created, "skipped": skipped, "errors": errors, "warnings": warnings}
 
     try:
         if anchor_mode == "absolute":
@@ -608,7 +707,7 @@ def _process_template(
                         "reason": "not_due",
                     }
                 )
-                return {"created": created, "skipped": skipped, "errors": errors}
+                return {"created": created, "skipped": skipped, "errors": errors, "warnings": warnings}
         else:
             interval_spec = (template_meta.get("recurrence_interval") or "").strip()
             if not interval_spec:
@@ -633,13 +732,13 @@ def _process_template(
                             "next_trigger": _format_iso(candidate.trigger_date),
                         }
                     )
-                    return {"created": created, "skipped": skipped, "errors": errors}
+                    return {"created": created, "skipped": skipped, "errors": errors, "warnings": warnings}
                 periods = [candidate]
     except AnchorError as exc:
         errors.append(
             {"path": template_path, "template_id": template_id, "error": str(exc)}
         )
-        return {"created": created, "skipped": skipped, "errors": errors}
+        return {"created": created, "skipped": skipped, "errors": errors, "warnings": warnings}
 
     if not periods:
         skipped.append(
@@ -649,7 +748,7 @@ def _process_template(
                 "reason": "no_pending_periods",
             }
         )
-        return {"created": created, "skipped": skipped, "errors": errors}
+        return {"created": created, "skipped": skipped, "errors": errors, "warnings": warnings}
 
     last_processed_trigger: date | None = None
     for period in periods:
@@ -666,13 +765,25 @@ def _process_template(
             continue
 
         filename = _build_instance_filename(template_id, period.period_key)
-        rel_path = _instance_relpath(template_meta, template_path, filename)
+        warn_messages: list[str] = []
+        rel_path = _instance_relpath(
+            template_meta, template_path, filename, warn_messages
+        )
         content = _build_instance_content(
             template_id=template_id,
             template_meta=template_meta,
             period_key=period.period_key,
             trigger_date=period.trigger_date,
+            warnings=warn_messages,
         )
+        for msg in warn_messages:
+            warnings.append(
+                {
+                    "template_id": template_id,
+                    "period": period.period_key,
+                    "warning": msg,
+                }
+            )
         if dry_run:
             created.append(
                 {
@@ -725,7 +836,7 @@ def _process_template(
                 }
             )
 
-    return {"created": created, "skipped": skipped, "errors": errors}
+    return {"created": created, "skipped": skipped, "errors": errors, "warnings": warnings}
 
 
 # --------------------------------------------------------------------------
@@ -794,6 +905,7 @@ def recurring_materialize(
     aggregate_created: list[dict[str, Any]] = []
     aggregate_skipped: list[dict[str, Any]] = []
     aggregate_errors: list[dict[str, Any]] = []
+    aggregate_warnings: list[dict[str, Any]] = []
     checked = 0
     matched_filter = False
 
@@ -822,6 +934,7 @@ def recurring_materialize(
         aggregate_created.extend(result["created"])
         aggregate_skipped.extend(result["skipped"])
         aggregate_errors.extend(result["errors"])
+        aggregate_warnings.extend(result.get("warnings", []))
 
     if template_id and not matched_filter:
         aggregate_errors.append(
@@ -834,6 +947,7 @@ def recurring_materialize(
             "created": aggregate_created,
             "skipped": aggregate_skipped,
             "errors": aggregate_errors,
+            "warnings": aggregate_warnings,
             "dry_run": dry_run,
             "as_of": _format_iso(as_of_date),
             "catchup_mode": catchup,

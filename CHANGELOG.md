@@ -5,6 +5,22 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.2] - 2026-05-31
+
+### Changed
+- **Canonical template schema aligned with Tasks-Schema v0.7+**:
+  - `target_folder` (formerly `instance_folder`) is the canonical key for the instance directory. `instance_folder` is kept as a legacy alias and emits a warning when used.
+  - `frontmatter_to_inherit` accepts the dict form `{key: value}` (canonical, DRY: values live once in the inheritance map). The previous list form `[key1, key2]` (which read values from top-level template frontmatter) remains as a legacy alias and emits a warning when used.
+  - When both canonical and legacy keys are present on the same template, the canonical form wins and a warning is recorded.
+- Tool response now includes a `warnings` field aggregating per-template schema-shape advisories so misconfiguration surfaces in the response rather than failing silently. Empty inheritance configuration that resolves to zero fields also produces a warning.
+
+### Docs
+- `docs/recurring.md` updated to use the canonical schema in the worked example and to document the alias / conflict / silent-failure-prevention behavior.
+
+### Tests
+- 5 new test cases covering: `instance_folder` legacy alias warning; `target_folder` precedence when both keys are set; `frontmatter_to_inherit` list form warning; list form with no matching keys → "nothing inherited" warning; invalid type (string) → type warning.
+- All 46 recurring test cases green (277 total in the full suite).
+
 ## [v0.8.1] - 2026-05-31
 
 ### Changed

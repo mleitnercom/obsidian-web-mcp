@@ -244,6 +244,7 @@ last_run: 2026-04-30
 
 
 def test_absolute_quarter_end_creates_instance(recurring_vault):
+    """Canonical schema: target_folder + frontmatter_to_inherit as dict."""
     vault, index = recurring_vault
     tpl = _write_template(
         vault,
@@ -253,17 +254,15 @@ type: recurring-template
 active: true
 recurrence_anchor_mode: absolute
 recurrence_anchor: quarter_end_plus_3d
-instance_folder: tasks
+target_folder: tasks
 due_offset_days: 0
 priority_initial: 2
 last_run: 2026-06-30
 frontmatter_to_inherit:
-  - scope
-  - project
+  scope: privat
+  project: garagenkauf
 tags_to_inherit:
   - tucho
-scope: privat
-project: garagenkauf
 """,
     )
     _refresh_template_index(index, tpl)
@@ -274,6 +273,7 @@ project: garagenkauf
     assert created["period"] == "q2-2026"
     assert created["trigger_date"] == "2026-07-03"
     assert created["path"] == "tasks/recurring-tucho-quarterly-q2-2026.md"
+    assert result["warnings"] == []
     instance_path = vault / "tasks" / "recurring-tucho-quarterly-q2-2026.md"
     assert instance_path.exists()
 
@@ -285,6 +285,134 @@ project: garagenkauf
     assert "project: garagenkauf" in raw
     assert "recurring-instance" in raw
     assert "tucho" in raw
+
+
+def test_instance_folder_alias_still_works_with_warning(recurring_vault):
+    """Legacy alias `instance_folder` writes to the same place but warns."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "legacy.md",
+        """id: legacy
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: month_end
+instance_folder: tasks
+last_run: 2026-04-30
+""",
+    )
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-05-31"))
+    assert len(result["created"]) == 1
+    assert (vault / "tasks" / "recurring-legacy-2026-05.md").exists()
+    assert any("instance_folder" in w["warning"] for w in result["warnings"])
+
+
+def test_target_folder_wins_when_both_present(recurring_vault):
+    """If both target_folder and instance_folder are set, target_folder wins."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "conflict.md",
+        """id: conflict
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: month_end
+target_folder: tasks-canonical
+instance_folder: tasks-legacy
+last_run: 2026-04-30
+""",
+    )
+    (vault / "tasks-canonical").mkdir()
+    (vault / "tasks-legacy").mkdir()
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-05-31"))
+    assert len(result["created"]) == 1
+    assert (vault / "tasks-canonical" / "recurring-conflict-2026-05.md").exists()
+    assert not (vault / "tasks-legacy" / "recurring-conflict-2026-05.md").exists()
+    assert any(
+        "both 'target_folder' and 'instance_folder'" in w["warning"]
+        for w in result["warnings"]
+    )
+
+
+def test_frontmatter_to_inherit_legacy_list_warns(recurring_vault):
+    """List form copies values from template meta but emits a deprecation warning."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "list.md",
+        """id: list-form
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: month_end
+target_folder: tasks
+last_run: 2026-04-30
+frontmatter_to_inherit:
+  - scope
+  - project
+scope: privat
+project: foo
+""",
+    )
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-05-31"))
+    assert len(result["created"]) == 1
+    raw = (vault / "tasks" / "recurring-list-form-2026-05.md").read_text(encoding="utf-8")
+    assert "scope: privat" in raw
+    assert "project: foo" in raw
+    assert any("legacy" in w["warning"] for w in result["warnings"])
+
+
+def test_frontmatter_to_inherit_list_with_no_matches_warns(recurring_vault):
+    """List form referencing missing keys emits the 'nothing inherited' warning."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "empty-list.md",
+        """id: empty-list
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: month_end
+target_folder: tasks
+last_run: 2026-04-30
+frontmatter_to_inherit:
+  - scope_typo
+  - project_typo
+""",
+    )
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-05-31"))
+    assert len(result["created"]) == 1
+    assert any(
+        "nothing inherited" in w["warning"] for w in result["warnings"]
+    )
+
+
+def test_frontmatter_to_inherit_invalid_type_warns(recurring_vault):
+    """Non-dict, non-list form emits a type warning."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "bogus.md",
+        """id: bogus-inherit
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: month_end
+target_folder: tasks
+last_run: 2026-04-30
+frontmatter_to_inherit: "should-be-a-dict-not-a-string"
+""",
+    )
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-05-31"))
+    assert len(result["created"]) == 1
+    assert any("must be a dict" in w["warning"] for w in result["warnings"])
 
 
 def test_absolute_no_last_run_does_not_backfill(recurring_vault):
