@@ -696,10 +696,25 @@ def _process_template(
             if not anchor:
                 raise AnchorError("template missing 'recurrence_anchor' for absolute mode")
             since = _coerce_date(template_meta.get("last_run"))
+            implicit_baseline_used = False
+            if since is None:
+                # Bootstrap: use the template's `created` date as an implicit
+                # baseline. This lets a freshly installed quarterly template
+                # actually fire when its first anchor arrives, without
+                # forcing the operator to hand-seed last_run. Subtract one
+                # day so a trigger ON the baseline date itself qualifies
+                # as "after baseline".
+                implicit = _coerce_date(template_meta.get("created"))
+                if implicit is not None:
+                    since = implicit - timedelta(days=1)
+                    implicit_baseline_used = True
             periods = compute_pending_periods(anchor, as_of, since, catchup=catchup)
-            # Bootstrap: no last_run AND no fired period -> mark not_due so
-            # the next call advances normally once last_run is in place.
-            if not periods and since is None:
+            # Bootstrap: no baseline at all (neither last_run nor created)
+            # OR baseline present but nothing fired in scope -> not_due.
+            if not periods and (
+                since is None
+                or implicit_baseline_used
+            ):
                 skipped.append(
                     {
                         "path": template_path,

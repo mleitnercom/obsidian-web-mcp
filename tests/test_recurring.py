@@ -415,8 +415,8 @@ frontmatter_to_inherit: "should-be-a-dict-not-a-string"
     assert any("must be a dict" in w["warning"] for w in result["warnings"])
 
 
-def test_absolute_no_last_run_does_not_backfill(recurring_vault):
-    """Fresh absolute template + already-fired anchor in the past -> not_due."""
+def test_absolute_no_last_run_no_created_does_not_backfill(recurring_vault):
+    """Fresh absolute template + no created date -> not_due (no baseline)."""
     vault, index = recurring_vault
     tpl = _write_template(
         vault,
@@ -426,17 +426,87 @@ type: recurring-template
 active: true
 recurrence_anchor_mode: absolute
 recurrence_anchor: quarter_end_plus_1d
-instance_folder: tasks
+target_folder: tasks
 due_offset_days: 30
 """,
     )
     _refresh_template_index(index, tpl)
-    # Q1 ends 2026-03-31, +1d = 2026-04-01. As_of 2026-05-30 is after.
-    # Pre-patch behaviour was to backfill q1. Post-patch: not_due.
     result = json.loads(recurring_materialize(as_of="2026-05-30"))
     assert result["created"] == []
     assert any(s.get("reason") == "not_due" for s in result["skipped"])
     assert not list((vault / "tasks").glob("recurring-uva-*.md"))
+
+
+def test_absolute_bootstrap_with_created_fires_at_anchor(recurring_vault):
+    """Template `created` acts as implicit baseline. Anchor at as_of fires."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "uva.md",
+        """id: uva
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: quarter_end_plus_1d
+target_folder: tasks
+due_offset_days: 30
+created: 2026-04-01
+""",
+    )
+    _refresh_template_index(index, tpl)
+    # Q2 trigger 2026-07-01. as_of == trigger.
+    result = json.loads(recurring_materialize(as_of="2026-07-01"))
+    assert len(result["created"]) == 1
+    created_entry = result["created"][0]
+    assert created_entry["period"] == "q2-2026"
+    assert created_entry["trigger_date"] == "2026-07-01"
+    assert (vault / "tasks" / "recurring-uva-q2-2026.md").exists()
+
+
+def test_absolute_bootstrap_anchor_before_created_is_not_due(recurring_vault):
+    """Anchor predating template `created` is not retroactively fired."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "uva.md",
+        """id: uva-late
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: quarter_end_plus_1d
+target_folder: tasks
+created: 2026-05-01
+""",
+    )
+    _refresh_template_index(index, tpl)
+    # Q1 trigger 2026-04-01 < created 2026-05-01 -> ignore.
+    # Q2 trigger 2026-07-01 > as_of 2026-06-30 -> not yet.
+    result = json.loads(recurring_materialize(as_of="2026-06-30"))
+    assert result["created"] == []
+    assert any(s.get("reason") == "not_due" for s in result["skipped"])
+
+
+def test_absolute_bootstrap_no_anchor_between_created_and_as_of(recurring_vault):
+    """No anchor in (created, as_of] -> not_due even with created baseline."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "uva.md",
+        """id: uva-fut
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: quarter_end_plus_1d
+target_folder: tasks
+created: 2026-04-02
+""",
+    )
+    _refresh_template_index(index, tpl)
+    # created=2026-04-02 (q1 already past), as_of=2026-06-15 (before q2 trigger).
+    # No anchor in window -> not_due.
+    result = json.loads(recurring_materialize(as_of="2026-06-15"))
+    assert result["created"] == []
+    assert any(s.get("reason") == "not_due" for s in result["skipped"])
 
 
 def test_absolute_no_last_run_future_anchor_also_not_due(recurring_vault):
