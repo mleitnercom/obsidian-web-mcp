@@ -1,6 +1,6 @@
 [project]
 name = "obsidian-web-mcp"
-version = "0.7.3"
+version = "0.8.0"
 description = "Secure remote MCP server for Obsidian vaults -- access your notes from Claude, your phone, or any MCP client, anywhere"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -36,6 +36,7 @@ vault-mcp = "obsidian_vault_mcp.server:main"
 vault-observe = "obsidian_vault_mcp.observability_cli:main"
 vault-semantic = "obsidian_vault_mcp.semantic_cli:main"
 vault-semantic-benchmark = "obsidian_vault_mcp.semantic_benchmark:main"
+vault-recurring = "obsidian_vault_mcp.tools.recurring:cli_main"
 
 [build-system]
 requires = ["hatchling"]
