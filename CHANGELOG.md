@@ -5,6 +5,22 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.3] - 2026-05-31
+
+### Changed
+- **Bootstrap baseline for absolute templates uses the template's `created` date** when `last_run` is absent. An anchor fires when its trigger is on or after `created` and on or before `as_of`. Pre-v0.8.3 behavior would silently `skipped: not_due` even at the anchor moment itself, losing a full period for templates installed before their first anchor (e.g. quarterly templates installed mid-quarter would miss the next quarter end and only fire the one after that).
+- Anchors strictly before `created` still `skipped: not_due` — no retroactive backfill of pre-template history. Anchors strictly after `as_of` likewise `skipped: not_due`. The change only opens the bootstrap window between those two endpoints.
+
+### Invariant
+- `last_run` remains tool-managed only. To shift the bootstrap baseline, hand-edit `created` (not `last_run`).
+
+### Docs
+- `docs/recurring.md` "Bootstrap behavior" section rewritten for the new absolute path; the Q2-UVA example illustrates the typical use case.
+
+### Tests
+- 4 new cases for the bootstrap-with-created paths: trigger ON `as_of` fires, trigger before `created` is `not_due`, trigger after `as_of` is `not_due`, no anchor in window is `not_due`. The previous "always not_due without last_run" test is rewritten to require `created` to also be absent.
+- 49 recurring cases total, 280 in the full suite, zero regressions.
+
 ## [v0.8.2] - 2026-05-31
 
 ### Changed

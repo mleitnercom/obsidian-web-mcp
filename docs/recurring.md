@@ -110,23 +110,32 @@ The semantics on the very first invocation of a freshly installed template
 (no `last_run` yet, no done instances) differ by mode. This is deliberate:
 the two modes encode different intents.
 
-### Absolute templates: conservative
+### Absolute templates: `created` is the implicit baseline
 
-Without `last_run`, an absolute template **does not fire**, regardless of
-whether the anchor has already triggered or is still in the future. The
-template is reported as `skipped: not_due`.
+Without `last_run`, the tool uses the template's `created` frontmatter
+date as an implicit baseline. An anchor fires when its trigger date is
+on or after `created` AND on or before `as_of`. Specifically:
 
-Why: a freshly installed `quarter_end_plus_1d` template at the end of May
-should not claim that Q1 is open as an inbox task — that period is usually
-already handled elsewhere (an accountant filed the VAT, a colleague closed
-the report). Surfacing it as an overdue task is a false alarm. The first
-real firing happens once `last_run` exists; the second run with `since`
-in place then catches up from there.
+- Anchor trigger **before** `created` → `skipped: not_due` (no retroactive
+  claim that historical periods are open).
+- Anchor trigger **between `created` and `as_of`** (inclusive on both ends)
+  → fires. This is the bootstrap moment: the first matching anchor
+  produces the first real instance and `last_run` is set accordingly.
+- Anchor trigger **after `as_of`** → `skipped: not_due` (future).
 
-Operator note: the tool itself sets `last_run` only after a real firing
-(non-dry-run). To "arm" a freshly installed absolute template without
-materializing past periods, write a `last_run` field by hand to the date
-you consider the baseline.
+Without both `last_run` AND `created`, the template stays `not_due` forever
+— the tool cannot tell what "since template existence" means. For UI-created
+notes that omit `created`, set one by hand once.
+
+Why: a freshly installed `quarter_end_plus_1d` template anchored on
+2026-07-01 should fire on 2026-07-01 without operator intervention. The
+previous (v0.8.1) behavior would have skipped silently and missed Q2
+entirely; the next firing would have been Q3 on 2026-10-01 — one full
+period lost.
+
+Operator note: `last_run` is set only by the tool itself on real
+(non-dry-run) firings. To shift the bootstrap baseline forward, hand-edit
+`created`, not `last_run`.
 
 ### Relative templates: bootstrap with today
 
