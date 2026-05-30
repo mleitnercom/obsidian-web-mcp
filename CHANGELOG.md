@@ -5,6 +5,17 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.1] - 2026-05-31
+
+### Changed
+- **Bootstrap semantics for fresh templates** are now mode-aware:
+  - **Absolute** templates without `last_run` no longer backfill the most recent already-triggered period. They report `skipped: not_due` instead. Rationale: a freshly installed quarterly template should not retroactively claim that historical periods are open inbox items — those are typically already handled elsewhere. The first real firing happens once `last_run` exists.
+  - **Relative** templates without any baseline (no done instance, no `last_run`) now bootstrap immediately with `trigger_date = today` and `period_key = today.isoformat()`. Rationale: relative templates are self-driven cadences; the previous `skipped: no_baseline_for_relative` behavior meant the template would never fire on its own.
+- Updated `docs/recurring.md` with a dedicated **Bootstrap behavior** section so the two paths are explicit per mode.
+
+### Tests
+- Test suite restructured around the new semantics: existing absolute fixtures now include explicit `last_run` baselines; new tests cover the conservative absolute path (`not_due` for both past and future anchors) and the relative bootstrap path (instance + idempotency on second same-day call). All 41 recurring tests green (272 total).
+
 ## [v0.8.0] - 2026-05-25
 
 ### Added

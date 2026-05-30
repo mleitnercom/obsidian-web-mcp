@@ -244,38 +244,42 @@ def compute_pending_periods(
     catchup: str = "next",
     safety_limit: int = 50,
 ) -> list[TriggeredPeriod]:
-    """Return periods that have triggered between ``since`` and ``as_of``.
+    """Return absolute-anchor periods that should fire now.
 
     Sorted ascending by trigger date.
 
-    - ``since=None`` means "no prior baseline known": return at most one
-      period (the single most recent trigger), regardless of ``catchup``.
-      This prevents an unbounded initial backfill the very first time a
-      template is processed.
-    - ``catchup='next'`` collapses multiple pending periods to the most
-      recent only.
-    - ``catchup='all'`` returns every period strictly later than ``since``.
-    - ``safety_limit`` caps the descending walk to prevent runaway loops
-      on misconfigured templates with very old ``since`` values.
+    - ``since=None`` (fresh install, no prior ``last_run``): return ``[]``.
+      A freshly installed absolute template MUST NOT retroactively claim
+      that past periods are open -- those are usually already-handled by
+      other means (e.g. an accountant filed the Q1 VAT). The template only
+      becomes active for FUTURE triggers; the first real firing happens
+      when ``as_of >= trigger`` after ``last_run`` has been set by an
+      earlier (no-op) invocation.
+    - ``since`` set: standard catch-up from ``since`` to ``as_of``.
+        - ``catchup='next'`` keeps only the most recent triggered period.
+        - ``catchup='all'`` returns every period in (since, as_of].
+    - ``safety_limit`` caps descent to prevent runaway walks.
     """
     if catchup not in {"next", "all"}:
         raise AnchorError(f"Invalid catchup mode: {catchup!r}")
 
+    if since is None:
+        # No baseline -> never backfill. This is the bootstrap-conservative
+        # branch for absolute anchors; callers are expected to set last_run
+        # on the template (e.g. to today) after the first observed run so
+        # subsequent invocations have a baseline.
+        return []
+
     collected: list[TriggeredPeriod] = []
     gen = _iter_triggers_descending(anchor, as_of)
-    # Yield count guard: collected periods. Drains generator only as far as
-    # `safety_limit` matches require, regardless of how many descending
-    # steps the generator internally takes.
     for _ in range(safety_limit):
         try:
             period = next(gen)
         except StopIteration:
             break
-        if since is not None and period.trigger_date <= since:
+        if period.trigger_date <= since:
             break
         collected.append(period)
-        if since is None:
-            break
 
     collected.reverse()
     if catchup == "next" and len(collected) > 1:
@@ -594,6 +598,17 @@ def _process_template(
                 raise AnchorError("template missing 'recurrence_anchor' for absolute mode")
             since = _coerce_date(template_meta.get("last_run"))
             periods = compute_pending_periods(anchor, as_of, since, catchup=catchup)
+            # Bootstrap: no last_run AND no fired period -> mark not_due so
+            # the next call advances normally once last_run is in place.
+            if not periods and since is None:
+                skipped.append(
+                    {
+                        "path": template_path,
+                        "template_id": template_id,
+                        "reason": "not_due",
+                    }
+                )
+                return {"created": created, "skipped": skipped, "errors": errors}
         else:
             interval_spec = (template_meta.get("recurrence_interval") or "").strip()
             if not interval_spec:
@@ -602,27 +617,24 @@ def _process_template(
                 )
             last_done = _last_done_for(template_id) or _coerce_date(template_meta.get("last_run"))
             if last_done is None:
-                # No baseline -- relative anchors need a starting point.
-                skipped.append(
-                    {
-                        "path": template_path,
-                        "template_id": template_id,
-                        "reason": "no_baseline_for_relative",
-                    }
-                )
-                return {"created": created, "skipped": skipped, "errors": errors}
-            candidate = compute_relative_period(interval_spec, last_done)
-            if candidate.trigger_date > as_of:
-                skipped.append(
-                    {
-                        "path": template_path,
-                        "template_id": template_id,
-                        "reason": "not_yet_due",
-                        "next_trigger": _format_iso(candidate.trigger_date),
-                    }
-                )
-                return {"created": created, "skipped": skipped, "errors": errors}
-            periods = [candidate]
+                # Bootstrap: a freshly installed relative template fires once
+                # with trigger=today, so the cadence has a starting point.
+                # Subsequent calls find this instance (or last_run) and proceed
+                # from there.
+                periods = [TriggeredPeriod(as_of, _format_iso(as_of))]
+            else:
+                candidate = compute_relative_period(interval_spec, last_done)
+                if candidate.trigger_date > as_of:
+                    skipped.append(
+                        {
+                            "path": template_path,
+                            "template_id": template_id,
+                            "reason": "not_yet_due",
+                            "next_trigger": _format_iso(candidate.trigger_date),
+                        }
+                    )
+                    return {"created": created, "skipped": skipped, "errors": errors}
+                periods = [candidate]
     except AnchorError as exc:
         errors.append(
             {"path": template_path, "template_id": template_id, "error": str(exc)}
