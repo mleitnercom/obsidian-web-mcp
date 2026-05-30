@@ -75,21 +75,30 @@ def test_compute_relative_period_returns_iso_period_key():
     assert period.period_key == "2026-05-08"
 
 
-def test_pending_periods_month_end_fires_on_last_day():
-    # Last day of May 2026
+def test_pending_periods_no_baseline_returns_empty():
+    # Bootstrap-conservative: without a since baseline, absolute anchors
+    # never backfill, regardless of where as_of falls.
     out = compute_pending_periods("month_end", date(2026, 5, 31), since=None)
+    assert out == []
+    out = compute_pending_periods("month_end", date(2026, 5, 15), since=None)
+    assert out == []
+    out = compute_pending_periods("quarter_end_plus_3d", date(2026, 7, 4), since=None)
+    assert out == []
+
+
+def test_pending_periods_with_baseline_catches_up():
+    # With a since baseline 2026-04-30, May month_end is the next trigger.
+    out = compute_pending_periods(
+        "month_end", date(2026, 5, 31), since=date(2026, 4, 30)
+    )
     assert out == [TriggeredPeriod(date(2026, 5, 31), "2026-05")]
 
 
-def test_pending_periods_month_end_not_yet_returns_previous():
-    # Mid-May -> May not yet due, but April fired
-    out = compute_pending_periods("month_end", date(2026, 5, 15), since=None)
-    assert out == [TriggeredPeriod(date(2026, 4, 30), "2026-04")]
-
-
-def test_pending_periods_quarter_end_plus_3d():
-    # Q2 ends 2026-06-30, +3d = 2026-07-03. as_of=2026-07-04 -> fired.
-    out = compute_pending_periods("quarter_end_plus_3d", date(2026, 7, 4), since=None)
+def test_pending_periods_quarter_end_plus_3d_with_baseline():
+    # Q2 ends 2026-06-30, +3d = 2026-07-03. Baseline before that -> fired.
+    out = compute_pending_periods(
+        "quarter_end_plus_3d", date(2026, 7, 4), since=date(2026, 6, 30)
+    )
     assert out == [TriggeredPeriod(date(2026, 7, 3), "q2-2026")]
 
 
@@ -115,15 +124,17 @@ def test_pending_periods_catchup_next_collapses():
     assert [p.period_key for p in out] == ["q2-2026"]
 
 
-def test_pending_periods_fixed_date():
-    out = compute_pending_periods("fixed-12-31", date(2026, 12, 31), since=None)
+def test_pending_periods_fixed_date_with_baseline():
+    out = compute_pending_periods(
+        "fixed-12-31", date(2026, 12, 31), since=date(2025, 12, 31)
+    )
     assert out == [TriggeredPeriod(date(2026, 12, 31), "fixed-12-31-2026")]
 
 
-def test_pending_periods_t_before_christmas():
+def test_pending_periods_t_before_christmas_with_baseline():
     # T-7-before-12-31 -> trigger 2026-12-24, anchor key 2026
     out = compute_pending_periods(
-        "T-7-before-12-31", date(2026, 12, 25), since=None
+        "T-7-before-12-31", date(2026, 12, 25), since=date(2025, 12, 24)
     )
     assert out == [TriggeredPeriod(date(2026, 12, 24), "fixed-12-31-2026")]
 
@@ -137,13 +148,19 @@ def test_pending_periods_since_blocks_repeat():
 
 
 def test_pending_periods_invalid_anchor_raises():
+    # Pass a since date so the empty-on-no-baseline short-circuit doesn't
+    # swallow the error before the anchor is parsed.
     with pytest.raises(AnchorError):
-        compute_pending_periods("nonsense-anchor", date(2026, 1, 1), None)
+        compute_pending_periods(
+            "nonsense-anchor", date(2026, 1, 1), since=date(2025, 1, 1)
+        )
 
 
 def test_pending_periods_invalid_fixed_day_raises():
     with pytest.raises(AnchorError):
-        compute_pending_periods("fixed-02-30", date(2026, 5, 1), None)
+        compute_pending_periods(
+            "fixed-02-30", date(2026, 5, 1), since=date(2025, 5, 1)
+        )
 
 
 # --------------------------------------------------------------------------
@@ -213,6 +230,7 @@ type: recurring-template
 active: false
 recurrence_anchor_mode: absolute
 recurrence_anchor: month_end
+last_run: 2026-04-30
 """,
     )
     _refresh_template_index(index, tpl)
@@ -238,6 +256,7 @@ recurrence_anchor: quarter_end_plus_3d
 instance_folder: tasks
 due_offset_days: 0
 priority_initial: 2
+last_run: 2026-06-30
 frontmatter_to_inherit:
   - scope
   - project
@@ -266,6 +285,50 @@ project: garagenkauf
     assert "project: garagenkauf" in raw
     assert "recurring-instance" in raw
     assert "tucho" in raw
+
+
+def test_absolute_no_last_run_does_not_backfill(recurring_vault):
+    """Fresh absolute template + already-fired anchor in the past -> not_due."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "uva.md",
+        """id: uva
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: quarter_end_plus_1d
+instance_folder: tasks
+due_offset_days: 30
+""",
+    )
+    _refresh_template_index(index, tpl)
+    # Q1 ends 2026-03-31, +1d = 2026-04-01. As_of 2026-05-30 is after.
+    # Pre-patch behaviour was to backfill q1. Post-patch: not_due.
+    result = json.loads(recurring_materialize(as_of="2026-05-30"))
+    assert result["created"] == []
+    assert any(s.get("reason") == "not_due" for s in result["skipped"])
+    assert not list((vault / "tasks").glob("recurring-uva-*.md"))
+
+
+def test_absolute_no_last_run_future_anchor_also_not_due(recurring_vault):
+    """Fresh absolute template + anchor still in future -> not_due (same path)."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "fixed.md",
+        """id: yearly-fixed
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: fixed-12-31
+instance_folder: tasks
+""",
+    )
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-05-30"))
+    assert result["created"] == []
+    assert any(s.get("reason") == "not_due" for s in result["skipped"])
 
 
 def test_relative_interval_uses_done_instance(recurring_vault):
@@ -319,6 +382,7 @@ recurrence_anchor_mode: absolute
 recurrence_anchor: month_end
 instance_folder: tasks
 due_offset_days: 0
+last_run: 2026-04-30
 """,
     )
     _refresh_template_index(index, tpl)
@@ -333,8 +397,8 @@ due_offset_days: 0
     assert len(instance_files) == 1
 
 
-def test_idempotent_when_last_run_missing(recurring_vault, monkeypatch):
-    """If last_run is absent or stale, the index-based already_exists check fires."""
+def test_idempotent_when_last_run_stale(recurring_vault, monkeypatch):
+    """If last_run is stale, the index-based already_exists check fires."""
     monkeypatch.setattr(recurring, "_update_template_last_run", lambda *a, **kw: None)
     vault, index = recurring_vault
     tpl = _write_template(
@@ -346,6 +410,7 @@ active: true
 recurrence_anchor_mode: absolute
 recurrence_anchor: month_end
 instance_folder: tasks
+last_run: 2026-04-30
 """,
     )
     _refresh_template_index(index, tpl)
@@ -416,6 +481,7 @@ active: true
 recurrence_anchor_mode: absolute
 recurrence_anchor: month_end
 instance_folder: tasks
+last_run: 2026-04-30
 """,
     )
     _refresh_template_index(index, tpl)
@@ -426,9 +492,10 @@ instance_folder: tasks
     assert result["created"][0].get("dry_run") is True
     # No actual file written
     assert not (vault / "tasks" / "recurring-monthly-check-2026-05.md").exists()
-    # last_run untouched
+    # last_run UNTOUCHED (still the fixture baseline, not advanced).
     raw = tpl.read_text(encoding="utf-8")
-    assert "last_run" not in raw
+    assert "last_run: 2026-04-30" in raw
+    assert "last_run: 2026-05" not in raw
 
 
 def test_template_id_filter(recurring_vault):
@@ -442,6 +509,7 @@ active: true
 recurrence_anchor_mode: absolute
 recurrence_anchor: month_end
 instance_folder: tasks
+last_run: 2026-04-30
 """,
     )
     tpl_b = _write_template(
@@ -453,6 +521,7 @@ active: true
 recurrence_anchor_mode: absolute
 recurrence_anchor: month_end
 instance_folder: tasks
+last_run: 2026-04-30
 """,
     )
     _refresh_template_index(index, tpl_a)
@@ -464,7 +533,8 @@ instance_folder: tasks
     assert not (vault / "tasks" / "recurring-beta-2026-05.md").exists()
 
 
-def test_relative_no_baseline_skipped(recurring_vault):
+def test_relative_no_baseline_bootstraps_with_today(recurring_vault):
+    """Fresh relative template fires once with trigger=as_of (today)."""
     vault, index = recurring_vault
     tpl = _write_template(
         vault,
@@ -479,10 +549,34 @@ instance_folder: tasks
     )
     _refresh_template_index(index, tpl)
     result = json.loads(recurring_materialize(as_of="2026-05-15"))
-    assert any(
-        s.get("reason") == "no_baseline_for_relative" for s in result["skipped"]
+    assert len(result["created"]) == 1
+    created = result["created"][0]
+    assert created["period"] == "2026-05-15"
+    assert created["trigger_date"] == "2026-05-15"
+    assert (vault / "tasks" / "recurring-brand-new-2026-05-15.md").exists()
+
+
+def test_relative_bootstrap_then_idempotent(recurring_vault):
+    """Bootstrap fires once; second call same day -> already_exists."""
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "x.md",
+        """id: brand-new
+type: recurring-template
+active: true
+recurrence_anchor_mode: relative
+recurrence_interval: 7d
+instance_folder: tasks
+""",
     )
-    assert not result["created"]
+    _refresh_template_index(index, tpl)
+    first = json.loads(recurring_materialize(as_of="2026-05-15"))
+    assert len(first["created"]) == 1
+    second = json.loads(recurring_materialize(as_of="2026-05-15"))
+    assert second["created"] == []
+    files = list((vault / "tasks").glob("recurring-brand-new-2026-05-15.md"))
+    assert len(files) == 1
 
 
 def test_invalid_as_of(recurring_vault):
