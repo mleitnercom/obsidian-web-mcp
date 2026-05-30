@@ -2,7 +2,7 @@
 
 Production-hardened fork of [`jimprosser/obsidian-web-mcp`](https://github.com/jimprosser/obsidian-web-mcp): an HTTP-based MCP server that exposes an Obsidian vault to LLM clients such as Claude, ChatGPT, and Codex over OAuth 2.0.
 
-**Latest release:** [v0.7.3](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.7.3) (2026-05-24)
+**Latest release:** [v0.8.0](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.8.0) (2026-05-25)
 
 ## At a Glance
 
@@ -132,6 +132,7 @@ The filesystem path is the primary path. The Plugin Bridge is additive and optio
 | `vault_move` | Move or rename files/directories |
 | `vault_delete` | Soft-delete a file into `.trash/` |
 | `vault_delete_directory` | Soft-delete an empty directory into `.trash/` |
+| `recurring_materialize` | Materialize pending recurring-task instances from templates (see [docs/recurring.md](docs/recurring.md)) |
 
 ## Optional Plugin Bridge
 
