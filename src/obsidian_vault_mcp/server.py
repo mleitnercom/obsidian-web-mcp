@@ -385,6 +385,24 @@ def _can_return_detailed_health(request: Request) -> bool:
     return _is_direct_loopback_request(request)
 
 
+async def _recurring_scheduler_loop(interval_seconds: int) -> None:
+    """Periodically invoke recurring_materialize from the server event loop.
+
+    Errors are logged and swallowed so a misconfigured template never
+    crashes the MCP service. Cancellation propagates cleanly on shutdown.
+    """
+    from .tools.recurring import recurring_materialize
+
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            await asyncio.to_thread(recurring_materialize)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Recurring scheduler iteration failed")
+
+
 @asynccontextmanager
 async def lifespan(server):
     """Initialize the frontmatter index once per process.
@@ -417,11 +435,27 @@ async def lifespan(server):
             "Heartbeat enabled (interval: %ds)",
             config.VAULT_MCP_HEARTBEAT_INTERVAL,
         )
+    recurring_task = None
+    if (
+        config.VAULT_RECURRING_ENABLED
+        and config.VAULT_RECURRING_INTERVAL > 0
+        and config.VAULT_RECURRING_TEMPLATES_FOLDER
+    ):
+        recurring_task = asyncio.create_task(
+            _recurring_scheduler_loop(config.VAULT_RECURRING_INTERVAL)
+        )
+        logger.info(
+            "Recurring scheduler enabled (interval: %ds, folder: %r)",
+            config.VAULT_RECURRING_INTERVAL,
+            config.VAULT_RECURRING_TEMPLATES_FOLDER,
+        )
     try:
         yield {"frontmatter_index": frontmatter_index}
     finally:
         if heartbeat_task is not None:
             heartbeat_task.cancel()
+        if recurring_task is not None:
+            recurring_task.cancel()
 
 
 # Create the MCP server
@@ -487,6 +521,9 @@ from .tools.semantic_search import (
     set_engine as _set_semantic_engine,
     vault_semantic_search as _vault_semantic_search,
     vault_reindex as _vault_reindex,
+)
+from .tools.recurring import (
+    recurring_materialize as _recurring_materialize,
 )
 from .models import (
     VaultAnalyticsFindingsInput,
@@ -1488,6 +1525,37 @@ def vault_delete_directory(path: str, confirm: bool = False, only_if_empty: bool
         path=inp.path,
         confirm=inp.confirm,
         only_if_empty=inp.only_if_empty,
+    )
+
+
+@mcp.tool(
+    name="recurring_materialize",
+    description=(
+        "Materialize pending recurring-task instances from recurring-template notes. "
+        "Reads templates from VAULT_RECURRING_TEMPLATES_FOLDER, resolves their anchor "
+        "(absolute via month_end/quarter_end_plus_Nd/fixed-MM-DD/T-N-before-MM-DD, or "
+        "relative via Nd/Nm), and creates one instance per pending period through the "
+        "verified atomic-write path. Strictly idempotent: a second call with the same "
+        "(template, period) does NOT duplicate. Returns "
+        "{checked, created, skipped, errors, dry_run, as_of, catchup_mode}."
+    ),
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def recurring_materialize(
+    dry_run: bool = False,
+    template_id: str | None = None,
+    as_of: str | None = None,
+) -> str:
+    """Materialize pending recurring-template instances."""
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "recurring_materialize",
+        lambda: _recurring_materialize(dry_run=dry_run, template_id=template_id, as_of=as_of),
+        dry_run=dry_run,
+        template_id=template_id,
+        as_of=as_of,
     )
 
 

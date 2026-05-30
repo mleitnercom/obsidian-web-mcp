@@ -5,6 +5,20 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.0] - 2026-05-25
+
+### Added
+- New MCP tool `recurring_materialize` that turns `recurring-template` notes into concrete task instances. Supports absolute anchors (`month_end`, `month_start`, `quarter_end_plus_Nd`, `fixed-MM-DD`, `T-N-before-MM-DD`) and relative intervals (`Nd`, `Nm`). Strictly idempotent on `(recurrence_template, recurrence_period)` via the frontmatter index.
+- Optional internal scheduler: when `VAULT_RECURRING_INTERVAL > 0`, the server lifespan runs `recurring_materialize` on a cadence with crash-isolated error handling.
+- New `vault-recurring` CLI entry point for systemd-timer setups (`vault-recurring run [--dry-run] [--template-id ID] [--as-of YYYY-MM-DD] [--no-index]`).
+- Five new env vars: `VAULT_RECURRING_ENABLED`, `VAULT_RECURRING_TEMPLATES_FOLDER`, `VAULT_RECURRING_INTERVAL`, `VAULT_RECURRING_DONE_STATUS`, `VAULT_RECURRING_CATCHUP_MODE` (values `next` / `all`).
+
+### Tests
+- 38 new test cases in `tests/test_recurring.py` covering anchor / interval parsing, idempotency, catch-up modes, dry-run, inactive templates, disabled feature flag, and the relative-no-baseline path.
+
+### Docs
+- New `docs/recurring.md` with template schema, anchor reference, catch-up behavior, and a systemd timer example.
+
 ## [v0.7.3] - 2026-05-24
 
 ### Security
