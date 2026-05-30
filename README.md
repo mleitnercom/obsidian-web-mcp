@@ -22,6 +22,7 @@ This fork turns the upstream "MCP over HTTP" server into a vault-aware workflow 
 ### What's additional
 
 - **Daily Notes tools.** `vault_daily_note_path`, `vault_daily_note_read`, and `vault_daily_note_append`.
+- **Recurring task materialization.** `recurring_materialize` turns `recurring-template` notes into concrete instances on a schedule (absolute anchors like `month_end`, `quarter_end_plus_Nd`, `fixed-MM-DD`, `T-N-before-MM-DD`; relative `Nd` / `Nm` intervals). Strictly idempotent; optional in-process scheduler and `vault-recurring` CLI for systemd timers. See [docs/recurring.md](docs/recurring.md).
 - **Audit JSON Lines.** Mutation audit with hashed token id, client id, operation, target path, sizes, checksums, and optional read audit.
 - **Optional Plugin Bridge.** Templater-style simple rendering and Dataview TABLE DQL via Obsidian Local REST API.
 - **Canvas tools.** Read `.canvas` JSON and append nodes or edges with validation and write verification.
@@ -65,6 +66,29 @@ Then query them with `vault_search_frontmatter`, including AND filters and list 
 ### Daily Notes Capture
 
 Use `vault_daily_note_append` to add structured notes to today's daily note. The path is controlled by `VAULT_DAILY_NOTES_FOLDER` and `VAULT_DAILY_NOTES_FORMAT`; new files can start with `VAULT_DAILY_NOTES_TEMPLATE`.
+
+### Recurring Tasks
+
+Store templates in `VAULT_RECURRING_TEMPLATES_FOLDER` with `type: recurring-template` and an anchor expression. `recurring_materialize` creates one task instance per pending period:
+
+```yaml
+---
+id: q-report
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: quarter_end_plus_3d
+instance_folder: 15_Tasks/governance
+due_offset_days: 0
+priority_initial: 2
+frontmatter_to_inherit: [scope, project]
+tags_to_inherit: [quarterly]
+scope: pbs
+project: governance
+---
+```
+
+Idempotency is enforced on `(recurrence_template, recurrence_period)` via the in-memory frontmatter index, so a second invocation never duplicates. Catch-up behavior is configurable (`VAULT_RECURRING_CATCHUP_MODE=next|all`). Schedule via the in-process loop (`VAULT_RECURRING_INTERVAL>0`) or the `vault-recurring run` CLI under a systemd timer. See [docs/recurring.md](docs/recurring.md).
 
 ### Audit Trail
 
@@ -212,6 +236,7 @@ src/obsidian_vault_mcp/
     vault.py              # Filesystem operations and path policy
     retrieval/            # Optional semantic search engine
     tools/                # Tool implementations
+    tools/recurring.py    # Recurring-task templates + materialization tool + CLI
 tests/                    # Unit and integration tests
 docs/                     # Detailed guides
 ```
