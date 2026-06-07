@@ -45,6 +45,9 @@ def oauth_client(monkeypatch, tmp_path):
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_CLIENT_ID", ENV_CLIENT_ID)
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_CLIENT_SECRET", ENV_CLIENT_SECRET)
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS", False)
+    # These tests exercise the client-auth/PKCE paths, not the interactive login
+    # gate, so opt into unauthenticated auto-approval explicitly.
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_ALLOW_NO_AUTH", True)
     monkeypatch.setattr(
         oauth.config,
         "VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH",
@@ -283,6 +286,40 @@ def test_client_credentials_grant_accepts_registered(oauth_client):
     )
     assert response.status_code == 200
     assert response.json()["access_token"] == "vault-test-token"
+
+
+# --- /authorize fail-closed when no login configured ----------------------
+
+
+def test_authorize_fails_closed_without_login_credentials(oauth_client, monkeypatch):
+    """With no login configured and no opt-in, /authorize refuses (503)."""
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_USERNAME", "")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_ALLOW_NO_AUTH", False)
+    response, _ = _authorize(oauth_client, ENV_CLIENT_ID)
+    assert response.status_code == 503
+    assert response.json()["error"] == "server_error"
+
+
+def test_authorize_auto_approves_with_explicit_opt_in(oauth_client, monkeypatch):
+    """The explicit VAULT_OAUTH_ALLOW_NO_AUTH opt-in restores auto-approval."""
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_USERNAME", "")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_ALLOW_NO_AUTH", True)
+    response, _ = _authorize(oauth_client, ENV_CLIENT_ID)
+    assert response.status_code == 302
+    assert "code=" in response.headers["location"]
+
+
+def test_authorize_shows_login_form_when_credentials_configured(oauth_client, monkeypatch):
+    """With login credentials set, /authorize gates behind the login form."""
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_USERNAME", "operator")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "correct horse")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_ALLOW_NO_AUTH", False)
+    response, _ = _authorize(oauth_client, ENV_CLIENT_ID)
+    assert response.status_code == 200
+    assert "Vault MCP Login" in response.text
+    assert "code=" not in response.text
 
 
 # --- MCP protocol-version probe -------------------------------------------

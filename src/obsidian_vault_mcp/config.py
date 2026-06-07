@@ -87,6 +87,11 @@ VAULT_OAUTH_AUTH_USERNAME = os.environ.get("VAULT_OAUTH_AUTH_USERNAME", "")
 VAULT_OAUTH_AUTH_PASSWORD = os.environ.get("VAULT_OAUTH_AUTH_PASSWORD", "")
 VAULT_OAUTH_SESSION_SECRET = os.environ.get("VAULT_OAUTH_SESSION_SECRET", "")
 VAULT_OAUTH_REQUIRE_APPROVAL = _env_bool("VAULT_OAUTH_REQUIRE_APPROVAL", True)
+# Fail closed by default: when no login credentials are configured the
+# /oauth/authorize endpoint refuses to issue authorization codes. Set this to
+# true only for local development/testing where unauthenticated auto-approval
+# is acceptable.
+VAULT_OAUTH_ALLOW_NO_AUTH = _env_bool("VAULT_OAUTH_ALLOW_NO_AUTH", False)
 VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS = _env_bool("VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS", True)
 VAULT_PUBLIC_BASE_URL = os.environ.get("VAULT_PUBLIC_BASE_URL", "").strip().rstrip("/")
 TRUSTED_PROXY_IPS = os.environ.get("VAULT_TRUSTED_PROXY_IPS", "127.0.0.1,::1")

@@ -71,4 +71,20 @@ VAULT_OAUTH_AUTH_PASSWORD=REPLACE_WITH_PASSWORD
 VAULT_OAUTH_REQUIRE_APPROVAL=true
 ```
 
+### Fail-closed authorization
+
+When no login credentials are configured, `/oauth/authorize` **fails closed**: it
+refuses to issue authorization codes and returns `503 server_error`. This prevents
+the endpoint from auto-approving and handing the vault bearer token to any caller
+that can reach the URL.
+
+For local development or testing where unauthenticated auto-approval is acceptable,
+set the explicit opt-in:
+
+```env
+VAULT_OAUTH_ALLOW_NO_AUTH=true
+```
+
+Leave this unset in production and configure login credentials instead.
+
 Do not store tokens or secrets in the vault, README, release notes, or smoke docs.

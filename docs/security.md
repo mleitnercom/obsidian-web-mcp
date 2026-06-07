@@ -58,6 +58,8 @@ Binary operations enforce media type and size checks:
 
 Set `VAULT_ALLOWED_HOSTS` and `VAULT_PUBLIC_BASE_URL` when using a tunnel or reverse proxy. Use `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD` for browser login before authorization.
 
+`/oauth/authorize` fails closed when no login credentials are configured: it returns `503` instead of auto-approving and handing out the vault bearer token. `VAULT_OAUTH_ALLOW_NO_AUTH=true` is an explicit, insecure opt-in for local/dev only — never set it in production.
+
 ## Audit Privacy
 
 Audit uses `token_id_hash`, not raw tokens. Do not add secrets to hook payloads. Hook stdin receives the same JSON record as the JSONL audit line and nothing extra.

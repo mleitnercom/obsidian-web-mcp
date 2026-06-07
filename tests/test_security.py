@@ -538,6 +538,7 @@ def test_oauth_authorize_alias_works(monkeypatch):
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
     monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_ALLOW_NO_AUTH", True)
 
     _, challenge = _pkce_pair()
 
@@ -570,6 +571,7 @@ def test_oauth_authorize_login_then_issues_code(monkeypatch):
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
     monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_ALLOW_NO_AUTH", True)
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_USERNAME", "michael")
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_AUTH_PASSWORD", "correct horse battery staple")
     monkeypatch.setattr(oauth.config, "VAULT_OAUTH_SESSION_SECRET", "session-secret")
@@ -743,6 +745,7 @@ def test_oauth_public_pkce_client_can_exchange_code_without_secret(monkeypatch):
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
     monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_ALLOW_NO_AUTH", True)
     code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
     code_challenge = base64.urlsafe_b64encode(
         hashlib.sha256(code_verifier.encode("ascii")).digest()
@@ -835,6 +838,7 @@ def test_oauth_success_logs_do_not_include_secret_material(monkeypatch, caplog):
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
     monkeypatch.setattr(oauth.config, "VAULT_MCP_TOKEN", "vault-token-secret")
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_ALLOW_NO_AUTH", True)
 
     code_verifier = "verifier-secret-material"
     code_challenge = base64.urlsafe_b64encode(
@@ -887,11 +891,12 @@ def test_oauth_success_logs_do_not_include_secret_material(monkeypatch, caplog):
     assert registration["client_secret"] not in logs
 
 
-def test_oauth_authorize_rejects_unregistered_redirect_uri():
+def test_oauth_authorize_rejects_unregistered_redirect_uri(monkeypatch):
     """Authorization rejects redirect URIs that were not registered for the client."""
     reset_rate_limits()
     oauth._auth_codes.clear()
     oauth._registered_clients.clear()
+    monkeypatch.setattr(oauth.config, "VAULT_OAUTH_ALLOW_NO_AUTH", True)
 
     app = Starlette(routes=oauth.oauth_routes)
     with TestClient(app) as client:
