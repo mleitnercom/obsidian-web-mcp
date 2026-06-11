@@ -5,6 +5,8 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.5] - 2026-06-11
+
 ### Fixed
 - Tool responses now emit non-ASCII text as UTF-8 instead of `\uXXXX` escape sequences. `vault_json_dumps` defaulted to `ensure_ascii=True` (the stdlib `json.dumps` default), which inflated token counts for non-ASCII vaults and broke verbatim round-trips of non-ASCII paths. It now defaults `ensure_ascii=False`; callers can still override it for ASCII-only on-disk state. Mirrors the upstream fix in jimprosser/obsidian-web-mcp#38 / issue #49.
 
