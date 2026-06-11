@@ -58,7 +58,15 @@ class _DateAwareEncoder(json.JSONEncoder):
 
 
 def vault_json_dumps(obj: object, **kwargs) -> str:
-    """``json.dumps`` replacement that handles ``datetime.date`` values."""
+    """``json.dumps`` replacement that handles ``datetime.date`` values and
+    emits non-ASCII text as UTF-8 instead of ``\\uXXXX`` escapes.
+
+    ``ensure_ascii`` defaults to ``False`` so tool responses stay compact for
+    non-ASCII vaults and round-trip non-ASCII paths/content verbatim. Callers
+    may still override it (e.g. pass ``ensure_ascii=True`` for ASCII-only
+    on-disk state).
+    """
+    kwargs.setdefault("ensure_ascii", False)
     return json.dumps(obj, cls=_DateAwareEncoder, **kwargs)
 
 
