@@ -6,6 +6,7 @@ dist/
 wheels/
 *.egg-info
 .venv/
+venv/
 .env
 uv.lock
 .pytest-tmp*/

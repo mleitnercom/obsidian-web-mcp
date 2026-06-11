@@ -454,6 +454,23 @@ async def oauth_authorize(request: Request):
     except ValueError as e:
         return JSONResponse({"error": "rate_limited", "error_description": str(e)}, status_code=429)
 
+    # Fail closed: without configured login credentials we never auto-issue an
+    # authorization code (which would hand any caller a vault bearer token).
+    # Unauthenticated auto-approval is only allowed via an explicit opt-in.
+    if not _oauth_login_enabled() and not config.VAULT_OAUTH_ALLOW_NO_AUTH:
+        logger.error(
+            "Refusing /oauth/authorize: no VAULT_OAUTH_AUTH_USERNAME/PASSWORD configured. "
+            "Set login credentials, or set VAULT_OAUTH_ALLOW_NO_AUTH=1 to explicitly allow "
+            "unauthenticated auto-approval (insecure, local/dev only)."
+        )
+        return JSONResponse(
+            {
+                "error": "server_error",
+                "error_description": "authorization server is not configured for user authentication",
+            },
+            status_code=503,
+        )
+
     if request.method == "POST":
         try:
             form = await request.form()

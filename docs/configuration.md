@@ -25,6 +25,7 @@ All configuration is read from environment variables at process startup.
 | `VAULT_OAUTH_AUTH_PASSWORD` | empty | Optional authorize-page password |
 | `VAULT_OAUTH_SESSION_SECRET` | empty | Cookie/session signing secret |
 | `VAULT_OAUTH_REQUIRE_APPROVAL` | `true` | Require approval click after login |
+| `VAULT_OAUTH_ALLOW_NO_AUTH` | `false` | Insecure opt-in: allow unauthenticated auto-approval at `/oauth/authorize` when no login credentials are set. Leave unset in production. |
 | `VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS` | `true` | Persist dynamic client registrations |
 | `VAULT_OAUTH_REGISTERED_CLIENT_STORE_PATH` | semantic cache path + `oauth_registered_clients.json` | Registered-client store |
 | `VAULT_REGISTERED_CLIENT_TTL_SECONDS` | `0` | Dynamic client TTL; `0` disables expiry |
