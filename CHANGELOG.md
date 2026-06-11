@@ -5,6 +5,8 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.4] - 2026-06-11
+
 ### Security
 - `/oauth/authorize` now **fails closed** when no login credentials are configured. Previously, with `VAULT_OAUTH_AUTH_USERNAME`/`VAULT_OAUTH_AUTH_PASSWORD` unset, the endpoint auto-approved and issued an authorization code to any caller, who could then exchange it for the vault bearer token. The endpoint now returns `503 server_error` in that state.
 - New `VAULT_OAUTH_ALLOW_NO_AUTH` env var (default `false`) is the explicit, intentionally insecure opt-in that restores unauthenticated auto-approval for local/dev use. Production deployments should leave it unset and configure login credentials instead.
