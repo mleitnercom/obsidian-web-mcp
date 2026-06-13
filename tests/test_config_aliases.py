@@ -3,6 +3,7 @@ names keep working as deprecated aliases (with a one-line warning)."""
 
 import logging
 
+from obsidian_vault_mcp import config
 from obsidian_vault_mcp.config import _env_alias_raw, _env_csv_with_alias
 
 
@@ -41,3 +42,24 @@ def test_csv_default_when_neither_set(monkeypatch):
     assert _env_csv_with_alias(
         "VAULT_MCP_ALLOWED_HOSTS", "VAULT_ALLOWED_HOSTS", ["default"]
     ) == ["default"]
+
+
+def test_effective_allowed_hosts_always_includes_loopback(monkeypatch):
+    monkeypatch.setattr(config, "ALLOWED_HOSTS", ["vault-mcp.example.com"])
+    hosts = config.effective_allowed_hosts()
+    assert "127.0.0.1:*" in hosts and "localhost:*" in hosts and "[::1]:*" in hosts
+    assert "vault-mcp.example.com" in hosts
+    # loopback comes first, operator host appended
+    assert hosts.index("127.0.0.1:*") < hosts.index("vault-mcp.example.com")
+
+
+def test_effective_allowed_hosts_no_lockout_when_only_custom_set(monkeypatch):
+    # operator sets only their host -> loopback must NOT be dropped
+    monkeypatch.setattr(config, "ALLOWED_HOSTS", ["only.example.com"])
+    assert "127.0.0.1:*" in config.effective_allowed_hosts()
+
+
+def test_effective_allowed_hosts_dedups(monkeypatch):
+    monkeypatch.setattr(config, "ALLOWED_HOSTS", ["127.0.0.1:*", "x.example.com"])
+    hosts = config.effective_allowed_hosts()
+    assert hosts.count("127.0.0.1:*") == 1

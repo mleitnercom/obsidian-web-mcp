@@ -126,11 +126,29 @@ VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS = _env_bool("VAULT_OAUTH_PERSIST_REGISTER
 # fork names remain as deprecated aliases (see _env_alias_raw).
 VAULT_PUBLIC_BASE_URL = _env_alias_raw("VAULT_MCP_PUBLIC_URL", "VAULT_PUBLIC_BASE_URL").strip().rstrip("/")
 TRUSTED_PROXY_IPS = _env_alias_raw("VAULT_MCP_FORWARDED_ALLOW_IPS", "VAULT_TRUSTED_PROXY_IPS") or "127.0.0.1,::1"
-ALLOWED_HOSTS = _env_csv_with_alias(
-    "VAULT_MCP_ALLOWED_HOSTS",
-    "VAULT_ALLOWED_HOSTS",
-    ["127.0.0.1:*", "localhost:*", "[::1]:*"],
-)
+# Loopback is ALWAYS allowed; operator hosts from VAULT_MCP_ALLOWED_HOSTS are
+# APPENDED, never replace it. This avoids a lockout footgun where setting the env
+# var without re-listing loopback would drop it. (Matches upstream #34.)
+ALLOWED_HOSTS_LOOPBACK_DEFAULTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+# Operator-supplied extra hostnames only (default empty); composed in
+# effective_allowed_hosts(). Deprecated alias VAULT_ALLOWED_HOSTS still honored.
+ALLOWED_HOSTS = _env_csv_with_alias("VAULT_MCP_ALLOWED_HOSTS", "VAULT_ALLOWED_HOSTS", [])
+
+
+def effective_allowed_hosts() -> list[str]:
+    """Loopback defaults plus operator hosts, de-duplicated, order preserved.
+
+    Loopback can never be dropped, so an operator who sets only their tunnel
+    hostname does not lock themselves out.
+    """
+    merged = [*ALLOWED_HOSTS_LOOPBACK_DEFAULTS, *ALLOWED_HOSTS]
+    seen: set[str] = set()
+    result: list[str] = []
+    for host in merged:
+        if host not in seen:
+            seen.add(host)
+            result.append(host)
+    return result
 # Bind host. Default 0.0.0.0 preserves the fork's behavior (cloudflared runs on
 # a separate VM and reaches the server over the LAN); upstream defaults to
 # loopback. Matching the VAULT_MCP_HOST name keeps the knob aligned.
