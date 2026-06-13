@@ -5,6 +5,14 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.8] - 2026-06-13
+
+### Added
+- **`vault_edit` tool — upstream-compatible edit contract.** Applies an ordered list of exact text replacements to a file in one call: each `old_text` must match exactly once, edits apply in order, and `dry_run=true` returns a unified diff without writing. Accepts `old_str`/`new_str` as aliases for `old_text`/`new_text`. Writes go through the verified atomic path; the tool is audited as a mutation. Convergence toward upstream's `vault_edit` so the same edit shape works across fork and upstream; the existing `vault_str_replace` / `vault_patch` / `vault_batch_replace` tools are unchanged.
+
+### Tests
+- `tests/test_vault_edit.py` (10 cases): dry-run preview without writing, single/multiple ordered edits, `old_str`/`new_str` aliases, exactly-once enforcement (0 and >1 matches leave the file untouched), `old_text`+`old_str` conflict, missing file, model validation (empty edits / empty `old_text`), and the server wiring seam.
+
 ## [v0.8.7] - 2026-06-13
 
 ### Changed

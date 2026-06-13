@@ -490,6 +490,7 @@ from .tools.write import (
     vault_append as _vault_append,
     vault_batch_replace as _vault_batch_replace,
     vault_batch_frontmatter_update as _vault_batch_frontmatter_update,
+    vault_edit as _vault_edit,
     vault_import_file as _vault_import_file,
     vault_patch as _vault_patch,
     vault_request_upload_url as _vault_request_upload_url,
@@ -534,6 +535,7 @@ from .models import (
     VaultReadInput,
     VaultImportFileInput,
     VaultPatchInput,
+    VaultEditInput,
     VaultRequestUploadUrlInput,
     VaultStrReplaceInput,
     VaultImportUrlInput,
@@ -959,6 +961,30 @@ def vault_str_replace(path: str, old_string: str, new_string: str = "", replace_
         old_string_bytes=len(inp.old_string.encode("utf-8")),
         new_string_bytes=len(inp.new_string.encode("utf-8")),
         replace_all=inp.replace_all,
+    )
+
+
+@mcp.tool(
+    name="vault_edit",
+    description=(
+        "Patch an existing vault file with ordered exact text replacements. Each old_text must match exactly "
+        "once; edits apply in order; set dry_run=true for a unified-diff preview without writing. Accepts "
+        "old_str/new_str as aliases. Token-efficient partial edits without resending the file."
+    ),
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_edit(path: str, edits: list[dict], dry_run: bool = False) -> str:
+    """Patch a file with ordered exact text replacements."""
+    inp = VaultEditInput(path=path, edits=edits, dry_run=dry_run)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_edit",
+        lambda: _vault_edit(inp.path, [edit.model_dump() for edit in inp.edits], inp.dry_run),
+        path=inp.path,
+        edits=len(inp.edits),
+        dry_run=inp.dry_run,
     )
 
 

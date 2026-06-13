@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import difflib
 import hashlib
 import hmac
 import ipaddress
@@ -80,6 +81,102 @@ def _write_text_with_verification(
             f"(expected {expected_size} bytes, read back {actual_size} bytes)"
         )
     return is_new, size
+
+
+def _unified_diff(path: str, before: str, after: str) -> str:
+    """Return a compact unified diff for an edit preview or result."""
+    return "".join(difflib.unified_diff(
+        before.splitlines(keepends=True),
+        after.splitlines(keepends=True),
+        fromfile=f"{path} before",
+        tofile=f"{path} after",
+        lineterm="",
+    ))
+
+
+def _normalize_edit_aliases(edit: dict) -> tuple[dict | None, str | None]:
+    """Map old_str/new_str aliases onto canonical old_text/new_text."""
+    normalized = dict(edit)
+    for canonical, alias in (("old_text", "old_str"), ("new_text", "new_str")):
+        if canonical in normalized and alias in normalized:
+            return None, f"Use either '{canonical}' or '{alias}', not both"
+        if alias in normalized:
+            normalized[canonical] = normalized.pop(alias)
+    return normalized, None
+
+
+def vault_edit(path: str, edits: list[dict], dry_run: bool = False) -> str:
+    """Apply ordered exact text replacements to an existing file.
+
+    Upstream-compatible contract: each edit's ``old_text`` must match exactly
+    once; edits apply in order; ``dry_run`` returns a unified diff without
+    writing. ``old_str``/``new_str`` are accepted as aliases for
+    ``old_text``/``new_text``. Writes go through the verified atomic path.
+    """
+    def _fail(message: str, *, edits_applied: int = 0, size: int = 0) -> str:
+        return vault_json_dumps({
+            "error": message,
+            "path": path,
+            "changed": False,
+            "dry_run": dry_run,
+            "diff": "",
+            "edits_applied": edits_applied,
+            "size": size,
+        })
+
+    try:
+        content, _ = read_file(path)
+        original_content = content
+        original_size = len(original_content.encode("utf-8"))
+
+        for index, edit in enumerate(edits):
+            normalized_edit, alias_error = _normalize_edit_aliases(edit)
+            if alias_error:
+                return _fail(f"Edit {index}: {alias_error}", size=original_size)
+            old_text = normalized_edit.get("old_text", "")
+            new_text = normalized_edit.get("new_text", "")
+            if old_text == "":
+                return _fail(f"Edit {index} old_text must be a non-empty string", size=original_size)
+            count = content.count(old_text)
+            if count != 1:
+                return _fail(
+                    f"Edit {index} old_text must match exactly once; found {count} matches",
+                    size=original_size,
+                )
+            content = content.replace(old_text, new_text, 1)
+
+        diff = _unified_diff(path, original_content, content)
+        size = len(content.encode("utf-8"))
+
+        if dry_run:
+            return vault_json_dumps({
+                "path": path,
+                "changed": False,
+                "dry_run": True,
+                "diff": diff,
+                "edits_applied": len(edits),
+                "size": size,
+            })
+
+        changed = content != original_content
+        if changed:
+            _write_text_with_verification(path, content, create_dirs=False)
+
+        return vault_json_dumps({
+            "path": path,
+            "changed": changed,
+            "dry_run": False,
+            "diff": diff,
+            "edits_applied": len(edits),
+            "size": size,
+        })
+    except FileNotFoundError:
+        return _fail(f"File not found: {path}")
+    except ValueError as e:
+        return _fail(str(e))
+    except Exception as e:
+        logger.error(f"vault_edit error for {path}: {e}")
+        return _fail(str(e))
 
 
 def _allowed_binary_extensions_for(media_type: str) -> set[str] | None:
