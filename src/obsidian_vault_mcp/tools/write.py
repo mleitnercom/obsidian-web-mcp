@@ -684,6 +684,11 @@ def _replace_in_content(
     new_str: str,
     replace_all: bool,
 ) -> dict:
+    if old_str == "":
+        # An empty old_str is a data-loss trap: str.count("") returns len+1
+        # (never 0, so the not-found guard misses it) and str.replace("", new)
+        # interleaves new between every character. Reject it explicitly.
+        return {"error": "old_str must be a non-empty string", "path": path}
     occurrences = content.count(old_str)
     if occurrences == 0:
         return {"error": "old_str not found in file", "path": path}
