@@ -5,6 +5,16 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.6] - 2026-06-11
+
+### Fixed
+- **Non-UTF-8 filenames no longer break whole tool responses (#14, regression from v0.8.5).** After v0.8.5 switched `vault_json_dumps` to `ensure_ascii=False`, a file whose on-disk name is not valid UTF-8 (a lone surrogate via `surrogateescape`) was emitted verbatim and the MCP transport then failed to UTF-8 encode the entire response, taking neighbouring valid notes down with it. `vault_json_dumps` now verifies UTF-8 encodability and falls back to escaped output for that one response only, preserving the v0.8.5 token savings for every valid-UTF-8 vault. Mirrors the second half of upstream jimprosser/obsidian-web-mcp#38.
+- **`vault_str_replace` / `vault_batch_replace` no longer corrupt files on an empty `old_str` with `replace_all=True` (#13).** `str.count("")` returns `len+1` (never 0) and `str.replace("", new)` interleaves `new` between every character, slipping past the not-found and uniqueness guards; the atomic-write read-back did not catch it. `_replace_in_content` now rejects an empty `old_str` up front.
+
+### Tests
+- `tests/test_json_utf8.py`: a lone-surrogate payload stays UTF-8 encodable and round-trips.
+- `tests/test_replace_guards.py`: empty `old_str` (and a missing `old_str` key in batch) is rejected and leaves the file untouched.
+
 ## [v0.8.5] - 2026-06-11
 
 ### Fixed
