@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .config import (
     CONTEXT_LINES,
@@ -719,3 +719,57 @@ class VaultBatchFrontmatterUpdateInput(BaseModel):
             if "fields" not in item or not isinstance(item["fields"], dict):
                 raise ValueError(f"updates[{i}] must contain a 'fields' key with a dict value")
         return v
+
+
+class VaultEditOperationInput(BaseModel):
+    """One exact text replacement inside a file (upstream vault_edit contract)."""
+
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_str_replace_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        for canonical, alias in (("old_text", "old_str"), ("new_text", "new_str")):
+            if canonical in normalized and alias in normalized:
+                raise ValueError(f"Use either '{canonical}' or '{alias}', not both")
+            if alias in normalized:
+                normalized[canonical] = normalized.pop(alias)
+        return normalized
+
+    old_text: str = Field(
+        ...,
+        description="Exact existing text fragment to replace; must appear exactly once",
+        min_length=1,
+        max_length=MAX_CONTENT_SIZE,
+    )
+    new_text: str = Field(
+        ...,
+        description="Replacement text for old_text (empty string deletes the matched text)",
+        max_length=MAX_CONTENT_SIZE,
+    )
+
+
+class VaultEditInput(BaseModel):
+    """Patch an existing file with ordered exact text replacements."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(
+        ...,
+        description="Relative path from vault root",
+        min_length=1,
+        max_length=500,
+    )
+    edits: list[VaultEditOperationInput] = Field(
+        ...,
+        description="Ordered exact text replacements to apply without resending the full file",
+        min_length=1,
+        max_length=MAX_BATCH_SIZE,
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Preview the patch and unified diff without writing the file",
+    )

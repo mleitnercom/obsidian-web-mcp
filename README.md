@@ -2,7 +2,7 @@
 
 Production-hardened fork of [`jimprosser/obsidian-web-mcp`](https://github.com/jimprosser/obsidian-web-mcp): an HTTP-based MCP server that exposes an Obsidian vault to LLM clients such as Claude, ChatGPT, and Codex over OAuth 2.0.
 
-**Latest release:** [v0.8.7](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.8.7) (2026-06-13)
+**Latest release:** [v0.8.8](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.8.8) (2026-06-13)
 
 ## At a Glance
 
@@ -137,6 +137,7 @@ The filesystem path is the primary path. The Plugin Bridge is additive and optio
 | `vault_import_file` | Import an allowed local/mounted file into the vault |
 | `vault_batch_frontmatter_update` | Update frontmatter fields across files |
 | `vault_batch_replace` | Replace exact strings across files |
+| `vault_edit` | Apply ordered exact text replacements (each matches once); dry-run unified-diff preview; upstream-compatible contract |
 | `vault_str_replace` | Replace exact strings in one file |
 | `vault_patch` | Replace one unique exact occurrence |
 | `vault_append` | Append content to a file |

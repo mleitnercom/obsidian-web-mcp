@@ -22,6 +22,7 @@ MUTATION_OPERATIONS = {
     "vault_write",
     "vault_write_binary",
     "vault_patch",
+    "vault_edit",
     "vault_append",
     "vault_str_replace",
     "vault_batch_replace",
