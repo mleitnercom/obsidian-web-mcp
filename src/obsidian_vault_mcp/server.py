@@ -1577,12 +1577,12 @@ def main():
     try:
         _log_oauth_runtime_summary()
         app = build_app()
-        logger.info(f"Starting server on port {VAULT_MCP_PORT} with bearer auth + OAuth")
+        logger.info(f"Starting server on {config.VAULT_MCP_HOST}:{VAULT_MCP_PORT} with bearer auth + OAuth")
 
         import uvicorn
         uvicorn.run(
             app,
-            host="0.0.0.0",
+            host=config.VAULT_MCP_HOST,
             port=VAULT_MCP_PORT,
             log_level="info",
             access_log=False,
