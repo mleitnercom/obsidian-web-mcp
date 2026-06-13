@@ -32,6 +32,16 @@ This fork turns the upstream "MCP over HTTP" server into a vault-aware workflow 
 - **Optional semantic search.** CPU-first `fastembed` backend with persistent FAISS cache.
 - **Health endpoint.** Local detailed health includes OAuth, audit, and Plugin Bridge reachability; remote callers get minimal liveness unless explicitly opted in.
 
+## Relationship to upstream
+
+This is a production-hardened fork of [`jimprosser/obsidian-web-mcp`](https://github.com/jimprosser/obsidian-web-mcp). The intent is cooperative, not divergent:
+
+- **Generic capabilities flow back upstream.** Self-contained tools that fit a personal-vault MCP server (e.g. Canvas, daily notes) are offered as upstream PRs rather than kept fork-only.
+- **Conventions are kept aligned.** Config and tool names track upstream's (`VAULT_MCP_*` env prefix, the `vault_edit` contract), with deprecated aliases for older names, so changes are cheap to move in either direction.
+- **The fork stays the daily driver.** It carries additional tooling and a personal task/workflow layer that is intentionally fork-specific and out of scope for upstream.
+
+Security and write-safety follow upstream's bar: login-gated OAuth, atomic writes, and path guards.
+
 ## Migration from v0.6.x
 
 `v0.7.0` removes the legacy resumable MCP upload tools:

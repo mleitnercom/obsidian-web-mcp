@@ -5,6 +5,9 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+### Docs
+- README: added a "Relationship to upstream" section describing the cooperative fork model — generic capabilities are offered back upstream, config/tool conventions are kept aligned (`VAULT_MCP_*`, `vault_edit`), and the fork stays the daily driver with a fork-specific workflow layer.
+
 ## [v0.8.8] - 2026-06-13
 
 ### Added
