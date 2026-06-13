@@ -5,6 +5,11 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.9] - 2026-06-13
+
+### Fixed
+- `VAULT_MCP_ALLOWED_HOSTS` now **appends** to the always-present loopback defaults instead of replacing the list. Previously, setting the env var without re-listing `127.0.0.1:*`/`localhost:*`/`[::1]:*` dropped loopback (a lockout footgun). New `effective_allowed_hosts()` composes loopback + operator hosts, de-duplicated. Matches upstream's append semantics (jimprosser/obsidian-web-mcp#34).
+
 ### Docs
 - README: added a "Relationship to upstream" section describing the cooperative fork model — generic capabilities are offered back upstream, config/tool conventions are kept aligned (`VAULT_MCP_*`, `vault_edit`), and the fork stays the daily driver with a fork-specific workflow layer.
 
