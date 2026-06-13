@@ -11,9 +11,10 @@ All configuration is read from environment variables at process startup.
 | `VAULT_PATH` | `~/Obsidian/MyVault` | Vault root directory |
 | `VAULT_MCP_TOKEN` | empty | Bearer token for MCP requests |
 | `VAULT_MCP_PORT` | `8420` | HTTP listen port |
-| `VAULT_ALLOWED_HOSTS` | `127.0.0.1:*`, `localhost:*`, `[::1]:*` | Host allowlist for DNS rebinding protection |
-| `VAULT_PUBLIC_BASE_URL` | empty | External HTTPS base URL for OAuth metadata and signed uploads |
-| `VAULT_TRUSTED_PROXY_IPS` | `127.0.0.1,::1` | Proxy IPs trusted for forwarded headers |
+| `VAULT_MCP_HOST` | `0.0.0.0` | Bind host (default `0.0.0.0`; set to `127.0.0.1` when a proxy/tunnel runs on the same host) |
+| `VAULT_MCP_ALLOWED_HOSTS` | `127.0.0.1:*`, `localhost:*`, `[::1]:*` | Host allowlist for DNS rebinding protection (deprecated alias: `VAULT_ALLOWED_HOSTS`) |
+| `VAULT_MCP_PUBLIC_URL` | empty | External HTTPS base URL for OAuth metadata and signed uploads (deprecated alias: `VAULT_PUBLIC_BASE_URL`) |
+| `VAULT_MCP_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxy IPs trusted for forwarded headers (deprecated alias: `VAULT_TRUSTED_PROXY_IPS`) |
 
 ## OAuth
 

@@ -1,6 +1,35 @@
 import json
+import logging
 import os
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
+
+
+def _env_alias_raw(canonical: str, alias: str) -> str:
+    """Return the canonical env var; fall back to a deprecated alias.
+
+    Convergence toward upstream's ``VAULT_MCP_*`` server/transport names while
+    keeping the fork's older names working. The canonical name wins; the legacy
+    alias is honored with a one-line deprecation warning so existing
+    deployments (systemd units, .env files) do not break.
+    """
+    value = os.environ.get(canonical, "")
+    if value.strip():
+        return value
+    legacy = os.environ.get(alias, "")
+    if legacy.strip():
+        _logger.warning("Env var %s is deprecated; use %s instead.", alias, canonical)
+        return legacy
+    return ""
+
+
+def _env_csv_with_alias(canonical: str, alias: str, default: list[str]) -> list[str]:
+    """Comma-separated env var with canonical/deprecated-alias resolution."""
+    raw = _env_alias_raw(canonical, alias)
+    if not raw.strip():
+        return default
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def _env_int(name: str, default: int) -> int:
@@ -93,12 +122,19 @@ VAULT_OAUTH_REQUIRE_APPROVAL = _env_bool("VAULT_OAUTH_REQUIRE_APPROVAL", True)
 # is acceptable.
 VAULT_OAUTH_ALLOW_NO_AUTH = _env_bool("VAULT_OAUTH_ALLOW_NO_AUTH", False)
 VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS = _env_bool("VAULT_OAUTH_PERSIST_REGISTERED_CLIENTS", True)
-VAULT_PUBLIC_BASE_URL = os.environ.get("VAULT_PUBLIC_BASE_URL", "").strip().rstrip("/")
-TRUSTED_PROXY_IPS = os.environ.get("VAULT_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
-ALLOWED_HOSTS = _env_csv(
+# Server/transport config converged to upstream's VAULT_MCP_* names; the older
+# fork names remain as deprecated aliases (see _env_alias_raw).
+VAULT_PUBLIC_BASE_URL = _env_alias_raw("VAULT_MCP_PUBLIC_URL", "VAULT_PUBLIC_BASE_URL").strip().rstrip("/")
+TRUSTED_PROXY_IPS = _env_alias_raw("VAULT_MCP_FORWARDED_ALLOW_IPS", "VAULT_TRUSTED_PROXY_IPS") or "127.0.0.1,::1"
+ALLOWED_HOSTS = _env_csv_with_alias(
+    "VAULT_MCP_ALLOWED_HOSTS",
     "VAULT_ALLOWED_HOSTS",
     ["127.0.0.1:*", "localhost:*", "[::1]:*"],
 )
+# Bind host. Default 0.0.0.0 preserves the fork's behavior (cloudflared runs on
+# a separate VM and reaches the server over the LAN); upstream defaults to
+# loopback. Matching the VAULT_MCP_HOST name keeps the knob aligned.
+VAULT_MCP_HOST = os.environ.get("VAULT_MCP_HOST", "0.0.0.0").strip() or "0.0.0.0"
 INCLUDED_ROOTS = _env_csv("VAULT_INCLUDED_ROOTS", ["."])
 EXCLUDED_PATH_PREFIXES = _env_csv("VAULT_EXCLUDED_PATH_PREFIXES", [])
 EXTRA_BINARY_MEDIA_TYPES = _env_binary_media_type_map("VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON")

@@ -5,6 +5,15 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.7] - 2026-06-13
+
+### Changed
+- **Server/transport env vars converged to upstream's `VAULT_MCP_*` names**, to lower the friction of pulling future upstream changes back into this fork. Canonical names now: `VAULT_MCP_ALLOWED_HOSTS`, `VAULT_MCP_FORWARDED_ALLOW_IPS`, `VAULT_MCP_PUBLIC_URL`. The previous names (`VAULT_ALLOWED_HOSTS`, `VAULT_TRUSTED_PROXY_IPS`, `VAULT_PUBLIC_BASE_URL`) keep working as **deprecated aliases** and emit a one-line warning, so existing systemd units / `.env` files are not broken. OAuth (`VAULT_OAUTH_AUTH_*`) is intentionally left unchanged — the fork's auth design differs from upstream's.
+- Added `VAULT_MCP_HOST` (default `0.0.0.0`, preserving current bind behavior) so the listen host is configurable and named like upstream, instead of hard-coding `0.0.0.0` in `server.py`.
+
+### Tests
+- `tests/test_config_aliases.py`: canonical name wins, deprecated alias is honored with a warning, default applies when neither is set (scalar and CSV variants).
+
 ## [v0.8.6] - 2026-06-11
 
 ### Fixed
