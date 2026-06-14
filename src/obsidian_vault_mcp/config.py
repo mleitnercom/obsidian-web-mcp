@@ -100,6 +100,35 @@ VAULT_MCP_PORT = _env_int("VAULT_MCP_PORT", 8420)
 VAULT_MCP_HEARTBEAT_URL = os.environ.get("VAULT_MCP_HEARTBEAT_URL", "").strip()
 VAULT_MCP_HEARTBEAT_INTERVAL = _env_int("VAULT_MCP_HEARTBEAT_INTERVAL", 60)
 VAULT_HEALTH_ALLOW_REMOTE_DETAILS = _env_bool("VAULT_HEALTH_ALLOW_REMOTE_DETAILS", False)
+
+
+def validate_heartbeat() -> int | None:
+    """Validate the heartbeat config; return the interval (seconds) when enabled.
+
+    Returns None when the heartbeat is disabled (no URL). Raises ValueError (so
+    server.main() can exit non-zero and fail CLOSED) when the URL scheme is not http(s)
+    or the interval is not a positive integer -- a typo must not boot a server that
+    silently never pings or tight-loops on interval 0. Error messages never echo the raw
+    values: the heartbeat URL is a capability URL (the secret is in the path), and a
+    misconfigured operator might swap the URL/interval env vars. (Hardening from
+    upstream #45.)
+    """
+    url = VAULT_MCP_HEARTBEAT_URL
+    if not url:
+        return None
+
+    from urllib.parse import urlsplit
+
+    try:
+        parsed = urlsplit(url)
+        _ = parsed.port  # raises ValueError on a malformed port
+    except ValueError:
+        raise ValueError("VAULT_MCP_HEARTBEAT_URL has a malformed port")
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+        raise ValueError("VAULT_MCP_HEARTBEAT_URL must be an http(s) URL with a host")
+    if VAULT_MCP_HEARTBEAT_INTERVAL <= 0:
+        raise ValueError("VAULT_MCP_HEARTBEAT_INTERVAL must be a positive integer")
+    return VAULT_MCP_HEARTBEAT_INTERVAL
 VAULT_MCP_POST_WRITE_CMD = os.environ.get("VAULT_MCP_POST_WRITE_CMD", "").strip()
 VAULT_MCP_POST_WRITE_TIMEOUT = _env_int("VAULT_MCP_POST_WRITE_TIMEOUT", 30)
 VAULT_PDF_OCR_ENABLED = _env_bool("VAULT_PDF_OCR_ENABLED", False)

@@ -5,6 +5,17 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.10] - 2026-06-14
+
+### Changed
+- **Push-heartbeat hardened (inbound from upstream jimprosser/obsidian-web-mcp#45).** The optional `VAULT_MCP_HEARTBEAT_URL` ping now refuses to follow redirects (a redirect could leak the capability URL to another host), reads at most 1 KB of the response, validates its configuration fail-closed at startup (`validate_heartbeat()` rejects a non-`http(s)` URL or a non-positive interval, so a typo cannot boot a server that silently never pings), and no longer stores or logs the raw exception on failure (it could contain the secret URL). The richer `/health` heartbeat state is unchanged.
+
+### Tests
+- `tests/test_heartbeat_hardening.py` (10 cases): `validate_heartbeat` enabled/disabled, bad URL scheme/host, non-positive interval, error messages never echo the capability URL, and the no-redirect handler.
+
+### Notes
+- Upstream's configurable mount path (jimprosser/obsidian-web-mcp#43, `VAULT_MCP_PATH`) was evaluated and intentionally **not** adopted: this fork serves MCP at `/` through its own compatibility middleware + root probe, so there is no mount-path knob to make configurable and nothing for a path validator to guard.
+
 ## [v0.8.9] - 2026-06-13
 
 ### Fixed
