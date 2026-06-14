@@ -270,11 +270,32 @@ def _tool_rate_limit_error(scope: str, limit: int) -> str | None:
     return None
 
 
+_HEARTBEAT_MAX_BYTES = 1024
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects on the heartbeat GET.
+
+    The heartbeat URL is a capability URL (the secret lives in the path); following a
+    redirect could leak it to another host. (Hardening from upstream #45.)
+    """
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_heartbeat_opener = urllib.request.build_opener(_NoRedirect)
+
+
 async def _heartbeat_loop(url: str, interval: int) -> None:
-    """Send periodic HTTP GET heartbeats to a push-style endpoint."""
+    """Send periodic HTTP GET heartbeats to a push-style endpoint.
+
+    Does not follow redirects and reads at most _HEARTBEAT_MAX_BYTES of the response.
+    """
     def _send() -> int:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            return resp.status
+        with _heartbeat_opener.open(url, timeout=10) as resp:
+            resp.read(_HEARTBEAT_MAX_BYTES)
+            return getattr(resp, "status", None) or resp.getcode()
 
     while True:
         now = datetime.now(timezone.utc).isoformat()
@@ -286,8 +307,9 @@ async def _heartbeat_loop(url: str, interval: int) -> None:
             _heartbeat_state["last_error"] = ""
             logger.debug("Heartbeat sent: HTTP %s", status)
         except Exception as exc:
-            _heartbeat_state["last_error"] = str(exc)
-            logger.debug("Heartbeat failed: %s", exc)
+            # Never store/log the raw exception: it can contain the capability URL.
+            _heartbeat_state["last_error"] = type(exc).__name__
+            logger.debug("Heartbeat failed: %s", type(exc).__name__)
         await asyncio.sleep(interval)
 
 
@@ -1599,6 +1621,14 @@ def main():
 
     if not VAULT_MCP_TOKEN:
         logger.warning("VAULT_MCP_TOKEN is not set -- auth will reject all requests")
+
+    # Fail CLOSED on a misconfigured heartbeat (bad URL scheme / non-positive interval)
+    # rather than booting a server that silently never pings. (Hardening from upstream #45.)
+    try:
+        config.validate_heartbeat()
+    except ValueError as e:
+        logger.error(f"Invalid heartbeat configuration: {e}")
+        sys.exit(1)
 
     try:
         _log_oauth_runtime_summary()
