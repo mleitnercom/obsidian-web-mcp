@@ -5,6 +5,18 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.11] - 2026-06-14
+
+### Security
+- **Audit log rejected inside the vault (fail-closed).** If `VAULT_AUDIT_LOG_PATH` resolves inside `VAULT_PATH`, the server now refuses to start: a same-vault log is reachable by the vault tools (`vault_write`/`vault_delete`), which would let an authenticated caller tamper with or delete the trail. Backported from the upstream review of jimprosser/obsidian-web-mcp#56.
+
+### Fixed
+- **Batch mutations record correct per-file status.** `vault_batch_frontmatter_update` and `vault_batch_replace` now emit **one audit record per file** with that file's own `operation_status` and real before/after size+checksum. Previously a batch with per-file failures was logged as a single `success` and the list `target_path` produced null snapshots. (jimprosser/obsidian-web-mcp#56)
+- **`vault_edit(dry_run=true)` is no longer recorded as a mutation** (it writes nothing).
+
+### Tests
+- `tests/test_audit_hardening.py`: in-vault rejection, per-file batch status (frontmatter + replace), dry-run skip, and an HTTP-level test that the bearer middleware propagates the principal to the sync tool layer (the path the audit's `token_id_hash` depends on).
+
 ## [v0.8.10] - 2026-06-14
 
 ### Changed

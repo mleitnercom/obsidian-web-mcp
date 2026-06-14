@@ -730,7 +730,7 @@ def test_audit_log_records_mutation_operations(vault_dir, monkeypatch, tmp_path)
     run_and_assert(
         "vault_batch_replace",
         lambda: server.vault_batch_replace([{"path": "audit/batch-replace.md", "old_str": "alpha", "new_str": "beta"}]),
-        ["audit/batch-replace.md"],
+        "audit/batch-replace.md",   # batch now records one scalar-target record per file (#56)
     )
 
     vault_write("audit/move-source.md", "move\n")
@@ -750,7 +750,7 @@ def test_audit_log_records_mutation_operations(vault_dir, monkeypatch, tmp_path)
     run_and_assert(
         "vault_batch_frontmatter_update",
         lambda: server.vault_batch_frontmatter_update([{"path": "audit/frontmatter.md", "fields": {"status": "new"}}]),
-        ["audit/frontmatter.md"],
+        "audit/frontmatter.md",   # batch now records one scalar-target record per file (#56)
     )
 
     source = tmp_path / "source.pdf"

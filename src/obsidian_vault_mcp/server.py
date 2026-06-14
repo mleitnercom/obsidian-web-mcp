@@ -23,8 +23,10 @@ from pydantic import Field
 
 from . import config
 from .audit import (
+    BATCH_OPERATIONS,
     MUTATION_OPERATIONS,
     audit_health_payload,
+    audit_path_inside_vault,
     before_target_path,
     build_audit_record,
     infer_target_path,
@@ -165,6 +167,41 @@ def _log_oauth_runtime_summary() -> None:
         )
 
 
+def _emit_batch_audit_records(name: str, before_map: dict[str, Any], parsed_result: dict[str, Any]) -> None:
+    """Emit one audit record per file for a batch mutation, with correct per-file status.
+
+    The batch tools report per-file outcomes in ``results`` (some files can fail while the
+    call as a whole "succeeds"), so a single record would both hide partial failures and
+    lose per-file snapshots. before_map holds the pre-call snapshots keyed by path. Mirrors
+    upstream jimprosser#56.
+    """
+    items = parsed_result.get("results")
+    if not isinstance(items, list) or not items:
+        write_audit_record(build_audit_record(
+            operation=name,
+            target_path=list(before_map) or None,
+            operation_status="error" if "error" in parsed_result else "success",
+            error=parsed_result.get("error"),
+        ))
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        item_error = item.get("error")
+        item_status = "error" if item_error else "success"
+        before = before_map.get(path) if isinstance(path, str) else None
+        after = snapshot_path(path) if (item_status == "success" and isinstance(path, str)) else None
+        write_audit_record(build_audit_record(
+            operation=name,
+            target_path=path,
+            before=before,
+            after=after,
+            operation_status=item_status,
+            error=item_error,
+        ))
+
+
 def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
     """Run one MCP tool call with consistent start/end/error logging."""
     started = time.monotonic()
@@ -172,6 +209,12 @@ def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
     audit_after = None
     is_mutation = name in MUTATION_OPERATIONS
     should_audit = should_audit_operation(name)
+    # Batch mutations are audited per file; snapshot each target BEFORE the writes run.
+    batch_before_map: dict[str, Any] = {}
+    if should_audit and name in BATCH_OPERATIONS:
+        batch_before_map = {
+            p: snapshot_path(p) for p in (context.get("paths") or []) if isinstance(p, str) and p
+        }
     if name in MUTATION_OPERATIONS:
         audit_before_path = before_target_path(name, context)
         audit_before = snapshot_path(audit_before_path)
@@ -228,6 +271,13 @@ def _run_logged_tool(name: str, func: Callable[[], str], **context: Any) -> str:
                 parsed_result = payload
         except Exception:
             parsed_result = {}
+        if name in BATCH_OPERATIONS:
+            _emit_batch_audit_records(name, batch_before_map, parsed_result)
+            if is_mutation:
+                flush_post_write_hooks(None)
+            else:
+                clear_post_write_hooks()
+            return result
         target_path = infer_target_path(name, context, parsed_result)
         operation_status = "error" if "error" in parsed_result else "success"
         if is_mutation:
@@ -944,6 +994,7 @@ def vault_batch_frontmatter_update(updates: list[dict]) -> str:
         "vault_batch_frontmatter_update",
         lambda: _vault_batch_frontmatter_update(inp.updates),
         updates=len(inp.updates),
+        paths=[u.get("path") for u in inp.updates if isinstance(u, dict) and u.get("path")],
     )
 
 
@@ -962,6 +1013,7 @@ def vault_batch_replace(updates: list[dict]) -> str:
         "vault_batch_replace",
         lambda: _vault_batch_replace(inp.updates),
         updates=len(inp.updates),
+        paths=[u.get("path") for u in inp.updates if isinstance(u, dict) and u.get("path")],
     )
 
 
@@ -1001,6 +1053,9 @@ def vault_edit(path: str, edits: list[dict], dry_run: bool = False) -> str:
     limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
     if limited is not None:
         return limited
+    if inp.dry_run:
+        # A dry run writes nothing; don't record it as a mutation. (#56 non-blocking)
+        return _vault_edit(inp.path, [edit.model_dump() for edit in inp.edits], inp.dry_run)
     return _run_logged_tool(
         "vault_edit",
         lambda: _vault_edit(inp.path, [edit.model_dump() for edit in inp.edits], inp.dry_run),
@@ -1621,6 +1676,15 @@ def main():
 
     if not VAULT_MCP_TOKEN:
         logger.warning("VAULT_MCP_TOKEN is not set -- auth will reject all requests")
+
+    # Fail CLOSED on an audit log that resolves inside the vault: the vault tools could
+    # then overwrite or delete it, defeating the append-only integrity premise. (#56)
+    if audit_path_inside_vault():
+        logger.error(
+            f"VAULT_AUDIT_LOG_PATH resolves inside the vault ({config.VAULT_AUDIT_LOG_PATH}); "
+            "the vault tools could rewrite it. Choose a path outside VAULT_PATH."
+        )
+        sys.exit(1)
 
     # Fail CLOSED on a misconfigured heartbeat (bad URL scheme / non-positive interval)
     # rather than booting a server that silently never pings. (Hardening from upstream #45.)
