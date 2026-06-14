@@ -50,6 +50,9 @@ READ_OPERATIONS = {
     "vault_canvas_read",
 }
 
+# Mutations whose result reports per-file outcomes; audited one record per file.
+BATCH_OPERATIONS = {"vault_batch_replace", "vault_batch_frontmatter_update"}
+
 _AUDIT_WINDOW = timedelta(hours=24)
 _audit_write_events: deque[dict[str, Any]] = deque()
 
@@ -71,6 +74,24 @@ def should_audit_operation(operation: str) -> bool:
 
 def _audit_path() -> Path:
     return Path(config.VAULT_AUDIT_LOG_PATH).expanduser()
+
+
+def audit_path_inside_vault() -> bool:
+    """True when the configured audit log resolves inside the vault.
+
+    A same-vault log is reachable by the vault tools (resolve_vault_path only blocks
+    traversal and dotfiles), so an authenticated caller could overwrite it via vault_write
+    or relocate it via vault_delete -- defeating the append-only integrity premise. Such a
+    path is rejected at startup (see server.main). Mirrors upstream jimprosser#56.
+    """
+    if not audit_enabled():
+        return False
+    try:
+        log = _audit_path().resolve()
+        vault = config.VAULT_PATH.resolve()
+    except OSError:
+        return False
+    return log == vault or vault in log.parents
 
 
 def _now_utc() -> datetime:

@@ -4,6 +4,8 @@ Back to [README](../README.md).
 
 Set `VAULT_AUDIT_LOG_PATH` to enable append-only JSON Lines audit logging. When unset, audit logging is disabled and tool behavior is unchanged.
 
+**The path must resolve outside the vault.** A log inside `VAULT_PATH` would be just another file the vault tools can reach, so an authenticated caller could overwrite it (`vault_write`) or delete it (`vault_delete`) and defeat the append-only premise. The server validates this at startup and **refuses to start (fail-closed)** if the configured path resolves inside the vault.
+
 ## Record Format
 
 Each record is one JSON object per line:
