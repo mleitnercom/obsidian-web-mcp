@@ -13,6 +13,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from . import config
+# Converged to upstream's serialization module (#9). vault_json_dumps is kept as a
+# thin alias so existing call sites work unchanged; the canonical name is
+# serialization.dumps (call-site rename happens at the Phase-2 re-fork).
+from .serialization import dumps as vault_json_dumps
 
 UNSUPPORTED_BINARY_EXTENSIONS = frozenset({
     ".7z",
@@ -43,44 +47,7 @@ UNSUPPORTED_BINARY_EXTENSIONS = frozenset({
 })
 
 
-class _DateAwareEncoder(json.JSONEncoder):
-    """JSON encoder that serialises date/datetime objects to ISO 8601 strings.
-
-    PyYAML's safe_load converts bare YAML dates (e.g. ``created: 2026-04-05``)
-    into ``datetime.date`` objects.  The stdlib ``json`` module cannot handle
-    these, so we provide a thin wrapper that converts them on the fly.
-    """
-
-    def default(self, obj: object) -> str:
-        if isinstance(obj, (date, datetime)):
-            return obj.isoformat()
-        return super().default(obj)
-
-
-def vault_json_dumps(obj: object, **kwargs) -> str:
-    """``json.dumps`` replacement that handles ``datetime.date`` values and
-    emits non-ASCII text as UTF-8 instead of ``\\uXXXX`` escapes.
-
-    ``ensure_ascii`` defaults to ``False`` so tool responses stay compact for
-    non-ASCII vaults and round-trip non-ASCII paths/content verbatim. Callers
-    may still override it (e.g. pass ``ensure_ascii=True`` for ASCII-only
-    on-disk state).
-
-    Guard: a vault file whose on-disk name is not valid UTF-8 reaches Python as
-    a lone surrogate (via ``surrogateescape``). With ``ensure_ascii=False`` that
-    surrogate is emitted verbatim and the MCP transport then fails to UTF-8
-    encode the *whole* response. We verify encodability and fall back to escaped
-    output for that one response, so a single odd filename cannot take down an
-    otherwise valid payload.
-    """
-    kwargs.setdefault("ensure_ascii", False)
-    result = json.dumps(obj, cls=_DateAwareEncoder, **kwargs)
-    if not kwargs["ensure_ascii"]:
-        try:
-            result.encode("utf-8")
-        except UnicodeEncodeError:
-            result = json.dumps(obj, cls=_DateAwareEncoder, **{**kwargs, "ensure_ascii": True})
-    return result
+# vault_json_dumps is now imported from .serialization (see top of file, #9).
 
 
 class OcrError(RuntimeError):
