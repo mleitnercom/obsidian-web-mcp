@@ -596,27 +596,8 @@ def test_vault_import_url_downloads_and_writes_binary(vault_dir, monkeypatch):
     content = b"%PDF fake content"
     checksum = hashlib.sha256(content).hexdigest()
 
-    class FakeHeaders:
-        def get(self, name, default=None):
-            return "application/pdf" if name.lower() == "content-type" else default
-
-    class FakeResponse:
-        headers = FakeHeaders()
-
-        def __init__(self):
-            self._chunks = [content, b""]
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def read(self, _size):
-            return self._chunks.pop(0)
-
-    monkeypatch.setattr(write_tools, "_validate_import_url", lambda url: None)
-    monkeypatch.setattr(write_tools, "urlopen", lambda request, timeout: FakeResponse())
+    # The SSRF-hardened fetch is exercised in tests/test_url_fetch.py; here we stub it.
+    monkeypatch.setattr(write_tools, "fetch_url", lambda url, **kwargs: ("application/pdf", content))
 
     result = json.loads(
         vault_import_url(
@@ -761,27 +742,7 @@ def test_audit_log_records_mutation_operations(vault_dir, monkeypatch, tmp_path)
         "audit/import-file.pdf",
     )
 
-    class FakeHeaders:
-        def get(self, name, default=None):
-            return "application/pdf" if name.lower() == "content-type" else default
-
-    class FakeResponse:
-        headers = FakeHeaders()
-
-        def __init__(self):
-            self._chunks = [b"%PDF remote", b""]
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def read(self, _size):
-            return self._chunks.pop(0)
-
-    monkeypatch.setattr(write_tools, "_validate_import_url", lambda url: None)
-    monkeypatch.setattr(write_tools, "urlopen", lambda request, timeout: FakeResponse())
+    monkeypatch.setattr(write_tools, "fetch_url", lambda url, **kwargs: ("application/pdf", b"%PDF remote"))
     run_and_assert(
         "vault_import_url",
         lambda: server.vault_import_url("audit/import-url.pdf", "https://example.invalid/file.pdf", "application/pdf"),

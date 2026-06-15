@@ -5,21 +5,18 @@ import binascii
 import difflib
 import hashlib
 import hmac
-import ipaddress
 import json
 import logging
 import shutil
-import socket
 import time
 import uuid
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 
 from .. import config
 from .. import frontmatter_io
 from ..hooks import fire_post_write
+from ..url_fetch import ImportFetchError, ImportSecurityError, fetch_url
 from ..vault import (
     read_file,
     resolve_vault_path,
@@ -496,25 +493,6 @@ def commit_direct_upload(
         return {"error": str(e), "upload_id": upload_id}, 500
 
 
-def _validate_import_url(url: str) -> None:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError("Only http and https URLs are supported")
-    if not parsed.hostname:
-        raise ValueError("URL must include a hostname")
-    if config.IMPORT_URL_ALLOW_PRIVATE:
-        return
-    try:
-        infos = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        raise ValueError(f"Could not resolve URL hostname: {parsed.hostname}") from exc
-    for info in infos:
-        address = info[4][0]
-        ip = ipaddress.ip_address(address)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
-            raise ValueError("URL resolves to a private or local address; set VAULT_IMPORT_URL_ALLOW_PRIVATE=true to opt in")
-
-
 def vault_write(path: str, content: str, create_dirs: bool = True, merge_frontmatter: bool = False) -> str:
     """Write a file to the vault, optionally merging frontmatter with existing content."""
     try:
@@ -636,10 +614,16 @@ def vault_import_url(
     create_dirs: bool = True,
     expected_sha256: str | None = None,
 ) -> str:
-    """Import an allowed binary file by letting the server download it from a URL."""
+    """Import an allowed binary file by letting the server download it from a URL.
+
+    The download is SSRF-hardened (see ``url_fetch``): the host is resolved once and the
+    connection is pinned to the validated IP (no DNS-rebinding window), every redirect hop is
+    re-validated and re-pinned, non-public targets are denied unless
+    ``VAULT_IMPORT_URL_ALLOW_PRIVATE`` is set, the scheme/port are allowlisted, and the size is
+    capped on the actual read.
+    """
     try:
         resolved = _validate_binary_target(path, media_type)
-        _validate_import_url(url)
         if resolved.exists() and not overwrite:
             return vault_json_dumps(
                 {
@@ -648,34 +632,27 @@ def vault_import_url(
                     "media_type": media_type,
                 }
             )
-        request = Request(url, headers={"User-Agent": "obsidian-web-mcp/attachment-import"})
-        data = bytearray()
-        with urlopen(request, timeout=config.IMPORT_URL_TIMEOUT_SECONDS) as response:
-            content_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-            if content_type and content_type != media_type:
-                return vault_json_dumps(
-                    {
-                        "error": f"URL content-type '{content_type}' does not match requested media_type '{media_type}'",
-                        "path": path,
-                        "media_type": media_type,
-                        "url": url,
-                    }
-                )
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                data.extend(chunk)
-                if len(data) > config.MAX_BINARY_SIZE:
-                    return vault_json_dumps(
-                        {
-                            "error": f"Downloaded content exceeds limit of {config.MAX_BINARY_SIZE} bytes",
-                            "path": path,
-                            "media_type": media_type,
-                            "url": url,
-                        }
-                    )
-        content = bytes(data)
+        try:
+            content_type, content = fetch_url(
+                url,
+                allow_private=config.IMPORT_URL_ALLOW_PRIVATE,
+                allowed_ports=config.IMPORT_URL_ALLOWED_PORTS,
+                max_bytes=config.MAX_BINARY_SIZE,
+                max_redirects=config.IMPORT_URL_MAX_REDIRECTS,
+                timeout=config.IMPORT_URL_TIMEOUT_SECONDS,
+            )
+        except (ImportSecurityError, ImportFetchError) as e:
+            return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type, "url": url})
+
+        if content_type and content_type != media_type:
+            return vault_json_dumps(
+                {
+                    "error": f"URL content-type '{content_type}' does not match requested media_type '{media_type}'",
+                    "path": path,
+                    "media_type": media_type,
+                    "url": url,
+                }
+            )
         actual_sha256 = _sha256_bytes(content)
         if expected_sha256 and actual_sha256.lower() != expected_sha256.lower():
             return vault_json_dumps(
@@ -698,8 +675,6 @@ def vault_import_url(
                 "source_url": url,
             }
         )
-    except (HTTPError, URLError, TimeoutError) as e:
-        return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type, "url": url})
     except ValueError as e:
         return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type, "url": url})
     except Exception as e:
