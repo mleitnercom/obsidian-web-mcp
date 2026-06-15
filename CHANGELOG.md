@@ -5,6 +5,11 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.12] - 2026-06-15
+
+### Changed
+- **Serialization converged onto upstream's module (#9).** Added `serialization.py` (byte-identical to `jimprosser/obsidian-web-mcp`'s) and routed `vault_json_dumps` through it. Tool responses now use compact separators like upstream (`{"a":1}` rather than `{"a": 1}`) — token-efficient and semantically identical JSON; the date/datetime encoder and the non-UTF-8/surrogate fallback are unchanged. `vault_json_dumps` remains a thin alias; the canonical name is `serialization.dumps`. This is the keystone for the planned re-platform: shared primitives now match upstream, so feature modules become portable onto stock `upstream/main`.
+
 ## [v0.8.11] - 2026-06-14
 
 ### Security
