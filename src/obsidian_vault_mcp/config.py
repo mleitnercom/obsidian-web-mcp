@@ -253,6 +253,28 @@ MAX_CONTENT_SIZE = _env_int("VAULT_MAX_CONTENT_SIZE", 1_000_000)
 MAX_BINARY_SIZE = _env_int("VAULT_MAX_BINARY_SIZE", 10 * 1024 * 1024)
 IMPORT_URL_TIMEOUT_SECONDS = _env_int("VAULT_IMPORT_URL_TIMEOUT_SECONDS", 30)
 IMPORT_URL_ALLOW_PRIVATE = _env_bool("VAULT_IMPORT_URL_ALLOW_PRIVATE", False)
+IMPORT_URL_MAX_REDIRECTS = _env_int("VAULT_IMPORT_URL_MAX_REDIRECTS", 5)
+
+
+def _env_int_set(name: str, default: set[int]) -> set[int]:
+    """Parse a comma-separated set of ints (e.g. allowed ports) with a safe fallback."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return set(default)
+    out: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.add(int(part))
+        except ValueError:
+            continue
+    return out or set(default)
+
+
+# Ports the URL importer may connect to (SSRF defense in depth). Default http/https.
+IMPORT_URL_ALLOWED_PORTS = _env_int_set("VAULT_IMPORT_URL_ALLOWED_PORTS", {80, 443})
 MAX_BATCH_SIZE = _env_int("VAULT_MAX_BATCH_SIZE", 20)
 MAX_SEARCH_RESULTS = _env_int("VAULT_MAX_SEARCH_RESULTS", 50)
 MAX_FRONTMATTER_SEARCH_RESULTS = _env_int("VAULT_MAX_FRONTMATTER_SEARCH_RESULTS", 500)

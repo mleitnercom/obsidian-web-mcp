@@ -5,6 +5,18 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.13] - 2026-06-16
+
+### Security
+- **`vault_import_url` is now SSRF-hardened.** The previous guard resolved the hostname and checked the IP, then handed the URL to `urlopen` — defeatable two ways, both now closed:
+  - **DNS rebinding / TOCTOU.** The validator and `urlopen` resolved the name independently, so a malicious DNS could return a public IP to the check and a private IP (e.g. `169.254.169.254`, loopback) to the connect. The new `url_fetch.fetch_url` resolves **once** and pins the connection to the validated IP, preserving the original `Host` header and TLS SNI/certificate hostname.
+  - **Redirects.** `urlopen` auto-followed `30x` and only the first URL was validated, so a public URL could redirect to an internal one. Redirects are no longer auto-followed; **every hop is re-validated and re-pinned** against a hop budget (`VAULT_IMPORT_URL_MAX_REDIRECTS`, default 5).
+  - Defense in depth: public-IP-only by default (`is_global`, IPv4-mapped IPv6 unwrapped so `::ffff:169.254.169.254` cannot smuggle a target), scheme allowlist, and a port allowlist (`VAULT_IMPORT_URL_ALLOWED_PORTS`, default `80,443`). `VAULT_IMPORT_URL_ALLOW_PRIVATE=true` remains the explicit opt-in for trusted single-user deployments.
+- New module `obsidian_vault_mcp/url_fetch.py` holds the hardened fetcher; it is mirrored by the `obsidian-vault-mcp-ext` ImportExtension so the two stay in sync.
+
+### Tests
+- `tests/test_url_fetch.py`: rebinding-closed (resolve once + pin), redirect-to-metadata rejected, redirect-budget, IP classification, scheme/port guards, size cap. Existing `vault_import_url` tests now stub the `fetch_url` seam.
+
 ## [v0.8.12] - 2026-06-15
 
 ### Changed
