@@ -5,6 +5,18 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.14] - 2026-06-18
+
+### Security
+- **`image/svg+xml` removed from the default binary allowlist.** SVG is the one entry that is not inert: it can carry `<script>`/`onload`. Because `_validate_binary_target` gates only on the declared `media_type` + extension and never sniffs bytes, allowing it was an arbitrary-active-content write into a vault that may be synced or rendered in a preview surface. This hardens all three binary entry points (`vault_write_binary`, `vault_import_url`, `vault_import_file`). PNG/JPEG/WEBP/GIF/PDF (all inert) remain; SVG can be re-enabled deliberately via `VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON`. Surfaced by the upstream review of mleitnercom's `vault_write_binary` PR (jimprosser/obsidian-web-mcp#61).
+
+### Fixed
+- **`write_bytes_atomic` no-clobber is now atomic.** With `overwrite=False` it used `exists()`-then-`os.replace`, a check-then-write race that could still clobber a file created in between. It now uses `os.link`, which fails atomically if the target exists. (jimprosser/obsidian-web-mcp#61 review)
+- **Vault analytics no longer reads whole files unbounded.** `analytics._load_posts` pulled every markdown file fully into memory; one pathological multi-hundred-MB note (or a very large vault) could spike memory on the tunnel-reachable server. It now reads at most `MAX_CONTENT_SIZE` (1 MB) per file (top-of-file frontmatter still parses) and drops the per-post duplicate `text`/`name` fields that nothing consumed. (jimprosser/obsidian-web-mcp#59 review)
+
+### Notes
+- All three were found by Jim's upstream review of the analogous contributions; this release backports the same hardening to the fork's live, tunnel-exposed deployment.
+
 ## [v0.8.13] - 2026-06-16
 
 ### Security
