@@ -500,6 +500,30 @@ def test_vault_write_binary_creates_png(vault_dir):
     assert (vault_dir / "assets" / "visual.png").read_bytes() == png_bytes
 
 
+def test_vault_write_binary_rejects_svg(vault_dir):
+    """SVG is no longer in the default allowlist (active-content hardening, v0.8.14)."""
+    result = json.loads(
+        vault_write_binary(
+            "assets/icon.svg",
+            base64.b64encode(b"<svg onload=alert(1)/>").decode("ascii"),
+            "image/svg+xml",
+        )
+    )
+    assert "Unsupported media_type" in result["error"]
+    assert not (vault_dir / "assets" / "icon.svg").exists()
+
+
+def test_analytics_load_posts_caps_oversized_read(vault_dir, monkeypatch):
+    """_load_posts reads at most the cap per file and drops the duplicate text/name fields."""
+    from obsidian_vault_mcp.tools import analytics
+    monkeypatch.setattr(analytics, "_MAX_ANALYZE_BYTES", 100)
+    (vault_dir / "huge.md").write_text("---\nstatus: active\n---\n" + ("x" * 5000), encoding="utf-8")
+    posts, _, _ = analytics._load_posts()
+    hit = next(p for p in posts if p["path"] == "huge.md")
+    assert len(hit["body"]) <= 100
+    assert "text" not in hit and "name" not in hit
+
+
 def test_vault_write_binary_rejects_media_type_mismatch(vault_dir):
     """vault_write_binary rejects a mismatched extension and media type."""
     result = json.loads(

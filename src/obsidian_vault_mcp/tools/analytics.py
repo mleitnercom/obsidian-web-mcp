@@ -18,6 +18,11 @@ from ..vault import (
 
 WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
+# Per-file read cap for analysis, aligned with the 1 MB write cap. A file over this is read
+# only up to the cap (so top-of-file frontmatter still parses), so one pathological note
+# can't spike memory on the tunnel-reachable server.
+_MAX_ANALYZE_BYTES = config.MAX_CONTENT_SIZE
+
 
 def _iter_vault_files(path_prefix: str = "", pattern: str = "*") -> tuple[Path, list[Path]]:
     if path_prefix:
@@ -58,26 +63,32 @@ def _load_posts(path_prefix: str = "") -> tuple[list[dict], dict[str, list[str]]
 
     for path in files:
         rel = str(path.relative_to(vault_root)).replace("\\", "/")
+        # Cap the per-file read so one pathological note can't spike memory.
         try:
-            raw = path.read_text(encoding="utf-8")
+            oversized = path.stat().st_size > _MAX_ANALYZE_BYTES
+        except OSError:
+            oversized = False
+        try:
+            if oversized:
+                with path.open("r", encoding="utf-8", errors="ignore") as handle:
+                    raw = handle.read(_MAX_ANALYZE_BYTES)
+            else:
+                raw = path.read_text(encoding="utf-8")
             post = frontmatter.loads(raw)
             metadata = dict(post.metadata)
             body = post.content
         except UnicodeDecodeError:
-            raw = ""
             metadata = {}
             body = ""
         except Exception:
-            raw = path.read_text(encoding="utf-8", errors="ignore")
+            with path.open("r", encoding="utf-8", errors="ignore") as handle:
+                body = handle.read(_MAX_ANALYZE_BYTES)
             metadata = {}
-            body = raw
         posts.append(
             {
                 "path": rel,
-                "text": raw,
                 "body": body,
                 "frontmatter": metadata,
-                "name": path.stem,
             }
         )
 

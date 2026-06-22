@@ -27,12 +27,15 @@ from ..vault import (
 
 logger = logging.getLogger(__name__)
 
+# Only inert formats. SVG is intentionally excluded: it can carry <script>/onload, and
+# validation is by declared media_type + extension (not byte-sniffing), so allowing it would
+# be an arbitrary-active-content write into a synced/rendered vault. Opt back in deliberately
+# via VAULT_EXTRA_BINARY_MEDIA_TYPES_JSON if you really need it.
 DEFAULT_ALLOWED_BINARY_MEDIA_TYPES = {
     "image/png": {".png"},
     "image/jpeg": {".jpg", ".jpeg"},
     "image/webp": {".webp"},
     "image/gif": {".gif"},
-    "image/svg+xml": {".svg"},
     "application/pdf": {".pdf"},
 }
 

@@ -512,9 +512,6 @@ def write_bytes_atomic(
     path = resolve_vault_path(relative_path)
     is_new = not path.exists()
 
-    if not overwrite and not is_new:
-        raise FileExistsError(f"File already exists: {relative_path}")
-
     if create_dirs:
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -522,7 +519,21 @@ def write_bytes_atomic(
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)
-        os.replace(tmp_path, path)
+        if overwrite:
+            os.replace(tmp_path, path)
+        else:
+            # Atomic no-clobber: os.link fails if the target exists, closing the
+            # check-then-write race that exists()-then-os.replace would leave open.
+            try:
+                os.link(tmp_path, path)
+            except FileExistsError:
+                raise FileExistsError(f"File already exists: {relative_path}")
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            is_new = True
     except BaseException:
         try:
             os.unlink(tmp_path)
