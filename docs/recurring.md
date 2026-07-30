@@ -30,6 +30,7 @@ All control is via environment variables:
 | `VAULT_RECURRING_TEMPLATES_FOLDER` | string | _(none)_ | Vault-relative folder that contains the template notes. Required. |
 | `VAULT_RECURRING_INTERVAL` | int (seconds) | `0` | If `> 0`, the server runs an internal scheduler loop at that cadence. `0` disables the loop (CLI / on-demand only). |
 | `VAULT_RECURRING_DONE_STATUS` | string | `done` | The `status` value that marks an instance as "completed" for relative-mode templates. |
+| `VAULT_RECURRING_INSTANCE_STATUS` | string | `next` | The `status` stamped onto a freshly materialized instance. A template can override it per-instance via `frontmatter_to_inherit`. |
 | `VAULT_RECURRING_CATCHUP_MODE` | `next` \| `all` | `next` | Behavior when multiple periods are pending. `next` collapses to the most recent; `all` creates one instance per missed period. |
 
 ## Template Schema
@@ -162,18 +163,38 @@ For a template with `id=q-report` and period `q2-2026`:
 ```yaml
 ---
 id: recurring-q-report-q2-2026
-title: "Q-Report q2-2026"          # only if instance_title set
+title: Q-Report                    # instance_title if set, else the template's title verbatim
 recurrence_template: q-report
 recurrence_period: q2-2026
 source: recurring-q-report-q2-2026
 created: 2026-07-04
+status: next                       # VAULT_RECURRING_INSTANCE_STATUS; overridable via frontmatter_to_inherit
 due: 2026-07-03                    # trigger_date + due_offset_days
 priority: 2                        # from priority_initial
 scope: pbs                         # inherited via frontmatter_to_inherit
 project: governance
+updated: 2026-07-04                # the generation date, never the template date
 tags: [recurring-instance, quarterly, reporting]
 ---
+
+## Next Action
+<the template's "## Next Action (Template)" section, else body_action, else the title>
+
+## Verlauf
+
+## Bezug
+- [[q-report]]                     # link to the master template
 ```
+
+Every instance is a schema-complete task: it always carries `title`, `status`
+and `updated`, and a body with a `## Next Action` (copied from the template's
+`## Next Action (Template)` section; overridable with an optional `body_action:`
+string on the template; if neither is present the title is used as a placeholder
+and a warning is returned), an empty `## Verlauf`, and a `## Bezug` link to the
+master template. A template that resolves no title fails closed into the tool's
+`errors` rather than writing an invisible, schema-invalid task. `dry_run: true`
+returns the planned frontmatter under each `created` entry so the shape can be
+checked without writing.
 
 The instance file is named `recurring-{template_id}-{period}.md` and
 lands in `instance_folder` (or the template's parent directory).
