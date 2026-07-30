@@ -2,7 +2,7 @@
 
 Production-hardened fork of [`jimprosser/obsidian-web-mcp`](https://github.com/jimprosser/obsidian-web-mcp): an HTTP-based MCP server that exposes an Obsidian vault to LLM clients such as Claude, ChatGPT, and Codex over OAuth 2.0.
 
-**Latest release:** [v0.8.14](https://github.com/mleitnercom/obsidian-web-mcp/releases/tag/v0.8.14) (2026-06-18)
+**Releases:** see the [releases page](https://github.com/mleitnercom/obsidian-web-mcp/releases) for the latest version and the [CHANGELOG](CHANGELOG.md) for details.
 
 ## At a Glance
 
