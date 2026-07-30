@@ -549,7 +549,13 @@ def _build_instance_body(
         )
 
     master = PurePosixPath(template_path).stem if template_path else template_id
+    # Leading "" -> the serializer appends the body directly after the closing
+    # frontmatter "---", so this yields the required blank line; then the H1 title,
+    # per the Tasks-Schema v0.8 body convention.
     lines = [
+        "",
+        f"# {instance_title}",
+        "",
         "## Next Action",
         next_action,
         "",

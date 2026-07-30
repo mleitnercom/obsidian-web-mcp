@@ -835,6 +835,8 @@ def test_instance_carries_title_status_updated_and_body(recurring_vault):
     assert "title: Quartals-Check" in raw
     assert "status: next" in raw
     assert "updated: '2026-07-04'" in raw or "updated: 2026-07-04" in raw
+    # body opens with a blank line after the frontmatter, then the H1 title
+    assert body.startswith("\n# Quartals-Check\n")
     # exp 5: body carries the template's Next Action section, plus Verlauf + Bezug
     assert "## Next Action" in body
     assert "Beleg prüfen und ablegen." in body

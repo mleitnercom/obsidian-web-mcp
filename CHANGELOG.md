@@ -5,6 +5,11 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.16] - 2026-07-31
+
+### Fixed
+- **Recurring instance body now leads with the `# {title}` H1 and a blank line after the frontmatter**, per the Tasks-Schema v0.8 body convention. v0.8.15 emitted the body starting directly with `## Next Action`, missing the top-level heading and the separating blank line. Cosmetic only — no effect on Bases or the briefing. The `body_template` full-override path is unchanged.
+
 ## [v0.8.15] - 2026-07-30
 
 ### Fixed
