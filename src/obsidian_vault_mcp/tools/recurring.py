@@ -463,48 +463,173 @@ def _resolve_inheritance(
     return inherited
 
 
+class RecurringInstanceError(ValueError):
+    """Raised when a template cannot yield a schema-complete instance (e.g. no
+    resolvable title). The calling tool surfaces it under ``errors`` instead of
+    writing a silently-broken task -- consistent with the no-silent-failure rule.
+    """
+
+
+_NEXT_ACTION_TEMPLATE_HEADING = "Next Action (Template)"
+
+
+def _extract_template_section(body: str, heading: str) -> str | None:
+    """Return the text under a ``## <heading>`` section of a markdown body.
+
+    Reads up to the next ``## `` heading (or EOF) and returns the trimmed
+    content. Returns ``None`` if the heading is absent (so the caller can tell
+    "missing section" from "present but empty").
+    """
+    if not body:
+        return None
+    target = f"## {heading}".strip().lower()
+    collecting = False
+    collected: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not collecting:
+            if stripped.lower() == target:
+                collecting = True
+            continue
+        if stripped.startswith("## "):
+            break
+        collected.append(line)
+    if not collecting:
+        return None
+    return "\n".join(collected).strip()
+
+
+def _build_instance_body(
+    *,
+    template_id: str,
+    template_meta: dict[str, Any],
+    template_body: str,
+    template_path: str,
+    period_key: str,
+    trigger_date: date,
+    due: str,
+    instance_title: str,
+    sink: list[str],
+) -> str:
+    """Render the instance body per Tasks-Schema v0.8.
+
+    An explicit ``body_template`` format string (legacy full-body override)
+    still wins. Otherwise a canonical body is built: ``## Next Action`` (from
+    the ``body_action`` field, else the template's ``## Next Action (Template)``
+    section, else the title as a placeholder plus a warning), an empty
+    ``## Verlauf``, and a ``## Bezug`` link to the master template.
+    """
+    body_template = template_meta.get("body_template")
+    if isinstance(body_template, str) and body_template:
+        body = body_template.format(
+            template_id=template_id,
+            period=period_key,
+            trigger=_format_iso(trigger_date),
+            due=due,
+        )
+        if not body.endswith("\n"):
+            body += "\n"
+        return body
+
+    next_action = None
+    body_action = template_meta.get("body_action")
+    if isinstance(body_action, str) and body_action.strip():
+        next_action = body_action.strip()
+    else:
+        section = _extract_template_section(
+            template_body, _NEXT_ACTION_TEMPLATE_HEADING
+        )
+        if section:
+            next_action = section
+    if next_action is None:
+        next_action = instance_title
+        sink.append(
+            f"template '{template_id}' has no '## {_NEXT_ACTION_TEMPLATE_HEADING}' "
+            "section and no 'body_action'; used the title as a placeholder"
+        )
+
+    master = PurePosixPath(template_path).stem if template_path else template_id
+    lines = [
+        "## Next Action",
+        next_action,
+        "",
+        "## Verlauf",
+        "",
+        "## Bezug",
+        f"- [[{master}]]",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _build_instance_content(
     *,
     template_id: str,
     template_meta: dict[str, Any],
     period_key: str,
     trigger_date: date,
+    template_body: str = "",
+    template_path: str = "",
+    as_of: date | None = None,
     warnings: list[str] | None = None,
 ) -> str:
-    """Render the instance markdown (frontmatter + optional body header).
+    """Render a schema-complete instance (Tasks-Schema v0.8).
 
-    Inheritance is resolved via :func:`_resolve_inheritance`; warnings about
-    legacy / mis-shaped inheritance configuration are appended to the
-    supplied list so the calling tool can surface them in its response.
+    Every instance carries the required ``title``, ``status`` and ``updated``
+    fields and a real body, so it is visible to the Bases / morning briefing
+    (before v0.8.4 these were omitted and instances ran silently). Inheritance
+    is resolved via :func:`_resolve_inheritance`; warnings about legacy /
+    mis-shaped configuration are appended to the supplied list. Raises
+    :class:`RecurringInstanceError` if no title can be resolved.
     """
     sink: list[str] = warnings if warnings is not None else []
     due_offset = int(template_meta.get("due_offset_days", 0) or 0)
     priority_initial = template_meta.get("priority_initial")
     tags_to_inherit = template_meta.get("tags_to_inherit") or []
     title_template = template_meta.get("instance_title")
+    generated_on = as_of or _today()
 
     metadata: dict[str, Any] = {}
 
     # Stable identity fields first -- they make the file searchable.
     metadata["id"] = f"recurring-{template_id}-{period_key}"
+
+    # Title (required): an explicit `instance_title` format string wins, else
+    # the template's own `title` verbatim -- no period suffix, the period lives
+    # in `recurrence_period` and the slug. `frontmatter_to_inherit` may still
+    # override it below.
     if title_template:
-        metadata["title"] = str(title_template).format(
+        resolved_title = str(title_template).format(
             template_id=template_id,
             period=period_key,
             trigger=_format_iso(trigger_date),
         )
+    else:
+        raw_title = template_meta.get("title")
+        resolved_title = str(raw_title).strip() if raw_title is not None else ""
+    if resolved_title:
+        metadata["title"] = resolved_title
+
     metadata["recurrence_template"] = str(template_id)
     metadata["recurrence_period"] = str(period_key)
     metadata["source"] = f"recurring-{template_id}-{period_key}"
     metadata["created"] = _format_iso(_today())
+    # Status (required): configurable default, overridable via inheritance.
+    metadata["status"] = config.VAULT_RECURRING_INSTANCE_STATUS
     metadata["due"] = _format_iso(trigger_date + timedelta(days=due_offset))
 
     if priority_initial is not None:
         metadata["priority"] = priority_initial
 
-    # Inherit explicit frontmatter fields from the template (dict or legacy list).
+    # Inherit explicit frontmatter fields from the template (dict or legacy
+    # list). These win over the base title/status set above, so a template can
+    # e.g. start its instances as `wv`.
     for key, value in _resolve_inheritance(template_meta, sink).items():
         metadata[key] = value
+
+    # `updated` (required) is the generation date, never the template date.
+    # Forced after inheritance so a stale inherited value cannot leak in.
+    metadata["updated"] = _format_iso(generated_on)
 
     # Tags: marker tag + inherited tags.
     tags: list[str] = ["recurring-instance"]
@@ -514,17 +639,31 @@ def _build_instance_content(
                 tags.append(tag)
     metadata["tags"] = tags
 
-    body = ""
-    body_template = template_meta.get("body_template")
-    if isinstance(body_template, str) and body_template:
-        body = body_template.format(
-            template_id=template_id,
-            period=period_key,
-            trigger=_format_iso(trigger_date),
-            due=metadata["due"],
+    # Fail closed: an instance without a title or status is not a schema-valid
+    # task and must not be written silently.
+    final_title = str(metadata.get("title") or "").strip()
+    if not final_title:
+        raise RecurringInstanceError(
+            f"template '{template_id}' has no 'title' (and no 'instance_title'); "
+            "instance would be schema-invalid"
         )
-        if not body.endswith("\n"):
-            body += "\n"
+    if not str(metadata.get("status") or "").strip():
+        raise RecurringInstanceError(
+            f"template '{template_id}' resolved an empty 'status'; "
+            "instance would be schema-invalid"
+        )
+
+    body = _build_instance_body(
+        template_id=template_id,
+        template_meta=template_meta,
+        template_body=template_body,
+        template_path=template_path,
+        period_key=period_key,
+        trigger_date=trigger_date,
+        due=metadata["due"],
+        instance_title=final_title,
+        sink=sink,
+    )
     return frontmatter_io.dumps(metadata, body)
 
 
@@ -784,13 +923,35 @@ def _process_template(
         rel_path = _instance_relpath(
             template_meta, template_path, filename, warn_messages
         )
-        content = _build_instance_content(
-            template_id=template_id,
-            template_meta=template_meta,
-            period_key=period.period_key,
-            trigger_date=period.trigger_date,
-            warnings=warn_messages,
-        )
+        try:
+            content = _build_instance_content(
+                template_id=template_id,
+                template_meta=template_meta,
+                period_key=period.period_key,
+                trigger_date=period.trigger_date,
+                template_body=template_body,
+                template_path=template_path,
+                as_of=as_of,
+                warnings=warn_messages,
+            )
+        except RecurringInstanceError as exc:
+            for msg in warn_messages:
+                warnings.append(
+                    {
+                        "template_id": template_id,
+                        "period": period.period_key,
+                        "warning": msg,
+                    }
+                )
+            errors.append(
+                {
+                    "template_id": template_id,
+                    "period": period.period_key,
+                    "path": rel_path,
+                    "error": str(exc),
+                }
+            )
+            continue
         for msg in warn_messages:
             warnings.append(
                 {
@@ -800,15 +961,21 @@ def _process_template(
                 }
             )
         if dry_run:
-            created.append(
-                {
-                    "template_id": template_id,
-                    "period": period.period_key,
-                    "path": rel_path,
-                    "trigger_date": _format_iso(period.trigger_date),
-                    "dry_run": True,
-                }
-            )
+            entry = {
+                "template_id": template_id,
+                "period": period.period_key,
+                "path": rel_path,
+                "trigger_date": _format_iso(period.trigger_date),
+                "dry_run": True,
+            }
+            # Best-effort planned-frontmatter preview so schema checks are
+            # possible without writing (see FR "Nebenbefund").
+            try:
+                planned_meta, _planned_body = frontmatter_io.loads(content)
+                entry["planned_frontmatter"] = dict(planned_meta or {})
+            except Exception:  # pragma: no cover - preview is non-essential
+                pass
+            created.append(entry)
             last_processed_trigger = period.trigger_date
             continue
 

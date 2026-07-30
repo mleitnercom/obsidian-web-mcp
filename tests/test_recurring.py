@@ -192,7 +192,16 @@ def recurring_vault(tmp_path, monkeypatch):
         fresh_index.stop()
 
 
-def _write_template(vault: Path, name: str, frontmatter: str, body: str = "") -> Path:
+def _write_template(
+    vault: Path, name: str, frontmatter: str, body: str = "", ensure_title: bool = True
+) -> Path:
+    # Tasks-Schema v0.8 (and recurring instances since v0.8.15) require a title;
+    # give minimal fixtures a valid one unless the test deliberately omits it.
+    has_title = any(
+        line.strip().startswith("title:") for line in frontmatter.splitlines()
+    )
+    if ensure_title and not has_title:
+        frontmatter = "title: Recurring Test Template\n" + frontmatter
     path = vault / "templates" / name
     path.write_text(f"---\n{frontmatter}---\n{body}", encoding="utf-8")
     return path
@@ -264,6 +273,7 @@ frontmatter_to_inherit:
 tags_to_inherit:
   - tucho
 """,
+        body="## Next Action (Template)\nBeleg prüfen und ablegen.\n",
     )
     _refresh_template_index(index, tpl)
     result = json.loads(recurring_materialize(as_of="2026-07-04"))
@@ -780,3 +790,145 @@ instance_folder: tasks
 def test_invalid_as_of(recurring_vault):
     result = json.loads(recurring_materialize(as_of="not-a-date"))
     assert result["error_code"] == "invalid_as_of"
+
+
+# --------------------------------------------------------------------------
+# v0.8.15: instances are schema-complete tasks (title / status / updated / body)
+# --------------------------------------------------------------------------
+
+
+def _read_instance(vault: Path, rel: str) -> tuple[str, str]:
+    """Return (raw_text, body) of a materialized instance file."""
+    raw = (vault / rel).read_text(encoding="utf-8")
+    parts = raw.split("---\n", 2)
+    body = parts[2] if len(parts) == 3 else ""
+    return raw, body
+
+
+# All templates below are absolute quarter_end_plus_3d with last_run 2026-06-30,
+# so as_of=2026-07-04 fires exactly the q2-2026 period.
+def _q_template(vault, name, extra_fm="", body="## Next Action (Template)\nBeleg prüfen.\n"):
+    return _write_template(
+        vault,
+        name,
+        "id: {id}\n".format(id=name[:-3])
+        + "title: Quartals-Check\n"
+        "type: recurring-template\n"
+        "active: true\n"
+        "recurrence_anchor_mode: absolute\n"
+        "recurrence_anchor: quarter_end_plus_3d\n"
+        "target_folder: tasks\n"
+        "last_run: 2026-06-30\n"
+        + extra_fm,
+        body=body,
+    )
+
+
+def test_instance_carries_title_status_updated_and_body(recurring_vault):
+    vault, index = recurring_vault
+    tpl = _q_template(vault, "tucho.md", body="## Next Action (Template)\nBeleg prüfen und ablegen.\n")
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-07-04"))
+    assert len(result["created"]) == 1
+    raw, body = _read_instance(vault, result["created"][0]["path"])
+    # exp 1/2/3: required frontmatter present
+    assert "title: Quartals-Check" in raw
+    assert "status: next" in raw
+    assert "updated: '2026-07-04'" in raw or "updated: 2026-07-04" in raw
+    # exp 5: body carries the template's Next Action section, plus Verlauf + Bezug
+    assert "## Next Action" in body
+    assert "Beleg prüfen und ablegen." in body
+    assert "## Verlauf" in body
+    assert "## Bezug" in body
+    assert "[[tucho]]" in body
+
+
+def test_updated_uses_as_of_not_template_date(recurring_vault):
+    vault, index = recurring_vault
+    tpl = _q_template(vault, "asof.md")
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-07-04"))
+    raw, _ = _read_instance(vault, result["created"][0]["path"])
+    # exp 3: updated is the generation date, not the template's last_run (2026-06-30)
+    assert "2026-06-30" not in raw.split("---\n", 2)[1]  # not in frontmatter
+
+
+def test_frontmatter_to_inherit_overrides_status(recurring_vault):
+    vault, index = recurring_vault
+    tpl = _q_template(vault, "wv.md", extra_fm="frontmatter_to_inherit:\n  status: wv\n")
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-07-04"))
+    raw, _ = _read_instance(vault, result["created"][0]["path"])
+    # exp 4: explicit inherited status wins over the default
+    assert "status: wv" in raw
+    assert "status: next" not in raw
+
+
+def test_body_action_overrides_next_action_section(recurring_vault):
+    vault, index = recurring_vault
+    tpl = _q_template(
+        vault,
+        "ba.md",
+        extra_fm="body_action: Konkret diese eine Sache tun.\n",
+        body="## Next Action (Template)\nDieser Text darf NICHT erscheinen.\n",
+    )
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-07-04"))
+    _, body = _read_instance(vault, result["created"][0]["path"])
+    # exp 7: body_action wins over the template section
+    assert "Konkret diese eine Sache tun." in body
+    assert "NICHT erscheinen" not in body
+
+
+def test_missing_next_action_section_uses_placeholder_and_warns(recurring_vault):
+    vault, index = recurring_vault
+    tpl = _q_template(vault, "nobody.md", body="")  # no ## Next Action (Template)
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-07-04"))
+    _, body = _read_instance(vault, result["created"][0]["path"])
+    # exp 6: placeholder (the title) plus a warning, never an empty body
+    assert "## Next Action" in body
+    assert "Quartals-Check" in body
+    assert any("placeholder" in w.get("warning", "") for w in result["warnings"])
+
+
+def test_template_without_title_errors_and_writes_nothing(recurring_vault):
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "notitle.md",
+        """id: notitle-quarterly
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: quarter_end_plus_3d
+target_folder: tasks
+last_run: 2026-06-30
+""",
+        body="## Next Action (Template)\nEgal.\n",
+        ensure_title=False,
+    )
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-07-04"))
+    # exp 8: no title -> errors entry, nothing written
+    assert result["created"] == []
+    assert any(
+        e.get("template_id") == "notitle-quarterly" and "title" in e.get("error", "")
+        for e in result["errors"]
+    )
+    assert not (vault / "tasks" / "recurring-notitle-quarterly-q2-2026.md").exists()
+
+
+def test_dry_run_returns_planned_frontmatter(recurring_vault):
+    vault, index = recurring_vault
+    tpl = _q_template(vault, "dry.md")
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(dry_run=True, as_of="2026-07-04"))
+    entry = result["created"][0]
+    assert entry["dry_run"] is True
+    planned = entry["planned_frontmatter"]
+    assert planned["title"] == "Quartals-Check"
+    assert planned["status"] == "next"
+    assert planned["updated"] == "2026-07-04"
+    # dry-run writes nothing
+    assert not (vault / "tasks" / "recurring-dry-quarterly-q2-2026.md").exists()

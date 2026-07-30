@@ -204,6 +204,11 @@ VAULT_RECURRING_INTERVAL = _env_int("VAULT_RECURRING_INTERVAL", 0)
 VAULT_RECURRING_DONE_STATUS = os.environ.get(
     "VAULT_RECURRING_DONE_STATUS", "done"
 ).strip() or "done"
+# Status stamped onto freshly materialized instances (Tasks-Schema v0.8 requires
+# a status; a template can still override it via ``frontmatter_to_inherit``).
+VAULT_RECURRING_INSTANCE_STATUS = os.environ.get(
+    "VAULT_RECURRING_INSTANCE_STATUS", "next"
+).strip() or "next"
 VAULT_RECURRING_CATCHUP_MODE = _env_choice(
     "VAULT_RECURRING_CATCHUP_MODE",
     "next",

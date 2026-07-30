@@ -5,6 +5,14 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.15] - 2026-07-30
+
+### Fixed
+- **Recurring instances are now schema-complete tasks, not invisible fragments.** `recurring_materialize` wrote instances without `title`, `status`, `updated` or a body, so they satisfied no Base and never surfaced in Next, WV or the morning briefing — they ran silently (14 such instances observed on prod, four overdue including a quarterly governance item). Step 5 of the algorithm now always stamps `title` (from the template's `instance_title` format string, else its `title` verbatim), `status` (default `next`, configurable via the new `VAULT_RECURRING_INSTANCE_STATUS`, overridable per-template via `frontmatter_to_inherit`) and `updated` (the generation date, never the template date). The body gets a canonical `## Next Action` (copied from the template's `## Next Action (Template)` section, or the optional `body_action` field, else the title as a placeholder plus a warning), an empty `## Verlauf`, and a `## Bezug` link to the master template. An instance that still cannot resolve a title fails closed into the tool's `errors` instead of being written. `dry_run` now returns the planned frontmatter for schema checks without writing. Existing `instance_title` / `body_template` / `frontmatter_to_inherit` behaviour is unchanged. No migration needed (only future creation is corrected).
+
+### Added
+- **`VAULT_RECURRING_INSTANCE_STATUS`** (default `next`) — the status stamped onto freshly materialized recurring instances.
+
 ## [v0.8.14] - 2026-06-18
 
 ### Security
