@@ -5,6 +5,14 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.17] - 2026-07-31
+
+### Added
+- **Run observability for `recurring_materialize`** — so a failed run surfaces where the operator looks instead of only in the server log (materialization is often unattended, driven by the internal interval loop or a timer). Two opt-in, vault-relative outputs, both off by default:
+  - **`VAULT_RECURRING_ALERT_PATH`** — a **self-clearing alert task**. Written (`status: next`, `focus_date: today`) with the failing templates when a run has errors, so it shows up in task views / the morning briefing; automatically **deleted** on the next clean run. A marker (`source: recurring-materialize`) guards the delete so a note the operator put at that path is never removed.
+  - **`VAULT_RECURRING_REPORT_PATH`** — a **run-report note** (`type: recurring-run-report`) overwritten every run with the counts and any errors/warnings, as a durable last-run record for a Base / weekly view.
+  Both writes are failure-isolated: an observability error never rolls back a materialization run. `dry_run` writes neither.
+
 ## [v0.8.16] - 2026-07-31
 
 ### Fixed

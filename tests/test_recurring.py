@@ -934,3 +934,94 @@ def test_dry_run_returns_planned_frontmatter(recurring_vault):
     assert planned["updated"] == "2026-07-04"
     # dry-run writes nothing
     assert not (vault / "tasks" / "recurring-dry-quarterly-q2-2026.md").exists()
+
+
+# --------------------------------------------------------------------------
+# v0.8.17: run observability (alert task + run report)
+# --------------------------------------------------------------------------
+
+
+def _broken_template(vault, name, template_id):
+    """A titleless template that fires -> produces a build error at materialize time."""
+    return _write_template(
+        vault,
+        name,
+        f"""id: {template_id}
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: quarter_end_plus_3d
+target_folder: tasks
+last_run: 2026-06-30
+""",
+        body="## Next Action (Template)\nX.\n",
+        ensure_title=False,
+    )
+
+
+def test_report_note_written_every_run(recurring_vault, monkeypatch):
+    vault, index = recurring_vault
+    monkeypatch.setattr(config, "VAULT_RECURRING_REPORT_PATH", "tasks/_recurring-report.md")
+    tpl = _q_template(vault, "rep.md")
+    _refresh_template_index(index, tpl)
+    recurring_materialize(as_of="2026-07-04")
+    report = vault / "tasks" / "_recurring-report.md"
+    assert report.exists()
+    raw = report.read_text(encoding="utf-8")
+    assert "type: recurring-run-report" in raw
+    assert "last_run:" in raw
+
+
+def test_alert_written_on_error_and_self_clears_when_clean(recurring_vault, monkeypatch):
+    vault, index = recurring_vault
+    monkeypatch.setattr(config, "VAULT_RECURRING_ALERT_PATH", "tasks/_recurring-alert.md")
+    tpl = _broken_template(vault, "broken.md", "broken-tpl")
+    _refresh_template_index(index, tpl)
+
+    result = json.loads(recurring_materialize(as_of="2026-07-04"))
+    assert result["errors"], result
+    alert = vault / "tasks" / "_recurring-alert.md"
+    assert alert.exists()
+    raw = alert.read_text(encoding="utf-8")
+    assert "status: next" in raw
+    assert "focus_date:" in raw
+    assert "source: recurring-materialize" in raw
+    assert "broken-tpl" in raw
+
+    # Give the template a title -> next run is clean -> alert self-clears.
+    tpl.write_text(
+        "---\nid: broken-tpl\ntitle: Now Fixed\ntype: recurring-template\nactive: true\n"
+        "recurrence_anchor_mode: absolute\nrecurrence_anchor: quarter_end_plus_3d\n"
+        "target_folder: tasks\nlast_run: 2026-06-30\n---\n## Next Action (Template)\nX.\n",
+        encoding="utf-8",
+    )
+    _refresh_template_index(index, tpl)
+    result2 = json.loads(recurring_materialize(as_of="2026-07-04"))
+    assert result2["errors"] == [], result2
+    assert not alert.exists()
+
+
+def test_dry_run_writes_no_alert_or_report(recurring_vault, monkeypatch):
+    vault, index = recurring_vault
+    monkeypatch.setattr(config, "VAULT_RECURRING_ALERT_PATH", "tasks/_a.md")
+    monkeypatch.setattr(config, "VAULT_RECURRING_REPORT_PATH", "tasks/_r.md")
+    tpl = _broken_template(vault, "brk.md", "brk")
+    _refresh_template_index(index, tpl)
+    recurring_materialize(dry_run=True, as_of="2026-07-04")
+    assert not (vault / "tasks" / "_a.md").exists()
+    assert not (vault / "tasks" / "_r.md").exists()
+
+
+def test_clear_alert_never_deletes_a_foreign_file(recurring_vault, monkeypatch):
+    vault, index = recurring_vault
+    monkeypatch.setattr(config, "VAULT_RECURRING_ALERT_PATH", "tasks/_recurring-alert.md")
+    # An operator's own note sitting at the alert path (no marker).
+    foreign = vault / "tasks" / "_recurring-alert.md"
+    foreign.write_text("---\ntitle: Mine\n---\nkeep me\n", encoding="utf-8")
+    tpl = _q_template(vault, "ok.md")  # has a title -> clean run
+    _refresh_template_index(index, tpl)
+    result = json.loads(recurring_materialize(as_of="2026-07-04"))
+    assert result["errors"] == []
+    # A clean run would clear the alert, but the marker guard protects a foreign file.
+    assert foreign.exists()
+    assert "keep me" in foreign.read_text(encoding="utf-8")

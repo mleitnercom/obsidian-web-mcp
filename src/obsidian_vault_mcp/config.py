@@ -209,6 +209,18 @@ VAULT_RECURRING_DONE_STATUS = os.environ.get(
 VAULT_RECURRING_INSTANCE_STATUS = os.environ.get(
     "VAULT_RECURRING_INSTANCE_STATUS", "next"
 ).strip() or "next"
+# Observability for the (often unattended, timer/interval-driven) materialization:
+# if set, errors are surfaced where the operator actually looks instead of only in
+# the server log. Both are vault-relative paths; empty disables the output.
+#   ALERT_PATH  -> a self-clearing task written when a run has errors and deleted
+#                  when a run is clean (so it shows up in task views / the briefing).
+#   REPORT_PATH -> a run-report note overwritten every run (durable last-run record).
+VAULT_RECURRING_ALERT_PATH = os.environ.get(
+    "VAULT_RECURRING_ALERT_PATH", ""
+).strip().strip("/\\")
+VAULT_RECURRING_REPORT_PATH = os.environ.get(
+    "VAULT_RECURRING_REPORT_PATH", ""
+).strip().strip("/\\")
 VAULT_RECURRING_CATCHUP_MODE = _env_choice(
     "VAULT_RECURRING_CATCHUP_MODE",
     "next",

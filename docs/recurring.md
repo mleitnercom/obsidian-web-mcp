@@ -32,6 +32,8 @@ All control is via environment variables:
 | `VAULT_RECURRING_DONE_STATUS` | string | `done` | The `status` value that marks an instance as "completed" for relative-mode templates. |
 | `VAULT_RECURRING_INSTANCE_STATUS` | string | `next` | The `status` stamped onto a freshly materialized instance. A template can override it per-instance via `frontmatter_to_inherit`. |
 | `VAULT_RECURRING_CATCHUP_MODE` | `next` \| `all` | `next` | Behavior when multiple periods are pending. `next` collapses to the most recent; `all` creates one instance per missed period. |
+| `VAULT_RECURRING_ALERT_PATH` | string | _(none)_ | Vault-relative path for the self-clearing **alert task** (see [Run observability](#run-observability)). Empty disables it. |
+| `VAULT_RECURRING_REPORT_PATH` | string | _(none)_ | Vault-relative path for the **run-report** note (see [Run observability](#run-observability)). Empty disables it. |
 
 ## Template Schema
 
@@ -282,6 +284,31 @@ ExecStart=/home/michael/obsidian-web-mcp-fork/venv/bin/vault-recurring run
 The CLI starts the frontmatter index against the configured vault before
 running. Pass `--no-index` to skip the watcher (faster, but
 relative-mode last-done lookups degrade).
+
+## Run observability
+
+Materialization usually runs unattended — the in-process interval loop
+(`VAULT_RECURRING_INTERVAL>0`) or a systemd timer — so a run's `errors` would
+otherwise only reach the server log, where nobody looks. Two opt-in outputs route
+them into the vault instead. Both are off unless their path is set, both are
+failure-isolated (an observability write never rolls back a materialization run),
+and `dry_run` writes neither.
+
+### Alert task — `VAULT_RECURRING_ALERT_PATH`
+
+When a run has `errors`, one task is written to this path with `status: next` and
+`focus_date: today`, listing the failing templates. Because it is an ordinary
+task, it surfaces in your task views and the morning briefing. On the next
+**clean** run it is **deleted automatically**, so the alert exists exactly while
+there is a problem. A `source: recurring-materialize` marker guards the delete: a
+note you place at that path yourself is never removed.
+
+### Run report — `VAULT_RECURRING_REPORT_PATH`
+
+A `type: recurring-run-report` note, overwritten every run with the counts
+(`checked` / `created` / `skipped` / `errors` / `warnings`) and any error/warning
+detail. A durable last-run record — point a Base or a weekly-review view at it to
+confirm the mechanism is healthy.
 
 ## Safety
 
