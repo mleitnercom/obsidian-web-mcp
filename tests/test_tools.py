@@ -1198,6 +1198,25 @@ def test_vault_analytics_classifies_repairable_and_missing_wikilinks(vault_dir):
     assert missing["status"] == "missing_target"
 
 
+def test_vault_analytics_wikilink_anchors_not_false_positive(vault_dir):
+    """Section (#) and block (^) anchors point within a note. A link to an existing
+    note carrying an anchor must not be flagged (block anchors used to be a false
+    positive); same-note anchor-only links are OK; a missing target is still flagged."""
+    (vault_dir / "note.md").write_text("block ^abc123\n\n## Heading\n", encoding="utf-8")
+    (vault_dir / "block-link.md").write_text("[[note^abc123]]\n", encoding="utf-8")
+    (vault_dir / "section-link.md").write_text("[[note#Heading]]\n", encoding="utf-8")
+    (vault_dir / "self-link.md").write_text("[[#Heading]] [[^abc123]]\n", encoding="utf-8")
+    (vault_dir / "broken-block.md").write_text("[[nope^abc]]\n", encoding="utf-8")
+
+    summary = json.loads(vault_analytics_summary())
+    findings = json.loads(vault_analytics_findings("broken_wikilinks", max_results=10))
+
+    # Only the missing-note link is broken; anchor-to-existing and self-anchors are not.
+    assert summary["findings"]["broken_wikilinks"] == 1
+    assert findings["results"][0]["target"] == "nope^abc"
+    assert findings["results"][0]["status"] == "missing_target"
+
+
 def test_vault_analytics_flags_ambiguous_wikilinks(vault_dir):
     """Ambiguous basename matches should be surfaced explicitly."""
     (vault_dir / "team").mkdir()

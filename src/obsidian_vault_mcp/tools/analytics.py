@@ -105,7 +105,12 @@ def _extract_tags(frontmatter_data: dict) -> list[str]:
 
 
 def _split_wikilink_target(target: str) -> str:
-    clean = target.split("|", 1)[0].split("#", 1)[0].strip()
+    # Strip the display alias (|...) and any anchor -- section (#heading) OR block
+    # (^block-id). Both anchors point WITHIN a note, so a link's validity is about
+    # the note itself. Without stripping ^, "[[Note^id]]" was looked up as a note
+    # literally named "Note^id" and wrongly flagged as missing (false positive);
+    # a same-note anchor like "[[^id]]" collapses to "" and is treated as OK.
+    clean = target.split("|", 1)[0].split("#", 1)[0].split("^", 1)[0].strip()
     return clean.replace("\\", "/")
 
 

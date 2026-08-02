@@ -5,6 +5,11 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.19] - 2026-08-02
+
+### Fixed
+- **Broken-wikilink analytics no longer false-positives on block anchors.** `_split_wikilink_target` stripped the display alias (`|`) and section anchor (`#`) but not the block anchor (`^`), so a valid link like `[[Note^block-id]]` was looked up as a note literally named `Note^block-id`, not found, and wrongly reported under `broken_wikilinks` / `missing_target`. It now also strips `^…`; a same-note anchor-only link (`[[^block-id]]`, `[[#heading]]`) collapses to an empty target and is treated as OK. Links to genuinely missing notes are still flagged. (Section-anchor targets are still validated at note level only — a link to an existing note with a non-existent heading remains a false negative, tracked separately.)
+
 ## [v0.8.18] - 2026-08-02
 
 ### Added
