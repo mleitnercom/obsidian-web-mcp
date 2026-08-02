@@ -31,12 +31,16 @@ def _search_ripgrep(
         f"--glob={file_pattern}",
         "-i",
         f"--context={context_lines}",
-        query,
-        str(search_path),
     ]
 
     for excluded in config.EXCLUDED_DIRS:
-        cmd.insert(-2, f"--glob=!{excluded}/")
+        cmd.append(f"--glob=!{excluded}/")
+
+    # Pass the pattern via -e and terminate options with -- ; otherwise a query
+    # starting with "-" is parsed as a ripgrep option. Notably --pre=<cmd> executes
+    # an arbitrary program per searched file (RCE as the server user). The trailing
+    # -- also shields the path argument. (upstream #51)
+    cmd += ["-e", query, "--", str(search_path)]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)

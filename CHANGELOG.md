@@ -5,6 +5,18 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.20] - 2026-08-02
+
+### Security
+- **Ripgrep argument injection closed in `vault_search` (upstream #51).** The search query was appended as the final positional argument, so a query beginning with `-` was parsed by ripgrep as an option. Notably `--pre=<cmd>` makes ripgrep execute an arbitrary program once per searched file -- remote code execution as the server user, reachable by anyone who can call `vault_search`. The pattern is now passed via `-e <query>` and the search path is shielded behind a `--` option terminator, so a leading-dash query is always treated as a literal search pattern. No API change.
+
+### Changed
+- **Frontmatter parsing hardened and now fails closed (upstream #42).** `frontmatter_io.loads` previously returned `({}, content)` on malformed or unterminated frontmatter, so a `merge_frontmatter` write could silently drop a note's existing frontmatter. It now:
+  - raises `ruamel.yaml.YAMLError` on malformed YAML or an unterminated block (an opening `---` with no closing fence), letting merge callers decide instead of losing data. All in-tree callers already treat a parse failure as "leave the file as-is";
+  - uses strict, line-based fence detection -- a fence is exactly `---` on its own line (trailing whitespace tolerated), so a Markdown thematic break (`----`), an indented `---`, or `--- text` is no longer mistaken for a delimiter;
+  - strips a leading UTF-8 BOM before fence detection, so a BOM-prefixed note is no longer seen as frontmatter-less;
+  - builds a fresh `YAML()` per call, since ruamel is not reentrant and FastMCP runs sync tools in a threadpool.
+
 ## [v0.8.19] - 2026-08-02
 
 ### Fixed
