@@ -48,6 +48,8 @@ active: true
 recurrence_anchor_mode: absolute # 'absolute' or 'relative'
 recurrence_anchor: quarter_end_plus_3d   # required for 'absolute'
 # recurrence_interval: 7d        # required for 'relative' ('Nd' days, 'Nm' months)
+# recurrence_year_cycle: 2       # optional; 'absolute' only: fire every N years (default 1 = yearly)
+# recurrence_year_base: 2027     # required with year_cycle>1: a reference year the cadence lands on
 due_offset_days: 0               # added to trigger date to compute the instance 'due'
 priority_initial: 2              # written into instance frontmatter as 'priority'
 target_folder: 15_Tasks/pbs      # vault-relative folder for instances; defaults to the template's parent

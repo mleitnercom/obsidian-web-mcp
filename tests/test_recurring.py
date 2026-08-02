@@ -1025,3 +1025,62 @@ def test_clear_alert_never_deletes_a_foreign_file(recurring_vault, monkeypatch):
     # A clean run would clear the alert, but the marker guard protects a foreign file.
     assert foreign.exists()
     assert "keep me" in foreign.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# v0.8.18: multi-year cadence for absolute templates
+# --------------------------------------------------------------------------
+
+
+def test_multiyear_cadence_biennial(recurring_vault):
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "muttermal.md",
+        """id: muttermal
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: fixed-04-15
+recurrence_year_cycle: 2
+recurrence_year_base: 2027
+target_folder: tasks
+created: 2026-01-01
+""",
+        body="## Next Action (Template)\nHautcheck.\n",
+    )
+    _refresh_template_index(index, tpl)
+
+    # 2026: off-year (base 2027, cycle 2) -> nothing
+    assert json.loads(recurring_materialize(as_of="2026-05-01"))["created"] == []
+    # 2027: on-year -> one instance
+    r27 = json.loads(recurring_materialize(as_of="2027-05-01"))
+    assert len(r27["created"]) == 1, r27
+    assert "2027" in r27["created"][0]["period"]
+    # 2028: off-year -> nothing new
+    assert json.loads(recurring_materialize(as_of="2028-05-01"))["created"] == []
+    # 2029: on-year -> one instance
+    r29 = json.loads(recurring_materialize(as_of="2029-05-01"))
+    assert len(r29["created"]) == 1, r29
+    assert "2029" in r29["created"][0]["period"]
+
+
+def test_absolute_without_year_cycle_stays_annual(recurring_vault):
+    vault, index = recurring_vault
+    tpl = _write_template(
+        vault,
+        "annual.md",
+        """id: annual-tpl
+type: recurring-template
+active: true
+recurrence_anchor_mode: absolute
+recurrence_anchor: fixed-04-15
+target_folder: tasks
+created: 2026-01-01
+""",
+        body="## Next Action (Template)\nX.\n",
+    )
+    _refresh_template_index(index, tpl)
+    assert len(json.loads(recurring_materialize(as_of="2027-05-01"))["created"]) == 1
+    # annual -> fires again the next year (proves default cycle=1, no filtering)
+    assert len(json.loads(recurring_materialize(as_of="2028-05-01"))["created"]) == 1

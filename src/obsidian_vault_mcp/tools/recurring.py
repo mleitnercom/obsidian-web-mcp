@@ -798,6 +798,43 @@ def _last_done_for(template_id: str) -> date | None:
     return best
 
 
+def _apply_year_cadence(
+    periods: list[TriggeredPeriod],
+    template_meta: dict[str, Any],
+    template_id: str,
+    warnings: list[dict[str, Any]],
+) -> list[TriggeredPeriod]:
+    """Multi-year cadence for absolute templates.
+
+    Keep only years matching ``(year - recurrence_year_base) % recurrence_year_cycle
+    == 0``. Default ``recurrence_year_cycle`` = 1 → annual, no filtering (byte-identical
+    for every existing template that omits the field). A cycle > 1 needs
+    ``recurrence_year_base``; if it is missing/invalid we warn and fall back to annual
+    rather than guess the phase. The period keys stay year-stamped, so idempotency is
+    unaffected (an off year simply yields no period).
+    """
+    try:
+        year_cycle = int(template_meta.get("recurrence_year_cycle") or 1)
+    except (TypeError, ValueError):
+        year_cycle = 1
+    if year_cycle <= 1:
+        return periods
+    try:
+        year_base = int(template_meta.get("recurrence_year_base"))
+    except (TypeError, ValueError):
+        warnings.append(
+            {
+                "template_id": template_id,
+                "warning": (
+                    f"recurrence_year_cycle={year_cycle} but recurrence_year_base is "
+                    "missing/invalid; falling back to annual"
+                ),
+            }
+        )
+        return periods
+    return [p for p in periods if (p.trigger_date.year - year_base) % year_cycle == 0]
+
+
 def _process_template(
     *,
     template_path: str,
@@ -854,6 +891,7 @@ def _process_template(
                     since = implicit - timedelta(days=1)
                     implicit_baseline_used = True
             periods = compute_pending_periods(anchor, as_of, since, catchup=catchup)
+            periods = _apply_year_cadence(periods, template_meta, template_id, warnings)
             # Bootstrap: no baseline at all (neither last_run nor created)
             # OR baseline present but nothing fired in scope -> not_due.
             if not periods and (

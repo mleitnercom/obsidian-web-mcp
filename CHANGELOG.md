@@ -5,6 +5,11 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.18] - 2026-08-02
+
+### Added
+- **Multi-year cadence for absolute recurring templates.** Two optional template fields let an absolute anchor fire less often than yearly: `recurrence_year_cycle` (run every N years, default `1` = yearly) and `recurrence_year_base` (a reference year the cadence lands on). A year materializes only when `(year - recurrence_year_base) % recurrence_year_cycle == 0`; off years yield no instance. `recurrence_year_cycle` > 1 without a valid `recurrence_year_base` warns and falls back to yearly rather than guess the phase. Period keys stay year-stamped, so idempotency is unchanged. Purely additive — every existing template (which omits the fields) keeps its yearly behaviour. Relative-mode logic is untouched.
+
 ## [v0.8.17] - 2026-07-31
 
 ### Added
