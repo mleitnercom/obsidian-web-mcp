@@ -8,7 +8,7 @@ Production-hardened fork of [`jimprosser/obsidian-web-mcp`](https://github.com/j
 
 ### Why this fork
 
-This fork turns the upstream "MCP over HTTP" server into a vault-aware workflow substrate. It keeps the filesystem as the source of truth, adds production guardrails for Obsidian Sync, and exposes higher-level workflows for tasks, daily notes, templates, Dataview, Canvas, audit, and binary uploads.
+This fork turns the upstream "MCP over HTTP" server into a vault-aware workflow substrate. It keeps the filesystem as the source of truth, adds production guardrails for Obsidian Sync, and exposes higher-level workflows for tasks, daily notes, templates, Canvas, audit, and binary uploads.
 
 ### What's different from upstream
 
@@ -24,7 +24,7 @@ This fork turns the upstream "MCP over HTTP" server into a vault-aware workflow 
 - **Daily Notes tools.** `vault_daily_note_path`, `vault_daily_note_read`, and `vault_daily_note_append`.
 - **Recurring task materialization.** `recurring_materialize` turns `recurring-template` notes into concrete instances on a schedule (absolute anchors like `month_end`, `quarter_end_plus_Nd`, `fixed-MM-DD`, `T-N-before-MM-DD`; relative `Nd` / `Nm` intervals). Strictly idempotent; optional in-process scheduler and `vault-recurring` CLI for systemd timers. See [docs/recurring.md](docs/recurring.md).
 - **Audit JSON Lines.** Mutation audit with hashed token id, client id, operation, target path, sizes, checksums, and optional read audit.
-- **Optional Plugin Bridge.** Templater-style simple rendering and Dataview TABLE DQL via Obsidian Local REST API.
+- **Optional Plugin Bridge.** Templater-style simple rendering via Obsidian Local REST API.
 - **Canvas tools.** Read `.canvas` JSON and append nodes or edges with validation and write verification.
 - **Direct binary upload.** `vault_request_upload_url` plus signed single-use `POST /upload/{id}` for real agent/local files.
 - **PDF extraction and OCR sidecars.** `vault_read` extracts PDF text and can cache external OCR output as `*.pdf.ocr.txt`.
@@ -157,7 +157,6 @@ The filesystem path is the primary path. The Plugin Bridge is additive and optio
 | `vault_template_list` | List markdown templates |
 | `vault_template_render` | Render a template with simple substitution |
 | `vault_template_apply` | Render and write a new note |
-| `vault_dataview_query` | Run Dataview TABLE DQL through Local REST API |
 | `vault_search` | Full-text search with context; includes OCR sidecars by default |
 | `vault_search_frontmatter` | Frontmatter search with comparison/list/AND filters |
 | `vault_semantic_search` | Optional hybrid semantic and keyword search |
@@ -183,8 +182,6 @@ VAULT_TEMPLATER_FOLDER=Templates
 Constraints are deliberate:
 
 - Templater tools use server-side simple substitution, not full Templater execution.
-- `vault_dataview_query` supports DQL TABLE queries only.
-- DataviewJS is not exposed.
 - `TABLE WITHOUT ID` is not supported by Local REST API.
 
 See [docs/plugin-bridge.md](docs/plugin-bridge.md).

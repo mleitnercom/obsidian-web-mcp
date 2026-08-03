@@ -50,7 +50,12 @@ def _iter_vault_files(path_prefix: str = "", pattern: str = "*") -> tuple[Path, 
 def _load_posts(path_prefix: str = "") -> tuple[list[dict], dict[str, list[str]], dict[str, str]]:
     vault_root = config.VAULT_PATH.resolve()
     _, files = _iter_vault_files(path_prefix, "*.md")
-    _, vault_files = _iter_vault_files(path_prefix, "*")
+    # The link index must span the WHOLE vault, not just path_prefix. The prefix scopes
+    # which files are *checked*; it must not scope which files are *resolvable*. Before
+    # v0.8.21 both used the prefix, so a perfectly valid link from 15_Tasks/ to
+    # 70_Privat/ was reported as missing_target -- the narrower the prefix, the more
+    # false positives, which made the parameter actively misleading.
+    _, vault_files = _iter_vault_files("", "*")
     posts: list[dict] = []
     basename_index: dict[str, list[str]] = defaultdict(list)
     path_index: dict[str, str] = {}

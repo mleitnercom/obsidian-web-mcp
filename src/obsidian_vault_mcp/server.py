@@ -577,7 +577,6 @@ from .tools.daily import (
     vault_daily_note_read as _vault_daily_note_read,
 )
 from .tools.templates import (
-    vault_dataview_query as _vault_dataview_query,
     vault_template_apply as _vault_template_apply,
     vault_template_list as _vault_template_list,
     vault_template_render as _vault_template_render,
@@ -616,7 +615,6 @@ from .models import (
     VaultBatchReadInput,
     VaultBatchFrontmatterUpdateInput,
     VaultDailyNoteAppendInput,
-    VaultDataviewQueryInput,
     VaultSearchInput,
     VaultSearchFrontmatterInput,
     VaultSemanticSearchInput,
@@ -1269,38 +1267,9 @@ def vault_template_apply(
     )
 
 
-@mcp.tool(
-    name="vault_dataview_query",
-    description=(
-        "Run a Dataview DQL TABLE query through Obsidian Local REST API and return structured JSON "
-        "with type=table, columns, rows, and duration_ms. query_type is strictly enum=['dql']; "
-        "script queries are intentionally not exposed."
-    ),
-    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
-)
-def vault_dataview_query(
-    query: str,
-    query_type: Annotated[
-        str,
-        Field(
-            description="Allowed values: dql.",
-            json_schema_extra={"enum": ["dql"]},
-        ),
-    ] = "dql",
-    timeout_seconds: int | None = None,
-) -> str:
-    """Run a Dataview DQL TABLE query through Local REST API."""
-    inp = VaultDataviewQueryInput(query=query, query_type=query_type, timeout_seconds=timeout_seconds)
-    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
-    if limited is not None:
-        return limited
-    return _run_logged_tool(
-        "vault_dataview_query",
-        lambda: _vault_dataview_query(inp.query, inp.query_type, inp.timeout_seconds),
-        query=inp.query,
-        query_type=inp.query_type,
-        timeout_seconds=inp.timeout_seconds,
-    )
+# vault_dataview_query was removed in v0.8.21 -- Obsidian Local REST API dropped its
+# Dataview dependency in 4.0, so the DQL content type no longer exists. See
+# tools/templates.py for the full reasoning.
 
 
 @mcp.tool(

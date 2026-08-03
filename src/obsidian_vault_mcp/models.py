@@ -297,29 +297,6 @@ class VaultTemplateApplyInput(BaseModel):
     )
 
 
-class VaultDataviewQueryInput(BaseModel):
-    """Run a Dataview DQL TABLE query through Obsidian Local REST API."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    query: str = Field(
-        ...,
-        description="Dataview DQL TABLE query. TABLE WITHOUT ID is not supported.",
-        min_length=1,
-        max_length=10_000,
-    )
-    query_type: Literal["dql"] = Field(
-        default="dql",
-        description="Allowed value: dql.",
-    )
-    timeout_seconds: int | None = Field(
-        default=None,
-        ge=1,
-        le=120,
-        description="Optional per-query timeout in seconds. Defaults to VAULT_DATAVIEW_TIMEOUT.",
-    )
-
-
 class VaultAnalyticsSummaryInput(BaseModel):
     """Build a compact analytics summary for a vault path."""
 

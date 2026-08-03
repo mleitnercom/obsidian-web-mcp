@@ -98,7 +98,6 @@ All configuration is read from environment variables at process startup.
 | `VAULT_OBSIDIAN_REST_VERIFY_TLS` | `false` | Verify Local REST TLS certificates |
 | `VAULT_OBSIDIAN_REST_TIMEOUT` | `15` | Local REST timeout seconds |
 | `VAULT_TEMPLATER_FOLDER` | empty | Template folder inside vault |
-| `VAULT_DATAVIEW_TIMEOUT` | `15` | Dataview query timeout seconds |
 
 ## Semantic Search
 

@@ -55,26 +55,23 @@ This server therefore implements:
 
 Templates containing `<%`, `<%-`, `<%*`, `<%~`, or `<%+` are rejected with `template_render_unavailable`.
 
-## Dataview
+## Dataview (removed in v0.8.21)
 
-`vault_dataview_query` uses Local REST API `POST /search/` and supports DQL TABLE queries only.
+`vault_dataview_query` ran DQL through Local REST API `POST /search/` using the
+`application/vnd.olrapi.dataview.dql+txt` content type. **The tool no longer exists.**
 
-Not supported:
+Obsidian Local REST API 4.0 removed its Dataview dependency, and with it that content
+type. Since then the endpoint answers `HTTP 400 / errorCode 40012` ("Unknown or invalid
+Content-Type") for every DQL request. There is no successor content type: `/search/`
+now speaks JsonLogic, which filters notes but returns whole `NoteJson` objects instead
+of projected columns -- so it cannot serve the reason DQL existed here.
 
-- DataviewJS
-- `TABLE WITHOUT ID`
-- Non-table result types
+Pinning the plugin to a pre-4.0 release was rejected: the fix for the path-traversal
+advisory GHSA-62gx-5q78-wrvx only landed in 4.1.3, so downgrading would trade a working
+convenience feature for an unpatched vulnerability.
 
-The response is normalized to:
-
-```json
-{
-  "type": "table",
-  "columns": ["filename", "..."],
-  "rows": [],
-  "duration_ms": 12
-}
-```
+Field projection belongs in this server anyway -- it reads the vault straight from disk
+and maintains its own frontmatter index, so no plugin round-trip is required.
 
 ## Error Codes
 
@@ -87,5 +84,3 @@ Common bridge errors:
 - `template_folder_missing`
 - `template_not_found`
 - `template_render_unavailable`
-- `dataview_unavailable`
-- `dataview_query_failed`

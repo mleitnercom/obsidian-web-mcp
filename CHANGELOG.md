@@ -5,6 +5,21 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.21] - 2026-08-03
+
+### Removed
+- **`vault_dataview_query` is gone.** It ran Dataview DQL through Obsidian Local REST API using the `application/vnd.olrapi.dataview.dql+txt` content type. Local REST API **4.0 removed its Dataview dependency**, and with it that content type -- every DQL request has since answered `HTTP 400 / errorCode 40012` ("Unknown or invalid Content-Type"). Measured against the installed plugin, not inferred: `jsonlogic+json` returns `40015` (content type known, body rejected) while the DQL type returns `40012` (content type unknown), the string `vnd.olrapi.dataview.dql+txt` no longer appears anywhere in the plugin bundle, and its OpenAPI spec lists only JsonLogic for `POST /search/`.
+
+  There is no successor: JsonLogic filters notes but returns whole `NoteJson` objects rather than projected columns, which is precisely what the tool existed to avoid. Pinning the plugin to a pre-4.0 release was rejected because the path-traversal fix (advisory `GHSA-62gx-5q78-wrvx`) only landed in 4.1.3 -- downgrading would trade a convenience feature for an unpatched vulnerability. Field projection belongs in this server, which reads the vault from disk and keeps its own frontmatter index.
+
+  Removed with it: `VaultDataviewQueryInput`, `VAULT_DATAVIEW_TIMEOUT`, the `dataview_unavailable` / `dataview_query_failed` error codes and the four mock-based tests. `obsidian_rest.py` stays -- `/health` still reports Local REST API reachability, and the Templater bridge is unaffected.
+
+### Fixed
+- **`path_prefix` no longer produces phantom broken links in analytics.** `_load_posts` built the wikilink index from `path_prefix` instead of the whole vault, so `path_prefix` silently scoped which files were *resolvable* rather than only which were *checked*. A perfectly valid link from `15_Tasks/` to `70_Privat/` was reported as `missing_target` -- the narrower the prefix, the more false positives, which made the parameter actively misleading rather than merely limited. Against a real vault this inflated one scoped run to over 3.000 phantom findings. Checking scope is unchanged; only resolution now spans the full vault. Covered by the new `tests/test_analytics.py`, which also pins that genuinely dangling links are still reported and that the prefix still limits which files get checked.
+
+### Note on test coverage
+- Neither gap had a test. The Dataview path was covered only by mocks that asserted the server sent the content type it always sent -- they stayed green while the feature was dead for eight weeks, because nothing exercised the real endpoint. Analytics had no test file at all (only a stale `.pyc` from a deleted one). The lesson kept: a mock that asserts your own outgoing request proves nothing about the other side of the boundary.
+
 ## [v0.8.20] - 2026-08-02
 
 ### Security

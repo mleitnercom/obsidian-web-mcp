@@ -136,68 +136,6 @@ def test_template_apply_rejects_target_outside_policy(vault_dir, monkeypatch):
     assert "VAULT_INCLUDED_ROOTS" in result["error"]
 
 
-def test_dataview_query_success_maps_columns_rows_and_duration(monkeypatch):
-    def fake_request(path, *, method, body, content_type, timeout):
-        assert path == "/search/"
-        assert method == "POST"
-        assert body == 'TABLE file.mtime, status FROM "" LIMIT 3'
-        assert content_type == templates.DATAVIEW_DQL_CONTENT_TYPE
-        return 200, json.dumps(
-            [
-                {"filename": "a.md", "result": {"mtime": "2026-05-01", "status": "open"}},
-                {"filename": "b.md", "result": {"mtime": "2026-05-02", "status": "done"}},
-                {"filename": "c.md", "result": {"mtime": "2026-05-03", "status": "next"}},
-            ]
-        ).encode("utf-8")
-
-    monkeypatch.setattr(templates, "obsidian_rest_request", fake_request)
-
-    result = json.loads(templates.vault_dataview_query('TABLE file.mtime, status FROM "" LIMIT 3'))
-
-    assert result["type"] == "table"
-    assert result["columns"] == ["filename", "mtime", "status"]
-    assert [row["filename"] for row in result["rows"]] == ["a.md", "b.md", "c.md"]
-    assert result["duration_ms"] >= 0
-
-
-def test_dataview_query_empty_url_is_capability_unavailable(monkeypatch):
-    def fake_request(*args, **kwargs):
-        raise ObsidianRestError(
-            "capability_unavailable",
-            "VAULT_OBSIDIAN_REST_URL is not configured; Obsidian Local REST API features are disabled.",
-        )
-
-    monkeypatch.setattr(templates, "obsidian_rest_request", fake_request)
-
-    result = json.loads(templates.vault_dataview_query('TABLE file.mtime FROM "" LIMIT 1'))
-
-    assert result["error_code"] == "capability_unavailable"
-
-
-def test_dataview_query_wrong_auth_is_graceful(monkeypatch):
-    def fake_request(*args, **kwargs):
-        raise ObsidianRestError("rest_auth_failed", "Obsidian Local REST API rejected the API key.", 401)
-
-    monkeypatch.setattr(templates, "obsidian_rest_request", fake_request)
-
-    result = json.loads(templates.vault_dataview_query('TABLE file.mtime FROM "" LIMIT 1'))
-
-    assert result["error_code"] == "rest_auth_failed"
-    assert "API key" in result["error"]
-
-
-def test_dataview_query_table_without_id_has_clear_message(monkeypatch):
-    def fake_request(*args, **kwargs):
-        raise ObsidianRestError("rest_bad_request", "TABLE WITHOUT ID queries are not supported.", 400)
-
-    monkeypatch.setattr(templates, "obsidian_rest_request", fake_request)
-
-    result = json.loads(templates.vault_dataview_query('TABLE WITHOUT ID status FROM ""'))
-
-    assert result["error_code"] == "dataview_query_failed"
-    assert result["error"] == "TABLE WITHOUT ID is not supported by Local REST API."
-
-
 def test_rest_client_maps_http_401_to_rest_auth_failed(monkeypatch):
     class FakeHttpError(urllib.error.HTTPError):
         def read(self):
@@ -266,15 +204,10 @@ def test_p2_tool_schemas_are_discoverable_and_strict():
         "vault_template_list",
         "vault_template_render",
         "vault_template_apply",
-        "vault_dataview_query",
     ]
 
     for tool_name in tool_names:
         assert server.mcp._tool_manager.get_tool(tool_name) is not None
-
-    dataview_schema = server.mcp._tool_manager.get_tool("vault_dataview_query").parameters
-    assert dataview_schema["properties"]["query_type"]["enum"] == ["dql"]
-    assert "js" not in json.dumps(dataview_schema).lower()
 
     render_tool = server.mcp._tool_manager.get_tool("vault_template_render")
     apply_tool = server.mcp._tool_manager.get_tool("vault_template_apply")

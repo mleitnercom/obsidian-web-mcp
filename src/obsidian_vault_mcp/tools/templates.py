@@ -1,21 +1,28 @@
-"""Template and Dataview tools backed by vault files and Obsidian Local REST API."""
+"""Template tools backed by vault files.
+
+Dataview (``vault_dataview_query``) was removed in v0.8.21. It ran DQL through
+Obsidian Local REST API, which dropped the Dataview dependency in its 4.0 release --
+the ``application/vnd.olrapi.dataview.dql+txt`` content type no longer exists, so the
+tool had been failing with HTTP 400 / errorCode 40012 since the plugin was updated.
+There is no replacement content type; the endpoint speaks JsonLogic now, which returns
+whole notes rather than projected columns. Field projection belongs in this server,
+which already reads the vault straight from disk. See CHANGELOG v0.8.21.
+"""
 
 import json
 import logging
 import re
-import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .. import config
-from ..obsidian_rest import ObsidianRestError, obsidian_rest_request
+from ..obsidian_rest import ObsidianRestError
 from ..vault import read_file, resolve_vault_path, vault_json_dumps
 from .write import vault_write
 
 logger = logging.getLogger(__name__)
 
-DATAVIEW_DQL_CONTENT_TYPE = "application/vnd.olrapi.dataview.dql+txt"
 TEMPLATER_SYNTAX_MARKERS = ("<%", "<%-", "<%*", "<%~", "<%+")
 TOKEN_PATTERN = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*}}")
 
@@ -241,64 +248,3 @@ def vault_template_apply(
         return _error("template_render_failed", str(exc), path=target_path, template_path=template_path)
 
 
-def _dataview_error(exc: ObsidianRestError) -> str:
-    message = exc.message.strip()
-    combined = f"{message}\n{exc.body}".strip()
-    if "TABLE WITHOUT ID" in combined:
-        return _error("dataview_query_failed", "TABLE WITHOUT ID is not supported by Local REST API.")
-    if "Dataview" in combined and ("not installed" in combined or "undefined" in combined):
-        return _error("dataview_unavailable", "Dataview plugin is unavailable through Obsidian Local REST API.")
-    if exc.error_code == "rest_bad_request":
-        return _error("dataview_query_failed", combined or "Dataview query failed.")
-    return _error(exc.error_code, message or "Obsidian Local REST API request failed.")
-
-
-def vault_dataview_query(
-    query: str,
-    query_type: str = "dql",
-    timeout_seconds: int | float | None = None,
-) -> str:
-    """Run a Dataview TABLE DQL query through Obsidian Local REST API."""
-    if query_type != "dql":
-        return _error("dataview_query_failed", "Only query_type='dql' is supported.")
-    started = time.monotonic()
-    try:
-        timeout = timeout_seconds if timeout_seconds is not None else config.VAULT_DATAVIEW_TIMEOUT
-        _status, payload = obsidian_rest_request(
-            "/search/",
-            method="POST",
-            body=query,
-            content_type=DATAVIEW_DQL_CONTENT_TYPE,
-            timeout=timeout,
-        )
-        raw_rows = json.loads(payload.decode("utf-8"))
-        rows: list[dict[str, Any]] = []
-        columns: list[str] = ["filename"]
-        seen_columns = {"filename"}
-        for item in raw_rows:
-            if not isinstance(item, dict):
-                continue
-            row: dict[str, Any] = {"filename": item.get("filename", "")}
-            result = item.get("result", {})
-            if isinstance(result, dict):
-                for key, value in result.items():
-                    row[key] = value
-                    if key not in seen_columns:
-                        seen_columns.add(key)
-                        columns.append(key)
-            rows.append(row)
-        return vault_json_dumps(
-            {
-                "type": "table",
-                "columns": columns,
-                "rows": rows,
-                "duration_ms": round((time.monotonic() - started) * 1000, 3),
-            }
-        )
-    except ObsidianRestError as exc:
-        return _dataview_error(exc)
-    except json.JSONDecodeError as exc:
-        return _error("dataview_query_failed", f"Dataview response was not valid JSON: {exc}")
-    except Exception as exc:
-        logger.error("vault_dataview_query error: %s", exc)
-        return _error("dataview_query_failed", str(exc))
