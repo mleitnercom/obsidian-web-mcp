@@ -1416,3 +1416,74 @@ def test_search_and_list_ignore_symlinked_files(vault_dir):
 
     searched = json.loads(vault_search("secret text"))
     assert all(item["path"] != "linked-note.md" for item in searched["results"])
+
+
+# --- vault_search_frontmatter: fields projection (v0.8.22) -------------------
+
+def _restart_index():
+    from obsidian_vault_mcp.server import frontmatter_index
+
+    frontmatter_index.stop()
+    frontmatter_index._index.clear()
+    frontmatter_index.start()
+
+
+def test_frontmatter_fields_projects_to_requested_keys(vault_dir):
+    """Only the named keys come back, so a briefing pass stops paying for full frontmatter."""
+    _restart_index()
+    result = json.loads(vault_search_frontmatter(
+        field="status", value="active", match_type="exact", fields=["status", "type"],
+    ))
+
+    assert result["total_matches"] >= 1
+    for item in result["results"]:
+        assert set(item["frontmatter"]).issubset({"status", "type"})
+    hit = next(i for i in result["results"] if i["path"] == "test-note.md")
+    assert hit["frontmatter"] == {"status": "active", "type": "note"}
+
+
+def test_frontmatter_fields_does_not_narrow_matching(vault_dir):
+    """Projection happens after matching: filtering on a field you don't request still works."""
+    _restart_index()
+    full = json.loads(vault_search_frontmatter(field="status", value="active", match_type="exact"))
+    projected = json.loads(vault_search_frontmatter(
+        field="status", value="active", match_type="exact", fields=["title"],
+    ))
+
+    assert projected["total_matches"] == full["total_matches"]
+    assert {i["path"] for i in projected["results"]} == {i["path"] for i in full["results"]}
+
+
+def test_frontmatter_fields_omits_missing_keys_instead_of_null(vault_dir):
+    """A key a file does not carry is absent -- 'not set' stays distinguishable from 'empty'."""
+    _restart_index()
+    result = json.loads(vault_search_frontmatter(
+        field="status", value="active", match_type="exact",
+        fields=["status", "definitely-not-a-real-key"],
+    ))
+
+    for item in result["results"]:
+        assert "definitely-not-a-real-key" not in item["frontmatter"]
+
+
+def test_frontmatter_fields_empty_list_returns_everything(vault_dir):
+    """An empty list means 'no projection', never 'drop all' -- that would mimic data loss."""
+    _restart_index()
+    full = json.loads(vault_search_frontmatter(field="status", value="active", match_type="exact"))
+    empty = json.loads(vault_search_frontmatter(
+        field="status", value="active", match_type="exact", fields=[],
+    ))
+
+    assert empty["results"] == full["results"]
+
+
+def test_frontmatter_fields_keeps_title_and_path(vault_dir):
+    """title/path live outside the frontmatter block and must survive any projection."""
+    _restart_index()
+    result = json.loads(vault_search_frontmatter(
+        field="status", value="active", match_type="exact", fields=["status"],
+    ))
+
+    for item in result["results"]:
+        assert item["path"]
+        assert item["title"]

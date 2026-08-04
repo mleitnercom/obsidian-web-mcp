@@ -274,9 +274,22 @@ def vault_search_frontmatter(
     path_prefix: str | None = None,
     max_results: int = 20,
     offset: int = 0,
+    fields: list[str] | None = None,
 ) -> str:
-    """Search vault files by frontmatter field values using the in-memory index."""
+    """Search vault files by frontmatter field values using the in-memory index.
+
+    ``fields`` projects the returned frontmatter down to the named keys. A task file
+    here carries 700-900 characters of frontmatter; a briefing pass that only needs
+    status/due/defer pays for all of it on every hit. Filtering stays unaffected --
+    the projection happens after matching, so a filter may use a field the caller
+    does not ask back. Keys missing on a file are simply absent rather than null, so
+    the caller can tell "not set" from "set to nothing". ``None`` returns everything
+    (unchanged default); an empty list is treated as no projection, not as "drop all",
+    because silently returning empty frontmatter would look like data loss.
+    """
     from ..server import frontmatter_index
+
+    projection = [str(key) for key in fields if str(key)] if fields else None
 
     try:
         results = frontmatter_index.search_by_field(
@@ -296,6 +309,8 @@ def vault_search_frontmatter(
             path = item["path"]
             fm = item["frontmatter"]
             title = fm.get("title", Path(path).stem)
+            if projection is not None:
+                fm = {key: fm[key] for key in projection if key in fm}
             formatted_item = {
                 "path": path,
                 "frontmatter": fm,

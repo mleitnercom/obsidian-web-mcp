@@ -5,6 +5,19 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.22] - 2026-08-04
+
+### Added
+- **`fields` projection for `vault_search_frontmatter`.** Returns only the named frontmatter keys per hit instead of the whole block. A task file in the reference vault carries 700-900 characters of frontmatter; a briefing pass that needs `status`, `due` and `defer` previously paid for all of it on every one of ~100 hits. This is the replacement for the server-side projection that `vault_dataview_query` provided until Local REST API dropped Dataview (removed in v0.8.21) -- but it lands where the reads actually happen: `vault_search_frontmatter` was called 635 times in the 30 days before the change, `vault_dataview_query` 9 times.
+
+  Deliberate semantics, each pinned by a test:
+  - **Projection never narrows matching.** It is applied after the index query, so a filter may use a field the caller does not request back.
+  - **Missing keys are omitted, not returned as `null`** -- "not set" stays distinguishable from "set to nothing".
+  - **An empty list means no projection, not "drop all"** -- silently returning empty frontmatter would be indistinguishable from data loss.
+  - `path` and `title` live outside the frontmatter block and always survive.
+
+  Purely additive: omitting `fields` returns the full frontmatter exactly as before.
+
 ## [v0.8.21] - 2026-08-03
 
 ### Removed

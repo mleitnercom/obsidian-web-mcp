@@ -14,7 +14,7 @@ This fork turns the upstream "MCP over HTTP" server into a vault-aware workflow 
 
 - **Atomic writes with read-back verification.** Text writes fail loudly if the bytes read back do not match the intended content.
 - **Synchronous frontmatter index refresh.** Edits, moves, deletes, and renames refresh the index immediately instead of waiting on eventually-consistent watcher state.
-- **Extended `vault_search_frontmatter`.** Supports comparison operators, list-membership operators, and multi-field AND filters.
+- **Extended `vault_search_frontmatter`.** Supports comparison operators, list-membership operators, multi-field AND filters, and a `fields` projection that returns only the frontmatter keys you ask for.
 - **Restart-stable OAuth state.** Dynamic client registrations can persist across service restarts.
 - **Vault scope policy.** `VAULT_INCLUDED_ROOTS` and `VAULT_EXCLUDED_PATH_PREFIXES` enforce a no-leak boundary across reads, writes, search, analytics, frontmatter indexing, and semantic indexing.
 - **Format-stable frontmatter updates.** `ruamel.yaml` preserves quote style, key order, comments, and flow-style lists where possible.
@@ -158,7 +158,7 @@ The filesystem path is the primary path. The Plugin Bridge is additive and optio
 | `vault_template_render` | Render a template with simple substitution |
 | `vault_template_apply` | Render and write a new note |
 | `vault_search` | Full-text search with context; includes OCR sidecars by default |
-| `vault_search_frontmatter` | Frontmatter search with comparison/list/AND filters |
+| `vault_search_frontmatter` | Frontmatter search with comparison/list/AND filters and `fields` projection |
 | `vault_semantic_search` | Optional hybrid semantic and keyword search |
 | `vault_list` | List directory contents; OCR sidecars hidden by default |
 | `vault_tree` | Compact nested directory tree |

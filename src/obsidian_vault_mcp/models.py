@@ -606,6 +606,16 @@ class VaultSearchFrontmatterInput(BaseModel):
         ge=0,
         description="Number of matching files to skip before returning results",
     )
+    fields: list[str] | None = Field(
+        default=None,
+        max_length=50,
+        description=(
+            "Optional projection: return only these frontmatter keys per hit. "
+            "Filtering is unaffected -- a filter may use a field you do not request back. "
+            "Keys absent on a file are omitted rather than returned as null. "
+            "Omit for the full frontmatter."
+        ),
+    )
 
 
 class VaultSemanticSearchInput(BaseModel):

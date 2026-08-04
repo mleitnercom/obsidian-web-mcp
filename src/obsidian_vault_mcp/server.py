@@ -1371,6 +1371,17 @@ def vault_search_frontmatter(
         int,
         Field(ge=0, description="Number of matching files to skip before returning results."),
     ] = 0,
+    fields: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Optional projection: return only these frontmatter keys per hit. "
+                "Filtering is unaffected -- a filter may use a field you do not request back. "
+                "Keys absent on a file are omitted rather than returned as null. "
+                "Omit for the full frontmatter."
+            )
+        ),
+    ] = None,
 ) -> str:
     """Search by frontmatter fields."""
     inp = VaultSearchFrontmatterInput(
@@ -1381,6 +1392,7 @@ def vault_search_frontmatter(
         path_prefix=path_prefix,
         max_results=max_results,
         offset=offset,
+        fields=fields,
     )
     limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
     if limited is not None:
@@ -1395,6 +1407,7 @@ def vault_search_frontmatter(
             inp.path_prefix,
             inp.max_results,
             inp.offset,
+            inp.fields,
         ),
         field=inp.field,
         value=inp.value,
