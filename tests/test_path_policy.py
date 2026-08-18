@@ -109,3 +109,44 @@ def test_frontmatter_index_ignores_disallowed_and_excluded_paths(policy_vault):
         assert "private/secret.md" not in active_paths
     finally:
         index.stop()
+
+
+# --- write path vs INCLUDED_ROOTS (Prüfpunkt aus der Website-Vault-Entscheidung) ---
+# Die Zusage "INCLUDED_ROOTS greift über alle Tool-Familien" war für den Lesepfad
+# getestet und für EXCLUDED_PATH_PREFIXES auf dem Schreibpfad -- nicht aber für den
+# Schreibpfad gegen die Included Roots selbst. Genau davon hängt ab, ob eine zweite
+# Instanz mit VAULT_INCLUDED_ROOTS=content das Hugo-Bauwerk (hugo.toml, layouts/,
+# themes/) wirklich serverseitig schützt oder nur per Skill-Konvention.
+
+def test_write_outside_included_roots_is_rejected(policy_vault):
+    """A write outside the allowlisted subtrees must fail -- the Website-Vault guarantee."""
+    result = json.loads(vault_write("private/injected.md", "must not land\n"))
+
+    assert "error" in result
+    assert "VAULT_INCLUDED_ROOTS" in result["error"]
+    assert not (policy_vault / "private" / "injected.md").exists()
+
+
+def test_write_to_vault_root_file_is_rejected(policy_vault):
+    """The hugo.toml case: a file at the vault root sits outside every included root."""
+    result = json.loads(vault_write("hugo.toml", "baseURL = 'https://evil'\n"))
+
+    assert "error" in result
+    assert "VAULT_INCLUDED_ROOTS" in result["error"]
+    assert not (policy_vault / "hugo.toml").exists()
+
+
+def test_write_traversal_out_of_included_root_is_rejected(policy_vault):
+    """Traversal from inside an allowed root must not reach a sibling subtree."""
+    result = json.loads(vault_write("notes/../private/sneak.md", "must not land\n"))
+
+    assert "error" in result
+    assert not (policy_vault / "private" / "sneak.md").exists()
+
+
+def test_write_inside_included_root_still_works(policy_vault):
+    """Guard against over-blocking: the allowed case must keep working."""
+    result = json.loads(vault_write("notes/legit.md", "fine\n"))
+
+    assert "error" not in result
+    assert (policy_vault / "notes" / "legit.md").read_text(encoding="utf-8") == "fine\n"
