@@ -5,6 +5,17 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.8.23] - 2026-08-29
+
+### Fixed
+- **`vault_search` honours `context_lines` on the ripgrep path.** The ripgrep backend passed `--context=N` to `rg` and then threw the answer away: the parser read `match` events and dropped every `context` event, so `match_context` held the bare matching line. The Python fallback meanwhile returned the full `lines[i - N : i + N + 1]` block. Same tool, same arguments, two different answers depending on whether `rg` happened to be installed on the host -- invisible in review, because each backend looks correct on its own.
+
+  Found in production, not by reading code. Ripgrep was installed on the reference server on 2026-08-29 to fix a latency problem: without it a full-vault query falls back to a Python scan over 5,499 files and takes **8.7 s**, long enough to block the server's event loop so that `/health` stops answering and the uptime monitor reports the server down. With `rg` the same query takes **0.207 s**, a factor of 42. In the same moment, every search result silently lost its surrounding lines.
+
+  The parser now collects the lines ripgrep emits per file first and cuts each match's window out of them afterwards. Assembling while streaming is not possible: a match's *trailing* context arrives after its `match` event. Absent neighbours at the start or end of a file are skipped rather than padded, which is what `_search_python` does. Binary hits carry `{"bytes": ...}` and no line number and are now skipped instead of raising `KeyError`. The unused `current_match` local, leftover of a context assembly that was never built, is gone.
+
+  Pinned by `tests/test_search_context.py`, including a parity test that runs the real ripgrep and the real Python scan over the same vault and compares the full payload; it skips where `rg` is absent.
+
 ## [v0.8.22] - 2026-08-04
 
 ### Added

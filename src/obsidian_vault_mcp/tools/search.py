@@ -50,8 +50,18 @@ def _search_ripgrep(
     if result.returncode not in (0, 1):
         return None
 
-    matches = []
-    current_match = None
+    # ripgrep streams one JSON event per line: "begin", then "context" and "match"
+    # events, then "end". A match's TRAILING context arrives after the match event,
+    # so the context block cannot be assembled while streaming. Collect the emitted
+    # lines per file first, then cut each match's window out of them.
+    #
+    # Without this, --context was handed to ripgrep and its answer thrown away: every
+    # context event was dropped and match_context held the bare matching line, while
+    # _search_python honoured context_lines. Same tool, same arguments, different
+    # answers depending on whether rg happened to be installed on the box. Found on
+    # 2026-08-29, when installing ripgrep silently shortened every search result.
+    emitted_lines: dict[str, dict[int, str]] = {}
+    hits: list[tuple[str, int]] = []
 
     for line in result.stdout.splitlines():
         try:
@@ -59,28 +69,53 @@ def _search_ripgrep(
         except json.JSONDecodeError:
             continue
 
-        if data.get("type") == "match":
-            match_data = data["data"]
-            file_path = match_data["path"]["text"]
-            try:
-                resolved_file = Path(file_path).resolve()
-                if not is_vault_path_allowed(resolved_file):
-                    continue
-                rel_path = resolved_file.relative_to(config.VAULT_PATH.resolve()).as_posix()
-            except ValueError:
+        event_type = data.get("type")
+        if event_type not in ("match", "context"):
+            continue
+
+        event = data["data"]
+        line_number = event.get("line_number")
+        # Binary hits carry {"bytes": ...} instead of {"text": ...} and no line
+        # number: nothing to show, and nothing to anchor a window to.
+        line_text = event.get("lines", {}).get("text")
+        if line_number is None or line_text is None:
+            continue
+
+        file_path = event["path"]["text"]
+        emitted_lines.setdefault(file_path, {})[line_number] = line_text.rstrip("\n")
+
+        if event_type == "match":
+            hits.append((file_path, line_number))
+
+    matches = []
+
+    for file_path, line_number in hits:
+        try:
+            resolved_file = Path(file_path).resolve()
+            if not is_vault_path_allowed(resolved_file):
                 continue
+            rel_path = resolved_file.relative_to(config.VAULT_PATH.resolve()).as_posix()
+        except ValueError:
+            continue
 
-            line_number = match_data["line_number"]
-            line_text = match_data["lines"]["text"].rstrip("\n")
+        # Mirrors _search_python's lines[i - context_lines : i + context_lines + 1]:
+        # one contiguous block around the hit. Absent neighbours are skipped rather
+        # than padded -- at the start or end of a file there is simply less to show.
+        file_lines = emitted_lines[file_path]
+        window = [
+            file_lines[n]
+            for n in range(line_number - context_lines, line_number + context_lines + 1)
+            if n in file_lines
+        ]
 
-            matches.append({
-                "path": rel_path,
-                "line_number": line_number,
-                "match_context": line_text,
-            })
+        matches.append({
+            "path": rel_path,
+            "line_number": line_number,
+            "match_context": "\n".join(window),
+        })
 
-            if len(matches) >= max_results:
-                break
+        if len(matches) >= max_results:
+            break
 
     return matches
 
