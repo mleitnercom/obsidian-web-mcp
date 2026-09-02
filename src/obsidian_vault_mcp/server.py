@@ -557,6 +557,13 @@ from .tools.analytics import (
     vault_analytics_findings as _vault_analytics_findings,
     vault_analytics_summary as _vault_analytics_summary,
 )
+from .tools.download import (
+    parse_range_header,
+    read_range,
+    read_whole,
+    resolve_direct_download,
+    vault_request_download_url as _vault_request_download_url,
+)
 from .tools.write import (
     commit_direct_upload,
     vault_append as _vault_append,
@@ -607,6 +614,7 @@ from .models import (
     VaultImportFileInput,
     VaultPatchInput,
     VaultEditInput,
+    VaultRequestDownloadUrlInput,
     VaultRequestUploadUrlInput,
     VaultStrReplaceInput,
     VaultImportUrlInput,
@@ -845,6 +853,30 @@ def vault_write_binary(
         overwrite=inp.overwrite,
         create_dirs=inp.create_dirs,
         base64_bytes=len(inp.data),
+    )
+
+
+@mcp.tool(
+    name="vault_request_download_url",
+    description=(
+        "Create a short-lived, single-use signed HTTP URL for reading any file from the vault. Use this to get bytes "
+        "out of the vault without passing them through the model context: images and screenshots to look at, xlsx or "
+        "docx to parse, a PDF to forward as a mail attachment. Returns url, filename, mime_type, size and sha256; the "
+        "URL serves exactly one GET."
+    ),
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_request_download_url(path: str, ttl_seconds: int | None = None) -> str:
+    """Create a signed single-use download URL."""
+    inp = VaultRequestDownloadUrlInput(path=path, ttl_seconds=ttl_seconds)
+    limited = _tool_rate_limit_error("read", config.RATE_LIMIT_READ)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_request_download_url",
+        lambda: _vault_request_download_url(inp.path, inp.ttl_seconds),
+        path=inp.path,
+        ttl_seconds=inp.ttl_seconds,
     )
 
 
@@ -1736,6 +1768,71 @@ def build_app():
             return JSONResponse(_health_payload())
         return JSONResponse(_minimal_health_payload())
 
+    async def direct_download(request: Request):
+        """Serve bytes for a signed single-use download URL.
+
+        HEAD and Range requests deliberately do not consume the token: a client that
+        checks the size first, or resumes a partial transfer, must not destroy the
+        transfer it is preparing. Only a full GET burns the URL.
+        """
+        download_id = request.path_params["download_id"]
+        is_head = request.method == "HEAD"
+        range_header = request.headers.get("range", "")
+        wants_range = bool(range_header)
+
+        result, status_code = resolve_direct_download(
+            download_id=download_id,
+            expires=request.query_params.get("expires", ""),
+            signature=request.query_params.get("signature", ""),
+            consume=not (is_head or wants_range),
+        )
+        if status_code != 200:
+            logger.warning("Direct download rejected: %s (%s)", download_id, result.get("error"))
+            return JSONResponse(result, status_code=status_code)
+
+        size = result["size"]
+        headers = {
+            "Content-Disposition": f'attachment; filename="{result["filename"]}"',
+            "X-Content-SHA256": result["sha256"],
+            "Accept-Ranges": "bytes",
+            # These URLs are single-use; a cached copy would be a second read that
+            # never reaches the server and never shows up in the audit log.
+            "Cache-Control": "no-store",
+        }
+
+        if is_head:
+            headers["Content-Length"] = str(size)
+            return Response(status_code=200, media_type=result["mime_type"], headers=headers)
+
+        if wants_range:
+            parsed = parse_range_header(range_header, size)
+            if parsed is None:
+                headers["Content-Range"] = f"bytes */{size}"
+                return JSONResponse(
+                    {"error": "Requested range is not satisfiable", "download_id": download_id},
+                    status_code=416,
+                    headers=headers,
+                )
+            start, end = parsed
+            body = read_range(result["file_path"], start, end)
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+            return Response(
+                body,
+                status_code=206,
+                media_type=result["mime_type"],
+                headers=headers,
+            )
+
+        body = read_whole(result["file_path"])
+        logger.info(
+            "Direct download served: %s path=%r size=%s mime=%r",
+            download_id,
+            result["path"],
+            size,
+            result["mime_type"],
+        )
+        return Response(body, status_code=200, media_type=result["mime_type"], headers=headers)
+
     async def direct_upload(request: Request):
         """Accept bytes for a signed direct upload URL."""
         upload_id = request.path_params["upload_id"]
@@ -1814,6 +1911,7 @@ def build_app():
     app.routes.insert(0, Route("/", mcp_root_probe, methods=["GET", "HEAD"]))
     app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
     app.routes.insert(0, Route("/upload/{upload_id}", direct_upload, methods=["POST"]))
+    app.routes.insert(0, Route("/download/{download_id}", direct_download, methods=["GET", "HEAD"]))
 
     for route in oauth_routes:
         app.routes.insert(0, route)

@@ -189,6 +189,12 @@ IMPORT_FILE_ALLOWED_ROOTS = _env_csv("VAULT_IMPORT_FILE_ALLOWED_ROOTS", [])
 VAULT_UPLOAD_URL_SECRET = os.environ.get("VAULT_UPLOAD_URL_SECRET", "").strip()
 VAULT_UPLOAD_URL_TTL_SECONDS = _env_int("VAULT_UPLOAD_URL_TTL_SECONDS", 15 * 60)
 VAULT_UPLOAD_URL_MAX_TTL_SECONDS = _env_int("VAULT_UPLOAD_URL_MAX_TTL_SECONDS", 60 * 60)
+# Read counterpart to the upload URL. The default TTL is much shorter than the upload's
+# 15 minutes on purpose: an upload URL waits for a human or agent to produce a file,
+# a download URL is handed out to a caller that already wants the bytes now.
+VAULT_DOWNLOAD_URL_SECRET = os.environ.get("VAULT_DOWNLOAD_URL_SECRET", "").strip()
+VAULT_DOWNLOAD_URL_TTL_SECONDS = _env_int("VAULT_DOWNLOAD_URL_TTL_SECONDS", 300)
+VAULT_DOWNLOAD_URL_MAX_TTL_SECONDS = _env_int("VAULT_DOWNLOAD_URL_MAX_TTL_SECONDS", 60 * 60)
 VAULT_DAILY_NOTES_FOLDER = os.environ.get("VAULT_DAILY_NOTES_FOLDER", "").strip().strip("/\\")
 VAULT_DAILY_NOTES_FORMAT = os.environ.get("VAULT_DAILY_NOTES_FORMAT", "%Y-%m-%d").strip() or "%Y-%m-%d"
 VAULT_DAILY_NOTES_TEMPLATE = os.environ.get("VAULT_DAILY_NOTES_TEMPLATE", "")
