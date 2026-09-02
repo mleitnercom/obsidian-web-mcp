@@ -11,7 +11,7 @@ import pytest
 import frontmatter
 from starlette.testclient import TestClient
 
-from .conftest import build_simple_pdf_bytes
+from .conftest import call_registered_tool, build_simple_pdf_bytes
 from obsidian_vault_mcp import config
 import obsidian_vault_mcp.server as server
 import obsidian_vault_mcp.vault as vault_module
@@ -829,14 +829,14 @@ def test_audit_read_operations_are_opt_in(vault_dir, monkeypatch, tmp_path):
     monkeypatch.setattr(config, "VAULT_AUDIT_LOG_INCLUDE_READS", False)
 
     with _authenticated_tool_context():
-        result = json.loads(server.vault_read("test-note.md"))
+        result = json.loads(call_registered_tool(server.vault_read("test-note.md")))
 
     assert "error" not in result
     assert not audit_path.exists()
 
     monkeypatch.setattr(config, "VAULT_AUDIT_LOG_INCLUDE_READS", True)
     with _authenticated_tool_context():
-        result = json.loads(server.vault_read("test-note.md"))
+        result = json.loads(call_registered_tool(server.vault_read("test-note.md")))
 
     assert "error" not in result
     record = _assert_one_audit_record(audit_path, "vault_read", "test-note.md")
@@ -853,7 +853,7 @@ def test_audit_read_operations_record_error_status(vault_dir, monkeypatch, tmp_p
     monkeypatch.setattr(config, "VAULT_AUDIT_LOG_INCLUDE_READS", True)
 
     with _authenticated_tool_context():
-        result = json.loads(server.vault_read("missing.md"))
+        result = json.loads(call_registered_tool(server.vault_read("missing.md")))
 
     assert "error" in result
     record = _assert_one_audit_record(audit_path, "vault_read", "missing.md", status="error")

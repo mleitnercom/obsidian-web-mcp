@@ -86,7 +86,7 @@ All configuration is read from environment variables at process startup.
 | Variable | Default | Description |
 |---|---|---|
 | `VAULT_PDF_OCR_ENABLED` | `false` | Enable external OCR fallback for image-only PDFs |
-| `VAULT_PDF_OCR_CMD` | empty | External command that prints OCR text to stdout |
+| `VAULT_PDF_OCR_CMD` | empty | External command that prints OCR text to stdout; `{path}` is substituted, otherwise the path is appended |
 | `VAULT_PDF_OCR_TIMEOUT` | `120` | OCR timeout seconds |
 | `VAULT_PDF_OCR_LANGUAGES` | `deu+eng` | OCR language hint exposed to the command |
 | `VAULT_PDF_OCR_SIDECAR_ENABLED` | same as `VAULT_PDF_OCR_ENABLED` | Cache OCR output as sidecar text files |

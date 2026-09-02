@@ -5,6 +5,31 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.10.0] - 2026-09-02
+
+### Security
+- **Hardlink escape closed (upstream issue #53).** A hardlink inside the vault pointing at a file outside it is a real directory entry: there is nothing to follow, so path containment cannot see it and the file reads as an ordinary note. Verified present in this fork before the fix -- `vault_read` returned the content of a file outside the vault.
+
+  Now refused in `read_file` *before* the PDF/image dispatch, so a hardlinked scan cannot be handed to the OCR command either; skipped in the Python search backend; skipped when attaching a frontmatter excerpt to a search hit. Fail closed, matching the frontmatter and OAuth paths.
+
+  Legitimate in-vault hardlinks are unsupported as a result. Nothing in this server creates one -- the write tools write files, imports copy, Obsidian Sync does not make links -- and the reference vault contains none.
+
+  Exploiting it requires write access to the vault filesystem, which on a single-user install is the same account that may read everything anyway. It is fixed because a fail-open hole in an otherwise fail-closed policy is worth closing regardless of today's blast radius.
+
+### Fixed
+- **Slow reads no longer stall the server.** The MCP SDK calls a synchronous tool body directly inside the request coroutine (`func_metadata.call_fn_with_arg_validation`: `return fn(**arguments)`), so a slow tool stops the process answering anything. Measured: one three-page scanned PDF ran OCR for 24s and `/health` timed out four times in a row. The 2026-08-28 outage had the same shape, with back-to-back full-vault searches blocking `/health` for ~25s; installing ripgrep made that fast but never made it non-blocking.
+
+  `vault_read`, `vault_batch_read`, `vault_search`, `vault_semantic_search` and the two analytics tools now run in a worker thread. Writes deliberately stay on the event loop: running them there serialises them, and that accidental serialisation is a real safety property for concurrent edits to one file. Context propagates into the worker thread, so the rate-limit principal and request metadata survive the hop -- verified, not assumed, and pinned by a test.
+
+  These six registered tools are coroutines now. Embedders calling them directly must await them; the implementations in `tools/*` remain synchronous.
+
+- **Non-UTF-8 match lines are no longer dropped** (upstream #39). ripgrep sends base64 `bytes` instead of `text` for a line that is not valid UTF-8; the parser skipped the event, so a hit ripgrep had found simply did not appear in the results. Decoded lossily now, keeping its place in the context window.
+
+- **Line counting agrees between the two search backends** (upstream #39). `str.splitlines()` also breaks on NEL, LINE and PARAGRAPH SEPARATOR, vertical tab and form feed, so a note containing any of them made the Python backend report a different `line_number` than ripgrep for the same match -- and the caller cannot tell which backend answered. Both now count on `\n` only, and the Python path reads bytes rather than text to avoid universal-newline translation.
+
+### Note
+The re-read design that upstream #39 builds on -- dropping `--context` and re-reading each matched file -- is deliberately not adopted. Taking context from ripgrep's own events needs no re-read, and therefore has no TOCTOU surface to harden with `openat`/`O_NOFOLLOW`. Only the three findings above were taken from it.
+
 ## [v0.9.0] - 2026-09-02
 
 Closes the read side of the binary asymmetry. Everything could get *into* the vault -- `vault_write_binary`, `vault_import_file`, `vault_import_url`, `vault_request_upload_url` -- and only PDF text could get back out. Three real cases had been blocked by that over three months: an xlsx application register that could not be inspected, a vault PDF that could not be forwarded as a mail attachment, and a webinar note consisting of 25 embedded PNGs plus 60 words of text, which an agent sees as empty.
