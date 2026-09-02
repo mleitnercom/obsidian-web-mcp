@@ -46,6 +46,13 @@ _AUTH_EXEMPT_METHOD_PATHS = {
 
 _AUTH_EXEMPT_PATH_PREFIXES = (
     "/upload/",
+    # Same reasoning as /upload/: the signed URL IS the credential. It is issued by an
+    # authenticated MCP tool call, carries an HMAC over path, size, digest and expiry,
+    # dies within minutes and serves exactly one GET. Requiring a bearer token on top
+    # would defeat the purpose, which is handing a plain URL to something that cannot
+    # speak MCP. Redemption re-validates the vault path policy, so this exempts
+    # authentication, not authorization.
+    "/download/",
 )
 
 

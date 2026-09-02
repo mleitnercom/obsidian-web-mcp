@@ -137,6 +137,19 @@ VAULT_PDF_OCR_TIMEOUT = _env_int("VAULT_PDF_OCR_TIMEOUT", 120)
 VAULT_PDF_OCR_LANGUAGES = os.environ.get("VAULT_PDF_OCR_LANGUAGES", "deu+eng").strip()
 VAULT_PDF_OCR_SIDECAR_ENABLED = _env_bool("VAULT_PDF_OCR_SIDECAR_ENABLED", VAULT_PDF_OCR_ENABLED)
 VAULT_PDF_OCR_SIDECAR_SUFFIX = os.environ.get("VAULT_PDF_OCR_SIDECAR_SUFFIX", ".ocr.txt").strip() or ".ocr.txt"
+# Image OCR reuses the PDF sidecar mechanics but keeps its own switches: screenshots are
+# a different workload from scanned documents (many small files, a lower sane timeout),
+# and one should be enableable without the other. Off by default -- with it off,
+# vault_read rejects images exactly as before.
+VAULT_IMAGE_OCR_ENABLED = _env_bool("VAULT_IMAGE_OCR_ENABLED", False)
+VAULT_IMAGE_OCR_CMD = os.environ.get("VAULT_IMAGE_OCR_CMD", "").strip()
+VAULT_IMAGE_OCR_TIMEOUT = _env_int("VAULT_IMAGE_OCR_TIMEOUT", 60)
+# Defaults to the PDF language set so a box that already OCRs documents does not need a
+# second knob to OCR screenshots in the same languages.
+VAULT_IMAGE_OCR_LANGUAGES = (
+    os.environ.get("VAULT_IMAGE_OCR_LANGUAGES", "").strip() or VAULT_PDF_OCR_LANGUAGES
+)
+VAULT_IMAGE_OCR_SIDECAR_ENABLED = _env_bool("VAULT_IMAGE_OCR_SIDECAR_ENABLED", VAULT_IMAGE_OCR_ENABLED)
 
 # OAuth 2.0 client credentials (for Claude app integration)
 VAULT_OAUTH_CLIENT_ID = os.environ.get("VAULT_OAUTH_CLIENT_ID", "vault-mcp-client")
@@ -189,6 +202,12 @@ IMPORT_FILE_ALLOWED_ROOTS = _env_csv("VAULT_IMPORT_FILE_ALLOWED_ROOTS", [])
 VAULT_UPLOAD_URL_SECRET = os.environ.get("VAULT_UPLOAD_URL_SECRET", "").strip()
 VAULT_UPLOAD_URL_TTL_SECONDS = _env_int("VAULT_UPLOAD_URL_TTL_SECONDS", 15 * 60)
 VAULT_UPLOAD_URL_MAX_TTL_SECONDS = _env_int("VAULT_UPLOAD_URL_MAX_TTL_SECONDS", 60 * 60)
+# Read counterpart to the upload URL. The default TTL is much shorter than the upload's
+# 15 minutes on purpose: an upload URL waits for a human or agent to produce a file,
+# a download URL is handed out to a caller that already wants the bytes now.
+VAULT_DOWNLOAD_URL_SECRET = os.environ.get("VAULT_DOWNLOAD_URL_SECRET", "").strip()
+VAULT_DOWNLOAD_URL_TTL_SECONDS = _env_int("VAULT_DOWNLOAD_URL_TTL_SECONDS", 300)
+VAULT_DOWNLOAD_URL_MAX_TTL_SECONDS = _env_int("VAULT_DOWNLOAD_URL_MAX_TTL_SECONDS", 60 * 60)
 VAULT_DAILY_NOTES_FOLDER = os.environ.get("VAULT_DAILY_NOTES_FOLDER", "").strip().strip("/\\")
 VAULT_DAILY_NOTES_FORMAT = os.environ.get("VAULT_DAILY_NOTES_FORMAT", "%Y-%m-%d").strip() or "%Y-%m-%d"
 VAULT_DAILY_NOTES_TEMPLATE = os.environ.get("VAULT_DAILY_NOTES_TEMPLATE", "")

@@ -15,6 +15,7 @@ from .config import (
     MAX_SEARCH_RESULTS,
     SEMANTIC_MAX_RESULTS,
     MAX_TREE_DEPTH,
+    VAULT_DOWNLOAD_URL_MAX_TTL_SECONDS,
     VAULT_UPLOAD_URL_MAX_TTL_SECONDS,
 )
 
@@ -103,6 +104,15 @@ class VaultRequestUploadUrlInput(BaseModel):
     create_dirs: bool = Field(default=True, description="Create parent directories if they do not exist")
     expected_sha256: str | None = Field(default=None, description="Optional SHA-256 checksum of the uploaded content", min_length=64, max_length=64)
     ttl_seconds: int | None = Field(default=None, ge=1, le=VAULT_UPLOAD_URL_MAX_TTL_SECONDS, description="Optional URL lifetime in seconds")
+
+
+class VaultRequestDownloadUrlInput(BaseModel):
+    """Create a signed, single-use HTTP download URL for any vault file."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(..., description="Relative path from vault root including filename and extension", min_length=1, max_length=500)
+    ttl_seconds: int | None = Field(default=None, ge=1, le=VAULT_DOWNLOAD_URL_MAX_TTL_SECONDS, description="Optional URL lifetime in seconds")
 
 
 class VaultImportUrlInput(BaseModel):

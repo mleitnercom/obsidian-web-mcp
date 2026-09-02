@@ -54,6 +54,19 @@ Binary operations enforce media type and size checks:
 
 `vault_request_upload_url` is single-use and signed. Use it for real agent/local files.
 
+### Signed download URLs
+
+`vault_request_download_url` is the read counterpart and follows the same trust model: the signed URL *is* the credential, so `/download/` is exempt from bearer auth exactly as `/upload/` is. That exemption covers authentication, not authorization:
+
+- The URL is issued only by an authenticated MCP tool call, and the caller must already be allowed to read that path.
+- The HMAC covers download id, path, mime type, size, digest and expiry, so none of them can be altered after issuing. An extended `expires` fails with `403`.
+- Redemption re-runs the vault path policy against the current configuration instead of trusting the signed record. A path that became excluded after issuing answers `404`, not the file.
+- The URL serves exactly one `GET` and dies after `VAULT_DOWNLOAD_URL_TTL_SECONDS` (default 300). `HEAD` and `Range` deliberately do not consume it, so size checks and resumed transfers stay possible.
+- If the file changed since the URL was issued, the server answers `409` rather than serving bytes that do not match the promised `sha256`.
+- Responses are sent with `Cache-Control: no-store`: a cached copy would be a second read that never reaches the server and never appears in the audit log.
+
+It is format-agnostic on purpose. It does not widen what a caller may read; it changes the transport for a read they could already perform.
+
 ## OAuth and Host Validation
 
 Set `VAULT_ALLOWED_HOSTS` and `VAULT_PUBLIC_BASE_URL` when using a tunnel or reverse proxy. Use `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD` for browser login before authorization.
