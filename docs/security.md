@@ -67,6 +67,12 @@ Binary operations enforce media type and size checks:
 
 It is format-agnostic on purpose. It does not widen what a caller may read; it changes the transport for a read they could already perform.
 
+### Hardlinks
+
+A hardlink inside the vault pointing at a file outside it is a real directory entry: there is nothing to follow, so path containment cannot see it. Any file with `st_nlink > 1` is therefore refused by `vault_read` (before PDF/image dispatch, so a hardlinked scan is not handed to OCR either), skipped by the Python search backend, and skipped when attaching a frontmatter excerpt.
+
+Legitimate in-vault hardlinks are unsupported as a consequence. Nothing in this server creates one: the write tools write files, the import tools copy, and Obsidian Sync does not make links. (upstream issue #53)
+
 ## OAuth and Host Validation
 
 Set `VAULT_ALLOWED_HOSTS` and `VAULT_PUBLIC_BASE_URL` when using a tunnel or reverse proxy. Use `VAULT_OAUTH_AUTH_USERNAME` and `VAULT_OAUTH_AUTH_PASSWORD` for browser login before authorization.

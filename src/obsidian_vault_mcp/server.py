@@ -5,6 +5,7 @@ Designed to run behind Cloudflare Tunnel for secure remote access.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import sys
@@ -14,6 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, Literal
 
+import anyio.to_thread
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
@@ -309,6 +311,33 @@ def _enforce_tool_rate_limit(scope: str, limit: int) -> None:
     if principal is None:
         raise ValueError("Missing authenticated request context for rate limiting")
     check_rate_limit(f"tool_{scope}", principal, limit)
+
+
+def _offloaded(fn):
+    """Run a blocking tool body in a worker thread instead of on the event loop.
+
+    The MCP SDK calls a synchronous tool function directly in the request coroutine
+    (func_metadata.call_fn_with_arg_validation: `return fn(**arguments)`), so anything
+    slow inside it stalls the whole server. Measured on 2026-09-02: reading one
+    three-page scanned PDF ran OCR for 24s and /health timed out four times in a row,
+    which is exactly what makes the uptime monitor fire. The same shape caused the
+    2026-08-28 outage, where back-to-back full-vault searches blocked /health for ~25s.
+
+    Applied to the slow READ paths only. Writes deliberately stay on the event loop:
+    running them there serialises them, and that accidental serialisation is a real
+    safety property for concurrent edits to the same file. Reads are side-effect free
+    apart from OCR sidecars, whose own lock already handles two readers meeting.
+
+    anyio propagates the current context into the worker thread, so the rate-limit
+    principal and request metadata (both contextvars) survive the hop -- verified
+    rather than assumed, and pinned by a test.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+
+    return wrapper
 
 
 def _tool_rate_limit_error(scope: str, limit: int) -> str | None:
@@ -645,6 +674,7 @@ _set_semantic_engine(semantic_engine)
     description="Return a compact analytics summary for vault hygiene, including frontmatter, link, tag, and encoding findings.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
+@_offloaded
 def vault_analytics_summary(
     path_prefix: str | None = None,
     required_frontmatter: list[str] | None = None,
@@ -673,6 +703,7 @@ def vault_analytics_summary(
     description="Return detailed findings for one vault analytics category such as broken_wikilinks, encoding_issues, or frontmatter_missing.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
+@_offloaded
 def vault_analytics_findings(
     category: str,
     path_prefix: str | None = None,
@@ -709,6 +740,7 @@ def vault_analytics_findings(
     description="Read a file from the Obsidian vault, returning content, metadata, and parsed YAML frontmatter. PDFs are read through built-in text extraction.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
+@_offloaded
 def vault_read(path: str) -> str:
     """Read a file from the vault."""
     inp = VaultReadInput(path=path)
@@ -723,6 +755,7 @@ def vault_read(path: str) -> str:
     description="Read multiple files from the vault in one call. Handles missing files gracefully and includes extracted PDF text when applicable.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
+@_offloaded
 def vault_batch_read(paths: list[str], include_content: bool = True) -> str:
     """Read multiple files at once."""
     inp = VaultBatchReadInput(paths=paths, include_content=include_content)
@@ -1309,6 +1342,7 @@ def vault_template_apply(
     description="Search for text across vault files. Uses ripgrep if available, falls back to Python. Returns matching lines with context and frontmatter excerpts.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
+@_offloaded
 def vault_search(
     query: str,
     path_prefix: str | None = None,
@@ -1456,6 +1490,7 @@ def vault_search_frontmatter(
     description="Run hybrid semantic plus keyword search over markdown note content using an optional FAISS index, with optional path/tag filtering.",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
+@_offloaded
 def vault_semantic_search(
     query: str,
     path_prefix: str | None = None,

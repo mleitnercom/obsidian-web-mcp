@@ -88,3 +88,17 @@ def vault_dir(tmp_path, monkeypatch):
     config.VAULT_PATH = Path(str(vault))
 
     yield vault
+
+
+def call_registered_tool(coro):
+    """Await a registered MCP tool from a synchronous test.
+
+    The slow read tools are async since the event-loop offload: the SDK calls a sync
+    tool body straight in the request coroutine, so a long read (OCR, full-vault
+    search) stalled /health. The underlying implementations in tools/* stay sync and
+    most tests still call those directly; this is for the tests that deliberately go
+    through the registered tool, e.g. to exercise rate limiting or read auditing.
+    """
+    import asyncio
+
+    return asyncio.run(coro)

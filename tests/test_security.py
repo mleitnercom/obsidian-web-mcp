@@ -18,6 +18,7 @@ import obsidian_vault_mcp.auth as auth
 import obsidian_vault_mcp.oauth as oauth
 import obsidian_vault_mcp.server as server
 import obsidian_vault_mcp.tools.write as write_tools
+from .conftest import call_registered_tool
 from obsidian_vault_mcp import config
 from obsidian_vault_mcp.auth import BearerAuthMiddleware
 from obsidian_vault_mcp.rate_limit import (
@@ -987,8 +988,8 @@ def test_tool_reads_are_rate_limited_per_token(vault_dir, monkeypatch):
 
     token = set_current_auth_principal("read-token")
     try:
-        first = json.loads(server.vault_read("test-note.md"))
-        second = json.loads(server.vault_read("test-note.md"))
+        first = json.loads(call_registered_tool(server.vault_read("test-note.md")))
+        second = json.loads(call_registered_tool(server.vault_read("test-note.md")))
     finally:
         reset_current_auth_principal(token)
 
