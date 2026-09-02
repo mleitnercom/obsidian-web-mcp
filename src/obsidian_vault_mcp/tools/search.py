@@ -1,5 +1,6 @@
 """Search tools for the Obsidian vault MCP server."""
 
+import base64
 import json
 import logging
 import os
@@ -10,9 +11,53 @@ from pathlib import Path
 import frontmatter
 
 from .. import config
-from ..vault import allowed_root_paths, is_vault_path_allowed, resolve_vault_path, vault_json_dumps
+from ..vault import (
+    allowed_root_paths,
+    has_extra_hard_links,
+    is_vault_path_allowed,
+    resolve_vault_path,
+    vault_json_dumps,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _split_lines(text: str) -> list[str]:
+    """Split text the way ripgrep counts lines: on "\n" only.
+
+    str.splitlines() also breaks on NEL, LINE and PARAGRAPH SEPARATOR, vertical tab,
+    form feed and a lone carriage return. A note containing any of those would make the
+    Python backend report a different line_number than ripgrep for the same match, and
+    the caller has no way to tell which backend answered. Trailing "\r" is stripped per
+    line so CRLF files read the same as splitlines(), and the empty element after a
+    trailing newline is dropped. (upstream #39)
+    """
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
+def _rg_line_text(event: dict) -> str | None:
+    """Return an event's line text, decoding ripgrep's base64 bytes when present.
+
+    ripgrep emits {"bytes": ...} instead of {"text": ...} when a line is not valid
+    UTF-8. Skipping those events would drop the match entirely -- a hit ripgrep found
+    would simply not appear in the results -- so decode lossily instead. (upstream #39)
+    """
+    lines = event.get("lines")
+    if not isinstance(lines, dict):
+        return None
+    text = lines.get("text")
+    if text is not None:
+        return text.rstrip("\n")
+    encoded = lines.get("bytes")
+    if encoded is None:
+        return None
+    try:
+        return base64.b64decode(encoded).decode("utf-8", errors="replace").rstrip("\n")
+    except (ValueError, TypeError):
+        return None
 
 
 def _search_ripgrep(
@@ -75,14 +120,14 @@ def _search_ripgrep(
 
         event = data["data"]
         line_number = event.get("line_number")
-        # Binary hits carry {"bytes": ...} instead of {"text": ...} and no line
-        # number: nothing to show, and nothing to anchor a window to.
-        line_text = event.get("lines", {}).get("text")
+        # A line that is not valid UTF-8 arrives base64-encoded rather than as text;
+        # it still has a line number and still belongs in the window.
+        line_text = _rg_line_text(event)
         if line_number is None or line_text is None:
             continue
 
         file_path = event["path"]["text"]
-        emitted_lines.setdefault(file_path, {})[line_number] = line_text.rstrip("\n")
+        emitted_lines.setdefault(file_path, {})[line_number] = line_text
 
         if event_type == "match":
             hits.append((file_path, line_number))
@@ -160,12 +205,22 @@ def _search_python(
             except ValueError:
                 continue
 
+            # A hardlink here is the same escape as in read_file: a real directory
+            # entry that path containment cannot see. The ripgrep backend inherits the
+            # check through _get_frontmatter_excerpt and read_file, so skipping here
+            # keeps the two backends from answering differently.
+            if has_extra_hard_links(file_path):
+                logger.warning("vault_search: skipping hardlinked file %s", rel_path)
+                continue
+
             try:
-                content = file_path.read_text(encoding="utf-8")
+                # Bytes, not read_text: text mode translates a lone "\r" to "\n",
+                # which would desync the line index from ripgrep's count.
+                content = file_path.read_bytes().decode("utf-8")
             except (UnicodeDecodeError, PermissionError, OSError):
                 continue
 
-            lines = content.splitlines()
+            lines = _split_lines(content)
             for i, line in enumerate(lines):
                 if query_lower in line.lower():
                     start = max(0, i - context_lines)
@@ -236,7 +291,7 @@ def _default_search_patterns(file_pattern: str) -> list[str]:
 def _get_frontmatter_excerpt(file_path: Path, max_keys: int = 3) -> dict | None:
     """Read frontmatter from a file, returning first N key-value pairs."""
     try:
-        if file_path.is_symlink():
+        if file_path.is_symlink() or has_extra_hard_links(file_path):
             return None
         content = file_path.read_text(encoding="utf-8")
         post = frontmatter.loads(content)

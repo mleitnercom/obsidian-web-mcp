@@ -276,6 +276,31 @@ class _OcrSidecarLock:
             pass
 
 
+def has_extra_hard_links(path: Path) -> bool:
+    """Return whether a file has more than one directory entry pointing at its inode.
+
+    A hardlink inside the vault to a file outside it is a real directory entry: there is
+    no link to follow, so path containment cannot see it and the file reads as an
+    ordinary note. Refusing st_nlink > 1 is the only cheap test that catches it, at the
+    cost of not supporting legitimate in-vault hardlinks -- which nothing here creates:
+    the write tools write files, imports copy, and Obsidian Sync does not make links.
+    (upstream issue #53)
+    """
+    try:
+        return path.stat().st_nlink > 1
+    except OSError:
+        return False
+
+
+def refuse_hard_linked_file(path: Path) -> None:
+    """Raise for a hardlinked file. Fail closed, like the frontmatter and OAuth paths."""
+    if has_extra_hard_links(path):
+        raise ValueError(
+            "Refusing to read a hardlinked file; in-vault hardlinks are not supported "
+            "because they can point outside the vault"
+        )
+
+
 def _reject_unsupported_binary(path: Path) -> None:
     """Reject known binary formats before attempting UTF-8 text reads."""
     suffix = path.suffix.lower()
@@ -660,6 +685,10 @@ def read_file(relative_path: str) -> tuple[str, dict]:
 
     if not path.is_file():
         raise FileNotFoundError(f"Not a file: {relative_path}")
+
+    # Before any dispatch: a hardlinked PDF or image would otherwise be handed to OCR
+    # and leak just as readily as a hardlinked note.
+    refuse_hard_linked_file(path)
 
     if path.suffix.lower() == ".pdf":
         return _read_pdf_file(path)
