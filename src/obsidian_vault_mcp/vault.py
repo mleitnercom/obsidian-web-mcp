@@ -286,6 +286,224 @@ def _reject_unsupported_binary(path: Path) -> None:
         )
 
 
+IMAGE_OCR_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+
+
+def _image_dimensions(path: Path) -> tuple[int, int] | None:
+    """Return (width, height) by reading the file header only.
+
+    Deliberately not Pillow: the server would gain an image dependency for two integers.
+    Returns None for anything unrecognised -- dimensions are a nice-to-have in the
+    metadata, never a reason to fail a read.
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(32)
+            if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+                return (
+                    int.from_bytes(head[16:20], "big"),
+                    int.from_bytes(head[20:24], "big"),
+                )
+            if head[:6] in (b"GIF87a", b"GIF89a"):
+                return (
+                    int.from_bytes(head[6:8], "little"),
+                    int.from_bytes(head[8:10], "little"),
+                )
+            if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+                chunk = head[12:16]
+                if chunk == b"VP8X":
+                    handle.seek(24)
+                    payload = handle.read(6)
+                    if len(payload) == 6:
+                        width = int.from_bytes(payload[0:3], "little") + 1
+                        height = int.from_bytes(payload[3:6], "little") + 1
+                        return width, height
+                if chunk == b"VP8 ":
+                    handle.seek(26)
+                    payload = handle.read(4)
+                    if len(payload) == 4:
+                        return (
+                            int.from_bytes(payload[0:2], "little") & 0x3FFF,
+                            int.from_bytes(payload[2:4], "little") & 0x3FFF,
+                        )
+                if chunk == b"VP8L":
+                    handle.seek(21)
+                    payload = handle.read(4)
+                    if len(payload) == 4:
+                        bits = int.from_bytes(payload, "little")
+                        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+                return None
+            if head[:2] == b"\xff\xd8":
+                # JPEG: walk the segment chain to the frame header that carries the size.
+                handle.seek(2)
+                while True:
+                    marker = handle.read(2)
+                    if len(marker) < 2 or marker[0] != 0xFF:
+                        return None
+                    if marker[1] in (0xD8, 0xD9) or 0xD0 <= marker[1] <= 0xD7:
+                        continue
+                    length_bytes = handle.read(2)
+                    if len(length_bytes) < 2:
+                        return None
+                    length = int.from_bytes(length_bytes, "big")
+                    # SOF0..SOF15, excluding the non-frame markers DHT/JPG/DAC.
+                    if 0xC0 <= marker[1] <= 0xCF and marker[1] not in (0xC4, 0xC8, 0xCC):
+                        frame = handle.read(5)
+                        if len(frame) < 5:
+                            return None
+                        return (
+                            int.from_bytes(frame[3:5], "big"),
+                            int.from_bytes(frame[1:3], "big"),
+                        )
+                    handle.seek(length - 2, os.SEEK_CUR)
+    except OSError:
+        return None
+    return None
+
+
+def _run_image_ocr(path: Path) -> dict | None:
+    """Run the configured OCR command for an image file.
+
+    A sibling of _run_pdf_ocr rather than a shared generalisation: the PDF path is
+    load-bearing and explicitly out of scope for this change, so it is left untouched.
+    Worth folding together later, once both have run in production for a while.
+    """
+    if not config.VAULT_IMAGE_OCR_ENABLED or not config.VAULT_IMAGE_OCR_CMD:
+        return None
+
+    argv = shlex.split(config.VAULT_IMAGE_OCR_CMD, posix=os.name != "nt")
+    if not argv:
+        return None
+    if any("{path}" in arg for arg in argv):
+        argv = [arg.format(path=str(path)) for arg in argv]
+    else:
+        argv = [*argv, str(path)]
+
+    env = os.environ.copy()
+    env["VAULT_IMAGE_PATH"] = str(path)
+    env["VAULT_IMAGE_OCR_LANGUAGES"] = config.VAULT_IMAGE_OCR_LANGUAGES
+
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=config.VAULT_IMAGE_OCR_TIMEOUT,
+            check=False,
+            env=env,
+        )
+    except FileNotFoundError:
+        raise OcrError("ocr_tool_unavailable", f"OCR command not found: {argv[0]}")
+    except subprocess.TimeoutExpired:
+        raise OcrError(
+            "ocr_timeout",
+            f"OCR command timed out after {config.VAULT_IMAGE_OCR_TIMEOUT} seconds",
+        )
+
+    content = result.stdout.strip()
+    metadata = {
+        "applied": result.returncode == 0 and bool(content),
+        "engine": "external_command",
+        "command": Path(argv[0]).name,
+        "languages": config.VAULT_IMAGE_OCR_LANGUAGES.split("+"),
+        "returncode": result.returncode,
+    }
+    if result.stderr.strip():
+        metadata["stderr"] = result.stderr.strip()[:500]
+    if result.returncode != 0:
+        message = f"OCR command exited with status {result.returncode}"
+        if metadata.get("stderr"):
+            message = f"{message}: {metadata['stderr']}"
+        raise OcrError("ocr_failed", message)
+    if not content:
+        raise OcrError(
+            "ocr_failed",
+            "OCR command returned no text for this image. Use vault_request_download_url "
+            "to fetch the image itself.",
+        )
+    metadata["content"] = content
+    return metadata
+
+
+def _image_metadata(path: Path) -> dict:
+    stat = path.stat()
+    metadata = {
+        "size": stat.st_size,
+        "modified": _iso_timestamp(stat.st_mtime),
+        "created": _iso_timestamp(stat.st_birthtime if hasattr(stat, "st_birthtime") else stat.st_ctime),
+        "type": "image",
+    }
+    dimensions = _image_dimensions(path)
+    if dimensions:
+        metadata["width"], metadata["height"] = dimensions
+    return metadata
+
+
+def _read_image_file(path: Path) -> tuple[str, dict]:
+    """Return OCR text for an image, using the same sidecar cache as scanned PDFs.
+
+    The payoff is not only that an agent can read a screenshot note. The sidecar is a
+    real file in the vault, so vault_search finds text inside images from then on --
+    that keeps paying after the session that generated it is gone.
+    """
+    metadata = _image_metadata(path)
+    sidecar_path = _ocr_sidecar_path(path)
+
+    if config.VAULT_IMAGE_OCR_SIDECAR_ENABLED:
+        cached_content = _read_valid_ocr_sidecar(path, sidecar_path)
+        if cached_content is not None:
+            metadata["content_source"] = "image_ocr_sidecar"
+            metadata["ocr"] = {
+                "applied": True,
+                "engine": "sidecar_cache",
+                "sidecar_path": _relative_to_vault_root(sidecar_path),
+                "cache_hit": True,
+            }
+            return cached_content, metadata
+
+        lock_path = _ocr_lock_path(sidecar_path)
+        with _OcrSidecarLock(lock_path, config.VAULT_IMAGE_OCR_TIMEOUT * 2):
+            # Re-check inside the lock: another reader may have written it while we waited.
+            cached_content = _read_valid_ocr_sidecar(path, sidecar_path)
+            if cached_content is not None:
+                metadata["content_source"] = "image_ocr_sidecar"
+                metadata["ocr"] = {
+                    "applied": True,
+                    "engine": "sidecar_cache",
+                    "sidecar_path": _relative_to_vault_root(sidecar_path),
+                    "cache_hit": True,
+                }
+                return cached_content, metadata
+
+            ocr_metadata = _run_image_ocr(path)
+            if ocr_metadata is not None:
+                metadata["ocr"] = {k: v for k, v in ocr_metadata.items() if k != "content"}
+                if ocr_metadata.get("applied") and ocr_metadata.get("content"):
+                    bytes_written = _write_ocr_sidecar(path, sidecar_path, ocr_metadata["content"])
+                    metadata["ocr"]["sidecar_path"] = _relative_to_vault_root(sidecar_path)
+                    metadata["ocr"]["sidecar_bytes"] = bytes_written
+                    metadata["ocr"]["cache_hit"] = False
+                    metadata["content_source"] = "image_ocr_sidecar"
+                    return ocr_metadata["content"], metadata
+
+    ocr_metadata = _run_image_ocr(path)
+    if ocr_metadata is not None:
+        metadata["ocr"] = {k: v for k, v in ocr_metadata.items() if k != "content"}
+        if ocr_metadata.get("applied") and ocr_metadata.get("content"):
+            metadata["content_source"] = "image_ocr_fallback"
+            return ocr_metadata["content"], metadata
+
+    # _run_image_ocr either returns applied content or raises OcrError, so reaching
+    # here means it reported success without text. Belt and braces, and it answers with
+    # the same stable error_code as every other OCR failure rather than a bare ValueError.
+    raise OcrError(
+        "ocr_failed",
+        f"Image OCR produced no text for {_relative_to_vault_root(path)}. "
+        "Use vault_request_download_url to fetch the image itself.",
+    )
+
+
 def _read_pdf_file(path: Path) -> tuple[str, dict]:
     """Extract text and metadata from a PDF file."""
     try:
@@ -445,6 +663,16 @@ def read_file(relative_path: str) -> tuple[str, dict]:
 
     if path.suffix.lower() == ".pdf":
         return _read_pdf_file(path)
+
+    # Images are readable only where OCR is configured. With it off, they fall through
+    # to the same rejection as before, so enabling the feature is the only thing that
+    # changes behaviour.
+    if (
+        path.suffix.lower() in IMAGE_OCR_EXTENSIONS
+        and config.VAULT_IMAGE_OCR_ENABLED
+        and config.VAULT_IMAGE_OCR_CMD
+    ):
+        return _read_image_file(path)
 
     _reject_unsupported_binary(path)
 

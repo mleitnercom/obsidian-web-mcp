@@ -5,6 +5,31 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.9.0] - 2026-09-02
+
+Closes the read side of the binary asymmetry. Everything could get *into* the vault -- `vault_write_binary`, `vault_import_file`, `vault_import_url`, `vault_request_upload_url` -- and only PDF text could get back out. Three real cases had been blocked by that over three months: an xlsx application register that could not be inspected, a vault PDF that could not be forwarded as a mail attachment, and a webinar note consisting of 25 embedded PNGs plus 60 words of text, which an agent sees as empty.
+
+### Added
+- **`vault_request_download_url` plus signed single-use `GET /download/{id}`.** The counterpart to `vault_request_upload_url`, and deliberately format-agnostic: it moves bytes out of band instead of through the model context, which is what all three blocked cases actually needed.
+
+  Returns `url`, `filename`, `mime_type`, `size`, `sha256`, `expires_at`. The contract is in what it refuses:
+  - **One `GET` per URL.** A second answers `410`, distinct from `404` for unknown or expired, so a failed transfer can be diagnosed.
+  - **`HEAD` and `Range` do not consume the token.** A client that checks the size first, or resumes a partial transfer, must not destroy the transfer it is preparing. An unsatisfiable range answers `416`, not `400` -- clients retry those two differently.
+  - **Redemption re-validates the path policy** instead of trusting the signed record, so a token cannot outlive the rule that allowed it.
+  - **Refuses to serve changed bytes** (`409`) rather than deliver content that does not match the promised digest.
+  - Default TTL 300s (`VAULT_DOWNLOAD_URL_TTL_SECONDS`), capped by `VAULT_DOWNLOAD_URL_MAX_TTL_SECONDS`.
+
+  `/download/` is auth-exempt exactly as `/upload/` is: the signed URL is the credential, which is the point of handing a plain URL to something that cannot speak MCP. The HMAC covers path, size, digest and expiry; an altered `expires` fails with `403`. Responses carry `Cache-Control: no-store`, because a cached copy would be a read the server never sees and the audit log never records.
+
+- **Image OCR sidecars** for `.png`, `.jpg`, `.jpeg`, `.webp`, reusing the PDF sidecar machinery from v0.6.10 unchanged: same cache validation, same lock, same `ocr_tool_unavailable` / `ocr_timeout` / `ocr_failed` error codes, same sidecar visibility rules. `vault_read` on an image returns the OCR text with `metadata.type = "image"` plus width and height.
+
+  Off by default (`VAULT_IMAGE_OCR_ENABLED=false`); with it off, `vault_read` rejects images exactly as before, so enabling the feature is the only thing that changes behaviour. Image dimensions are read from the file header rather than by adding an image library -- two integers should not cost a dependency.
+
+  The lasting benefit is not the agent read. The sidecar is a real file in the vault, so `vault_search` finds text inside screenshots from then on, independent of any session.
+
+### Note
+`_run_image_ocr` is a sibling of `_run_pdf_ocr` rather than a shared generalisation. The PDF path is load-bearing and was explicitly out of scope for this change; folding the two together is worth doing once both have run in production for a while.
+
 ## [v0.8.23] - 2026-08-29
 
 ### Fixed

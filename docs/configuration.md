@@ -52,6 +52,9 @@ All configuration is read from environment variables at process startup.
 | `VAULT_UPLOAD_URL_SECRET` | empty | Signing secret for direct upload URLs |
 | `VAULT_UPLOAD_URL_TTL_SECONDS` | `900` | Default signed upload URL TTL |
 | `VAULT_UPLOAD_URL_MAX_TTL_SECONDS` | `3600` | Max signed upload URL TTL |
+| `VAULT_DOWNLOAD_URL_SECRET` | empty | Signing secret for download URLs; falls back to `VAULT_UPLOAD_URL_SECRET`, then `VAULT_MCP_TOKEN` |
+| `VAULT_DOWNLOAD_URL_TTL_SECONDS` | `300` | Default signed download URL TTL |
+| `VAULT_DOWNLOAD_URL_MAX_TTL_SECONDS` | `3600` | Max signed download URL TTL |
 
 ## Daily Notes
 
@@ -88,6 +91,11 @@ All configuration is read from environment variables at process startup.
 | `VAULT_PDF_OCR_LANGUAGES` | `deu+eng` | OCR language hint exposed to the command |
 | `VAULT_PDF_OCR_SIDECAR_ENABLED` | same as `VAULT_PDF_OCR_ENABLED` | Cache OCR output as sidecar text files |
 | `VAULT_PDF_OCR_SIDECAR_SUFFIX` | `.ocr.txt` | Sidecar suffix |
+| `VAULT_IMAGE_OCR_ENABLED` | `false` | Enable OCR for `.png`, `.jpg`, `.jpeg`, `.webp` in `vault_read` |
+| `VAULT_IMAGE_OCR_CMD` | empty | External command that prints OCR text to stdout |
+| `VAULT_IMAGE_OCR_TIMEOUT` | `60` | Image OCR timeout seconds |
+| `VAULT_IMAGE_OCR_LANGUAGES` | same as `VAULT_PDF_OCR_LANGUAGES` | OCR language hint exposed to the command |
+| `VAULT_IMAGE_OCR_SIDECAR_ENABLED` | same as `VAULT_IMAGE_OCR_ENABLED` | Cache image OCR output as sidecar text files |
 
 ## Obsidian Local REST API
 

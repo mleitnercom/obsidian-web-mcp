@@ -27,7 +27,8 @@ This fork turns the upstream "MCP over HTTP" server into a vault-aware workflow 
 - **Optional Plugin Bridge.** Templater-style simple rendering via Obsidian Local REST API.
 - **Canvas tools.** Read `.canvas` JSON and append nodes or edges with validation and write verification.
 - **Direct binary upload.** `vault_request_upload_url` plus signed single-use `POST /upload/{id}` for real agent/local files.
-- **PDF extraction and OCR sidecars.** `vault_read` extracts PDF text and can cache external OCR output as `*.pdf.ocr.txt`.
+- **Direct binary download.** `vault_request_download_url` plus signed single-use `GET /download/{id}` for getting any vault file back out without base64 in the model context.
+- **PDF and image OCR sidecars.** `vault_read` extracts PDF text and can cache external OCR output as `*.ocr.txt`. With `VAULT_IMAGE_OCR_ENABLED` the same mechanism covers `.png`, `.jpg`, `.jpeg` and `.webp`, which also makes screenshot text findable through `vault_search`.
 - **Vault analytics and hygiene.** Broken links, missing frontmatter, tag variants, and encoding issues.
 - **Optional semantic search.** CPU-first `fastembed` backend with persistent FAISS cache.
 - **Health endpoint.** Local detailed health includes OAuth, audit, and Plugin Bridge reachability; remote callers get minimal liveness unless explicitly opted in.
@@ -53,6 +54,8 @@ Security and write-safety follow upstream's bar: login-gated OAuth, atomic write
 - `vault_upload_abort`
 
 Use `vault_request_upload_url` and then `POST` the file bytes to the returned signed `/upload/{id}` URL. This is the recommended path for binary files because it avoids MCP argument-size limits and base64 overhead.
+
+For the other direction use `vault_request_download_url` and `GET` the returned signed `/download/{id}` URL. It works for any file in the vault, not just images, and returns `size` and `sha256` so the caller can verify what it fetched. The URL serves exactly one `GET`; `HEAD` and `Range` requests do not consume it, so a client may check the size or resume a transfer first.
 
 ## Application Scenarios
 
@@ -143,6 +146,7 @@ The filesystem path is the primary path. The Plugin Bridge is additive and optio
 | `vault_write` | Write text with optional frontmatter merge and verification |
 | `vault_write_binary` | Write smaller base64 binary payloads |
 | `vault_request_upload_url` | Create a signed direct upload URL for binary files |
+| `vault_request_download_url` | Create a signed single-use download URL for any vault file |
 | `vault_import_url` | Import an allowed binary file from HTTP(S) |
 | `vault_import_file` | Import an allowed local/mounted file into the vault |
 | `vault_batch_frontmatter_update` | Update frontmatter fields across files |
