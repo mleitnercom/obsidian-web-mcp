@@ -149,9 +149,16 @@ def test_ocr_without_text_fails_with_a_stable_code_and_a_way_forward(vault_dir, 
 
 def test_sidecar_text_is_searchable(vault_dir, screenshot, monkeypatch):
     """The durable payoff: screenshots become findable through vault_search."""
+    # vault.py and search.py import the same subprocess module, so the OCR stub is
+    # process-wide: left in place it would also answer ripgrep's call with OCR text,
+    # and vault_search would find nothing. Restored before searching. This only shows
+    # up where rg is actually installed -- the same "behaviour depends on an installed
+    # binary" trap the v0.8.23 fix was about.
+    original_run = vault_module.subprocess.run
     _enable_image_ocr(monkeypatch)
     _stub_ocr(monkeypatch)
     read_file("00_Inbox/Pasted image 20260902093756.png")
+    monkeypatch.setattr(vault_module.subprocess, "run", original_run)
 
     result = json.loads(vault_search("Zulieferer"))
 
