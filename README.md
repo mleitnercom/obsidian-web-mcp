@@ -144,6 +144,7 @@ The filesystem path is the primary path. The Plugin Bridge is additive and optio
 | `vault_canvas_add_node` | Add a node to a Canvas file |
 | `vault_canvas_add_edge` | Add an edge to a Canvas file |
 | `vault_write` | Write text with optional frontmatter merge and verification |
+| `vault_create_note` | Create a note that can never replace an existing one; policy-configured (see [docs/create-note.md](docs/create-note.md)) |
 | `vault_write_binary` | Write smaller base64 binary payloads |
 | `vault_request_upload_url` | Create a signed direct upload URL for binary files |
 | `vault_request_download_url` | Create a signed single-use download URL for any vault file |

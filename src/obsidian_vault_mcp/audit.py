@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 MUTATION_OPERATIONS = {
     "vault_write",
+    "vault_create_note",
     "vault_write_binary",
     "vault_patch",
     "vault_edit",

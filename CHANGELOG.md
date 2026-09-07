@@ -5,6 +5,23 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.11.0] - 2026-09-08
+
+### Added
+- **`vault_create_note`: a write path that cannot overwrite.** `vault_write` replaces whatever is at the path, which is right for an operator editing their own vault and wrong for an unattended client filing notes on a schedule -- there, a retry after a dropped response, or two workers choosing the same filename, must not cost an existing note. The new tool adds a note or refuses, and never modifies one that exists.
+
+  The creation is `write_bytes_atomic(overwrite=False)`, so the name is claimed by `os.link` rather than by an `exists()` check in front of `os.replace`; two concurrent callers cannot both succeed. The note is read back and compared byte-for-byte before `created: true` is returned, so a caller that sees success knows what is on disk. Parent folders are never created: the path policy says which notes may exist, not which folders may appear.
+
+  What a client may file is described by configuration, not by code, because "which paths are eligible and what must a note contain" is a property of one vault: `VAULT_CREATE_NOTE_PATH_PATTERN` (regex, and the switch -- unset means the tool answers `create_note_disabled`), `VAULT_CREATE_NOTE_REQUIRED_FRONTMATTER` (JSON `{field: regex}`, or `true` to require a field without constraining its value -- the only way to require a list field such as `tags`, since a list has no single string form to match), `VAULT_CREATE_NOTE_ALLOWED_FRONTMATTER` (field allowlist), `VAULT_CREATE_NOTE_ID_FIELD` (id must equal the filename stem), `VAULT_CREATE_NOTE_REQUIRE_BODY_SECTION`, `VAULT_CREATE_NOTE_MAX_BYTES` (default 16000). An unconfigured policy refuses rather than permits.
+
+  Frontmatter is parsed with `frontmatter_io.loads`, which already fails closed on malformed YAML, rather than by splitting lines. Errors carry stable `error_code` values (`note_exists`, `path_not_allowed`, `frontmatter_value_rejected`, `id_path_mismatch`, `invalid_policy`, ...) instead of one opaque message, and a rejected value is never echoed back -- the message names the field, because the value is caller data. The tool is registered in `MUTATION_OPERATIONS`, so it audits and snapshots like every other write. See [docs/create-note.md](docs/create-note.md).
+
+### Scope
+- The tool constrains the *shape* of what a client may file, not its identity. Every tool still runs under the same bearer token, so a client holding it can call `vault_write` and overwrite anything. This is a guard against a misbehaving client, not a privilege boundary; per-client tokens with per-tool scopes remain unbuilt and are noted as such in `docs/security.md` and `docs/create-note.md`.
+
+### Tests
+- 31 new cases in `tests/test_create_note.py`. The guarantee tests assert on the bytes left on disk, not only on the returned payload: an occupied path is unchanged after a refusal, a retry after a lost response creates no duplicate, and two barrier-synchronised threads racing for one name yield exactly one creation with the winner's content intact. Verified to have teeth by mutating `write_bytes_atomic` back to check-then-write -- all three guarantee tests fail against that mutant. One test pins the interaction between the two v0.10.0 features that meet here: the exclusive create goes through `os.link`, and `read_file` refuses `st_nlink > 1`, so a leftover temporary link would make a freshly created note unreadable. Full suite: 492 passed, 3 skipped.
+
 ## [v0.10.0] - 2026-09-02
 
 ### Security

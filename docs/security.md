@@ -79,6 +79,8 @@ Set `VAULT_ALLOWED_HOSTS` and `VAULT_PUBLIC_BASE_URL` when using a tunnel or rev
 
 `/oauth/authorize` fails closed when no login credentials are configured: it returns `503` instead of auto-approving and handing out the vault bearer token. `VAULT_OAUTH_ALLOW_NO_AUTH=true` is an explicit, insecure opt-in for local/dev only — never set it in production.
 
+`vault_create_note` is the create-only write path for unattended clients: it claims the name with `os.link` and cannot replace an existing note, even against a concurrent writer. Its `VAULT_CREATE_NOTE_*` policy constrains the shape of what a client may file, not who the client is -- every tool still runs under the same bearer token, so the policy is a guard against a misbehaving client, not a privilege boundary. See [create-note.md](create-note.md).
+
 ## Audit Privacy
 
 Audit uses `token_id_hash`, not raw tokens. Do not add secrets to hook payloads. Hook stdin receives the same JSON record as the JSONL audit line and nothing extra.

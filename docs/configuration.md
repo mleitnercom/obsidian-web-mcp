@@ -56,6 +56,20 @@ All configuration is read from environment variables at process startup.
 | `VAULT_DOWNLOAD_URL_TTL_SECONDS` | `300` | Default signed download URL TTL |
 | `VAULT_DOWNLOAD_URL_MAX_TTL_SECONDS` | `3600` | Max signed download URL TTL |
 
+## Create-Only Notes
+
+Policy for `vault_create_note`. The tool is inert until `VAULT_CREATE_NOTE_PATH_PATTERN`
+is set. See [create-note.md](create-note.md).
+
+| Variable | Default | Description |
+|---|---|---|
+| `VAULT_CREATE_NOTE_PATH_PATTERN` | empty | Regex the path must fully match; empty disables the tool |
+| `VAULT_CREATE_NOTE_REQUIRED_FRONTMATTER` | empty | JSON object `{field: regex}`; each field must be present and fully match. `true` instead of a regex requires the field without constraining its value (the only way to require a list field) |
+| `VAULT_CREATE_NOTE_ALLOWED_FRONTMATTER` | empty | Comma-separated field allowlist; empty means any field |
+| `VAULT_CREATE_NOTE_ID_FIELD` | empty | Frontmatter field that must equal the filename stem |
+| `VAULT_CREATE_NOTE_REQUIRE_BODY_SECTION` | empty | Literal string the body must contain |
+| `VAULT_CREATE_NOTE_MAX_BYTES` | `16000` | Per-note ceiling for create-only writes |
+
 ## Daily Notes
 
 | Variable | Default | Description |
