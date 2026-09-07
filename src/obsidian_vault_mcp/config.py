@@ -215,6 +215,38 @@ VAULT_AUDIT_LOG_PATH = os.environ.get("VAULT_AUDIT_LOG_PATH", "").strip()
 VAULT_AUDIT_LOG_INCLUDE_READS = _env_bool("VAULT_AUDIT_LOG_INCLUDE_READS", False)
 
 # Recurring task materialization
+# --- Create-only note tool (vault_create_note) -------------------------------
+# An automated client that may create a note but must never touch an existing
+# one. The policy lives here rather than in code because "which notes may be
+# created, and what must they contain" is a property of one vault, not of this
+# server.
+#
+# The tool is inert until VAULT_CREATE_NOTE_PATH_PATTERN is set: with no
+# statement about which paths are eligible, any creation would be a guess, so
+# the unconfigured state refuses rather than allows.
+#
+# PATH_PATTERN            regex the vault-relative path must fully match
+# REQUIRED_FRONTMATTER    JSON object {field: regex}; each field must be present
+#                         and its value must fully match the regex
+# ALLOWED_FRONTMATTER     comma-separated field allowlist; empty means "any
+#                         field", non-empty must cover every required field
+# ID_FIELD                frontmatter field whose value must equal the filename
+#                         stem, catching an id/path mismatch before the write
+# REQUIRE_BODY_SECTION    literal string the body must contain (e.g. a heading)
+# MAX_BYTES               per-note ceiling, independent of MAX_CONTENT_SIZE
+VAULT_CREATE_NOTE_PATH_PATTERN = os.environ.get(
+    "VAULT_CREATE_NOTE_PATH_PATTERN", ""
+).strip()
+VAULT_CREATE_NOTE_REQUIRED_FRONTMATTER = os.environ.get(
+    "VAULT_CREATE_NOTE_REQUIRED_FRONTMATTER", ""
+).strip()
+VAULT_CREATE_NOTE_ALLOWED_FRONTMATTER = _env_csv("VAULT_CREATE_NOTE_ALLOWED_FRONTMATTER", [])
+VAULT_CREATE_NOTE_ID_FIELD = os.environ.get("VAULT_CREATE_NOTE_ID_FIELD", "").strip()
+VAULT_CREATE_NOTE_REQUIRE_BODY_SECTION = os.environ.get(
+    "VAULT_CREATE_NOTE_REQUIRE_BODY_SECTION", ""
+).strip()
+VAULT_CREATE_NOTE_MAX_BYTES = _env_int("VAULT_CREATE_NOTE_MAX_BYTES", 16000)
+
 VAULT_RECURRING_ENABLED = _env_bool("VAULT_RECURRING_ENABLED", False)
 VAULT_RECURRING_TEMPLATES_FOLDER = os.environ.get(
     "VAULT_RECURRING_TEMPLATES_FOLDER", ""

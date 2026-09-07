@@ -633,8 +633,10 @@ from .tools.semantic_search import (
 from .tools.recurring import (
     recurring_materialize as _recurring_materialize,
 )
+from .tools.create_note import vault_create_note as _vault_create_note
 from .models import (
     VaultAnalyticsFindingsInput,
+    VaultCreateNoteInput,
     VaultAnalyticsSummaryInput,
     VaultAppendInput,
     VaultBatchReplaceInput,
@@ -1708,6 +1710,35 @@ def recurring_materialize(
         dry_run=dry_run,
         template_id=template_id,
         as_of=as_of,
+    )
+
+
+@mcp.tool(
+    name="vault_create_note",
+    description=(
+        "Create a new note at a path the server has been configured to allow, without "
+        "ever replacing an existing file. Refuses if the note exists, including when two "
+        "calls race, so a client that lost a response can retry without risking a "
+        "duplicate write. Content is read back before success is reported. "
+        "Inert until VAULT_CREATE_NOTE_PATH_PATTERN is configured. "
+        "Error codes: create_note_disabled, path_not_allowed, invalid_frontmatter, "
+        "frontmatter_missing_field, frontmatter_not_allowed, frontmatter_value_rejected, "
+        "id_path_mismatch, missing_body_section, content_too_large, note_exists, "
+        "parent_folder_missing, write_verification_failed, invalid_policy."
+    ),
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def vault_create_note(path: str, content: str) -> str:
+    """Create a note that cannot overwrite an existing one."""
+    inp = VaultCreateNoteInput(path=path, content=content)
+    limited = _tool_rate_limit_error("write", config.RATE_LIMIT_WRITE)
+    if limited is not None:
+        return limited
+    return _run_logged_tool(
+        "vault_create_note",
+        lambda: _vault_create_note(inp.path, inp.content),
+        path=inp.path,
+        content_bytes=len(inp.content),
     )
 
 

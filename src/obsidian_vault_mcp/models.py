@@ -770,3 +770,21 @@ class VaultEditInput(BaseModel):
         default=False,
         description="Preview the patch and unified diff without writing the file",
     )
+
+
+class VaultCreateNoteInput(BaseModel):
+    """Create a new note without any chance of replacing an existing one."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    path: str = Field(
+        ...,
+        description="Relative path from vault root; must match VAULT_CREATE_NOTE_PATH_PATTERN",
+        min_length=1,
+        max_length=500,
+    )
+    content: str = Field(
+        ...,
+        description="Full note content including YAML frontmatter",
+        max_length=MAX_CONTENT_SIZE,
+    )
