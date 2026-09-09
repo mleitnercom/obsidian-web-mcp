@@ -5,6 +5,22 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.12.0] - 2026-09-09
+
+### Added
+- **`vault_search` matches note names and paths, not only contents.** A note called `Trips/2026/NYC.md` was invisible to a search for `"NYC"` unless its body happened to repeat the word, while Obsidian's own quick switcher matches paths. A client that refers to a note by name hits that gap constantly.
+
+  Name hits come first, tagged `"match_type": "filename"` with `line_number: null` and the relative path as `match_context`; content hits follow, tagged `"match_type": "content"` and otherwise unchanged. The whole relative path is matched, so `"2026"` also finds `Trips/2026/NYC.md`. A file matching both ways appears twice on purpose -- the rows answer different questions ("this note is called that" and "here is the passage").
+
+  **Name hits carry their own budget** (`VAULT_SEARCH_FILENAME_RESULTS`, default 5) on top of `max_results`, rather than being taken out of it. Spending `max_results` on names would mean a query whose name matches silently returns fewer content hits than the same query returned before the feature existed; a caller cannot tell that from the response. `0` disables name matching and restores the previous behaviour exactly.
+
+  The name pass honours `path_prefix`, `file_pattern`, `VAULT_INCLUDED_ROOTS` and `EXCLUDED_DIRS`, and applies the same symlink, allowlist and hardlink guards as the content backends -- a name hit must never surface a path the content search would refuse to read. OCR sidecars are excluded from name matching (a sidecar's name repeats the name of the file it belongs to, so every scanned document would return twice) and continue to take part in the content search, which is where their text is the point.
+
+  Cost is one directory walk per query with no `stat` per file: the glob and substring work happen on strings, and the expensive guards run only on the handful of paths that actually match.
+
+### Note
+The idea comes from upstream PR #76, the implementation does not. That PR is built on the pre-fork search: it re-walks with `rglob` without this fork's symlink, allowlist and hardlink guards, does not know about `VAULT_INCLUDED_ROOTS`, and spends the name budget out of `max_results`.
+
 ## [v0.11.0] - 2026-09-08
 
 ### Added

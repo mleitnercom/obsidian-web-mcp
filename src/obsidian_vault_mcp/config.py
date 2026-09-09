@@ -350,6 +350,11 @@ DEFAULT_SEARCH_RESULTS = _env_int("VAULT_DEFAULT_SEARCH_RESULTS", 20)
 MAX_LIST_DEPTH = _env_int("VAULT_MAX_LIST_DEPTH", 5)
 MAX_TREE_DEPTH = _env_int("VAULT_MAX_TREE_DEPTH", 10)
 CONTEXT_LINES = _env_int("VAULT_CONTEXT_LINES", 2)
+# Filename hits get their own budget rather than eating into max_results: a query whose
+# name matches must not cost the caller the content hits the same query returned before.
+# Five is deliberately small -- a name hit is a strong relevance signal, and a long list
+# of them would push the content hits out of an agent's reading window.
+VAULT_SEARCH_FILENAME_RESULTS = _env_int("VAULT_SEARCH_FILENAME_RESULTS", 5)
 
 # Directories to never expose or modify
 EXCLUDED_DIRS = {".obsidian", ".trash", ".git", ".DS_Store", ".obsidian-vault-mcp"}
