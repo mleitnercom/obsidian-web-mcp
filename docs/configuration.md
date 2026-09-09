@@ -151,6 +151,7 @@ is set. See [create-note.md](create-note.md).
 | `VAULT_MAX_LIST_DEPTH` | `5` | Max listing depth |
 | `VAULT_MAX_TREE_DEPTH` | `10` | Max tree depth |
 | `VAULT_CONTEXT_LINES` | `2` | Search context lines |
+| `VAULT_SEARCH_FILENAME_RESULTS` | `5` | Name/path hits returned by `vault_search`, on top of `max_results`; `0` disables name matching |
 | `VAULT_RATE_LIMIT_READ` | `100` | Read calls per minute per token |
 | `VAULT_RATE_LIMIT_WRITE` | `30` | Write calls per minute per token |
 | `VAULT_RATE_LIMIT_OAUTH_AUTHORIZE` | `30` | OAuth authorize rate limit |

@@ -14,6 +14,7 @@ from .. import config
 from ..vault import (
     allowed_root_paths,
     has_extra_hard_links,
+    is_ocr_sidecar_name,
     is_vault_path_allowed,
     resolve_vault_path,
     vault_json_dumps,
@@ -288,6 +289,123 @@ def _default_search_patterns(file_pattern: str) -> list[str]:
     return ["*.md", sidecar_pattern]
 
 
+def _iter_name_candidates(
+    search_path: Path,
+    file_pattern: str,
+    vault_root: Path,
+    query_lower: str,
+):
+    """Yield (path, vault-relative path) for paths whose name matches the query.
+
+    Two deliberate economies, because this runs on every search over the whole vault:
+
+    No stat per file. The glob and the substring test work on strings; the expensive
+    guards (symlink, allowlist, hardlink) run in _search_filenames, on the handful of
+    paths that actually match.
+
+    No path arithmetic per file either. Measured against a 5,900-note vault, building a
+    relative path for every file cost more than the directory walk itself (77ms of which
+    40ms was path building). The relative directory is computed once per directory, and
+    the full relative path only for a hit.
+
+    A query without "/" cannot span the separator, so testing the directory and the
+    filename separately is equivalent to testing the joined path -- and avoids joining.
+    A query that does contain "/" is compared against the joined path.
+    """
+    import fnmatch
+
+    spans_directories = "/" in query_lower
+
+    for root, dirs, files in os.walk(search_path, topdown=True, followlinks=False):
+        root_path = Path(root)
+        dirs[:] = [
+            d for d in dirs
+            if d not in config.EXCLUDED_DIRS and not (root_path / d).is_symlink()
+        ]
+
+        try:
+            rel_root = root_path.relative_to(vault_root).as_posix()
+        except ValueError:
+            continue
+        prefix = "" if rel_root == "." else f"{rel_root}/"
+        prefix_lower = prefix.lower()
+
+        for filename in files:
+            if not fnmatch.fnmatch(filename, file_pattern):
+                continue
+            # A sidecar's name repeats the name of the file it belongs to, so a name
+            # query would return both. The sidecar still takes part in the CONTENT
+            # search, which is where its text is the point.
+            if is_ocr_sidecar_name(filename):
+                continue
+
+            if spans_directories:
+                if query_lower not in f"{prefix_lower}{filename.lower()}":
+                    continue
+            elif query_lower not in prefix_lower and query_lower not in filename.lower():
+                continue
+
+            yield root_path / filename, f"{prefix}{filename}"
+
+
+def _search_filenames(
+    query: str,
+    roots: list[Path],
+    file_pattern: str,
+    max_results: int,
+) -> list[dict]:
+    """Match the query against vault-relative paths, case-insensitively.
+
+    A note called Trips/2026/NYC.md was invisible to a search for "NYC" unless its body
+    happened to contain the word -- both backends only ever looked at file contents,
+    while Obsidian's own quick switcher matches paths. That gap is hit constantly by a
+    client that refers to a note by name. (idea from upstream #76)
+
+    The whole relative path is matched, not just the stem, so "2026" also finds
+    Trips/2026/NYC.md.
+    """
+    query_lower = query.lower()
+    matches: list[dict] = []
+    vault_root = config.VAULT_PATH.resolve()
+    seen: set[str] = set()
+
+    for root in roots:
+        for file_path, rel_path in _iter_name_candidates(root, file_pattern, vault_root, query_lower):
+            if rel_path in seen:
+                continue
+
+            # Same guards as the content backends, so a name hit can never surface a
+            # path the content search would have refused to read.
+            if file_path.is_symlink():
+                continue
+            try:
+                resolved = file_path.resolve()
+                if not is_vault_path_allowed(resolved):
+                    continue
+                resolved_rel = resolved.relative_to(vault_root).as_posix()
+            except ValueError:
+                continue
+            if has_extra_hard_links(file_path):
+                logger.warning("vault_search: skipping hardlinked file %s", resolved_rel)
+                continue
+            if resolved_rel in seen:
+                continue
+
+            seen.add(resolved_rel)
+            matches.append({
+                "path": resolved_rel,
+                # No line to point at: the match is the name, not a place in the text.
+                "line_number": None,
+                "match_context": resolved_rel,
+                "match_type": "filename",
+            })
+
+            if len(matches) >= max_results:
+                return matches
+
+    return matches
+
+
 def _get_frontmatter_excerpt(file_path: Path, max_keys: int = 3) -> dict | None:
     """Read frontmatter from a file, returning first N key-value pairs."""
     try:
@@ -328,21 +446,42 @@ def vault_search(
         if search_path is not None and not search_path.is_dir():
             return vault_json_dumps({"error": f"Search path is not a directory: {path_prefix}"})
 
-        matches = []
+        name_roots = [search_path] if search_path is not None else search_roots
+        filename_budget = max(0, config.VAULT_SEARCH_FILENAME_RESULTS)
+        name_matches = (
+            _search_filenames(query, name_roots, file_pattern, filename_budget)
+            if filename_budget
+            else []
+        )
+
+        content_matches = []
         for pattern in _default_search_patterns(file_pattern):
-            remaining = max_results - len(matches)
+            remaining = max_results - len(content_matches)
             if remaining <= 0:
                 break
             if search_path is None:
-                matches.extend(_search_multiple_roots(query, search_roots, pattern, remaining, context_lines))
+                content_matches.extend(_search_multiple_roots(query, search_roots, pattern, remaining, context_lines))
             else:
-                matches.extend(_search_path(query, search_path, pattern, remaining, context_lines))
+                content_matches.extend(_search_path(query, search_path, pattern, remaining, context_lines))
+
+        for match in content_matches:
+            match["match_type"] = "content"
+
+        # Name hits first, on their own budget: they are the stronger relevance signal,
+        # and taking them out of max_results would silently shrink the content results a
+        # query returned before this existed. A file that matches both ways appears
+        # twice on purpose -- the two rows answer different questions ("this note is
+        # called that" vs "here is the passage").
+        matches = name_matches + content_matches
 
         for match in matches:
             file_full_path = config.VAULT_PATH / match["path"]
             match["frontmatter_excerpt"] = _get_frontmatter_excerpt(file_full_path)
 
-        truncated = len(matches) >= max_results
+        truncated = (
+            len(content_matches) >= max_results
+            or (filename_budget > 0 and len(name_matches) >= filename_budget)
+        )
 
         return vault_json_dumps({
             "results": matches,

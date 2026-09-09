@@ -14,6 +14,7 @@ This fork turns the upstream "MCP over HTTP" server into a vault-aware workflow 
 
 - **Atomic writes with read-back verification.** Text writes fail loudly if the bytes read back do not match the intended content.
 - **Synchronous frontmatter index refresh.** Edits, moves, deletes, and renames refresh the index immediately instead of waiting on eventually-consistent watcher state.
+- **`vault_search` matches names as well as contents.** A note referred to by its name is found even when the body never repeats it. Name hits come first, tagged `"match_type": "filename"`, and carry their own small budget on top of `max_results`, so they never displace the content hits a query returned before.
 - **Extended `vault_search_frontmatter`.** Supports comparison operators, list-membership operators, multi-field AND filters, and a `fields` projection that returns only the frontmatter keys you ask for.
 - **Restart-stable OAuth state.** Dynamic client registrations can persist across service restarts.
 - **Vault scope policy.** `VAULT_INCLUDED_ROOTS` and `VAULT_EXCLUDED_PATH_PREFIXES` enforce a no-leak boundary across reads, writes, search, analytics, frontmatter indexing, and semantic indexing.
@@ -162,7 +163,7 @@ The filesystem path is the primary path. The Plugin Bridge is additive and optio
 | `vault_template_list` | List markdown templates |
 | `vault_template_render` | Render a template with simple substitution |
 | `vault_template_apply` | Render and write a new note |
-| `vault_search` | Full-text search with context; includes OCR sidecars by default |
+| `vault_search` | Searches note names/paths and contents, with context; includes OCR sidecars by default |
 | `vault_search_frontmatter` | Frontmatter search with comparison/list/AND filters and `fields` projection |
 | `vault_semantic_search` | Optional hybrid semantic and keyword search |
 | `vault_list` | List directory contents; OCR sidecars hidden by default |
