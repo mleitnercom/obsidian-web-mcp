@@ -16,7 +16,7 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
   The name pass honours `path_prefix`, `file_pattern`, `VAULT_INCLUDED_ROOTS` and `EXCLUDED_DIRS`, and applies the same symlink, allowlist and hardlink guards as the content backends -- a name hit must never surface a path the content search would refuse to read. OCR sidecars are excluded from name matching (a sidecar's name repeats the name of the file it belongs to, so every scanned document would return twice) and continue to take part in the content search, which is where their text is the point.
 
-  Cost is one directory walk per query with no `stat` per file: the glob and substring work happen on strings, and the expensive guards run only on the handful of paths that actually match.
+  Cost is one directory walk per query with no `stat` per file: the glob and substring work happen on strings, and the expensive guards run only on the handful of paths that actually match. Measured against the 5,917-note reference vault: **35ms**, against ~207ms for a full-vault ripgrep content search. A `path_prefix` query only walks that subtree. The first implementation cost 77ms because it built a relative path for every file merely to test a substring; the directory prefix is now computed once per directory and the full path only for a hit.
 
 ### Note
 The idea comes from upstream PR #76, the implementation does not. That PR is built on the pre-fork search: it re-walks with `rglob` without this fork's symlink, allowlist and hardlink guards, does not know about `VAULT_INCLUDED_ROOTS`, and spends the name budget out of `max_results`.
