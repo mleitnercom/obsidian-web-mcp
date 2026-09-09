@@ -289,15 +289,32 @@ def _default_search_patterns(file_pattern: str) -> list[str]:
     return ["*.md", sidecar_pattern]
 
 
-def _iter_name_candidates(search_path: Path, file_pattern: str, vault_root: Path):
-    """Yield (path, vault-relative path) for the filename pass, string work first.
+def _iter_name_candidates(
+    search_path: Path,
+    file_pattern: str,
+    vault_root: Path,
+    query_lower: str,
+):
+    """Yield (path, vault-relative path) for paths whose name matches the query.
 
-    Deliberately no stat per file here. The name pass runs on every search, and paying a
-    stat across the whole vault to answer a question about names would make every query
-    slower in order to make a few of them better. The expensive guards run in
-    _search_filenames, on the handful of paths that actually match the query.
+    Two deliberate economies, because this runs on every search over the whole vault:
+
+    No stat per file. The glob and the substring test work on strings; the expensive
+    guards (symlink, allowlist, hardlink) run in _search_filenames, on the handful of
+    paths that actually match.
+
+    No path arithmetic per file either. Measured against a 5,900-note vault, building a
+    relative path for every file cost more than the directory walk itself (77ms of which
+    40ms was path building). The relative directory is computed once per directory, and
+    the full relative path only for a hit.
+
+    A query without "/" cannot span the separator, so testing the directory and the
+    filename separately is equivalent to testing the joined path -- and avoids joining.
+    A query that does contain "/" is compared against the joined path.
     """
     import fnmatch
+
+    spans_directories = "/" in query_lower
 
     for root, dirs, files in os.walk(search_path, topdown=True, followlinks=False):
         root_path = Path(root)
@@ -305,6 +322,13 @@ def _iter_name_candidates(search_path: Path, file_pattern: str, vault_root: Path
             d for d in dirs
             if d not in config.EXCLUDED_DIRS and not (root_path / d).is_symlink()
         ]
+
+        try:
+            rel_root = root_path.relative_to(vault_root).as_posix()
+        except ValueError:
+            continue
+        prefix = "" if rel_root == "." else f"{rel_root}/"
+        prefix_lower = prefix.lower()
 
         for filename in files:
             if not fnmatch.fnmatch(filename, file_pattern):
@@ -315,12 +339,13 @@ def _iter_name_candidates(search_path: Path, file_pattern: str, vault_root: Path
             if is_ocr_sidecar_name(filename):
                 continue
 
-            file_path = root_path / filename
-            try:
-                rel_path = file_path.relative_to(vault_root).as_posix()
-            except ValueError:
+            if spans_directories:
+                if query_lower not in f"{prefix_lower}{filename.lower()}":
+                    continue
+            elif query_lower not in prefix_lower and query_lower not in filename.lower():
                 continue
-            yield file_path, rel_path
+
+            yield root_path / filename, f"{prefix}{filename}"
 
 
 def _search_filenames(
@@ -345,8 +370,8 @@ def _search_filenames(
     seen: set[str] = set()
 
     for root in roots:
-        for file_path, rel_path in _iter_name_candidates(root, file_pattern, vault_root):
-            if query_lower not in rel_path.lower() or rel_path in seen:
+        for file_path, rel_path in _iter_name_candidates(root, file_pattern, vault_root, query_lower):
+            if rel_path in seen:
                 continue
 
             # Same guards as the content backends, so a name hit can never surface a

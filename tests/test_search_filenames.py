@@ -183,3 +183,17 @@ class TestNameHitsKeepTheContentGuards:
             pytest.skip(f"symlinks unavailable here: {exc}")
 
         assert _search("Verweis")["results"] == []
+
+
+def test_a_query_spanning_a_folder_boundary_still_matches(named_notes):
+    """The cheap path skips joining, so a query containing "/" needs its own branch:
+    "2026/NYC" lies in neither the folder nor the filename alone."""
+    result = _search("2026/NYC")
+
+    assert [hit["path"] for hit in result["results"]] == ["Trips/2026/NYC.md"]
+
+
+def test_a_folder_name_alone_matches_every_note_inside(named_notes):
+    result = _search("Trips")
+
+    assert "Trips/2026/NYC.md" in [hit["path"] for hit in result["results"]]
