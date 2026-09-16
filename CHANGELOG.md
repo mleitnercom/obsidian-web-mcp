@@ -5,6 +5,12 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.13.2] - 2026-09-17
+
+### Changed
+
+- **MCP SDK cap raised from `<1.27` to `<2`.** The `<1.27` pin (14.04., "cowork stability") was never tied to a documented failure. 1.27 to 1.30 still ship `mcp.server.fastmcp`; SDK 2.x removed it, which is what `<2` guards against (same bound as upstream #68). The suite passed on 1.29.0 in August and on 1.30.0 on the server (561 passed, 0 skipped); production moves to 1.30.0. Rollback is reinstalling with the old pin.
+
 ## [v0.13.1] - 2026-09-16
 
 ### Changed
