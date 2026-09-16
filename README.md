@@ -28,6 +28,7 @@ This fork turns the upstream "MCP over HTTP" server into a vault-aware workflow 
 - **Optional Plugin Bridge.** Templater-style simple rendering via Obsidian Local REST API.
 - **Canvas tools.** Read `.canvas` JSON and append nodes or edges with validation and write verification.
 - **Direct binary upload.** `vault_request_upload_url` plus signed single-use `POST /upload/{id}` for real agent/local files.
+- **Testing rules.** Every rule in [docs/testing.md](docs/testing.md) exists because it was broken here and the break cost something. The short version: test what production runs, not a substitute.
 - **Direct binary download.** `vault_request_download_url` plus signed single-use `GET /download/{id}` for getting any vault file back out without base64 in the model context.
 - **PDF and image OCR sidecars.** `vault_read` extracts PDF text and can cache external OCR output as `*.ocr.txt`. With `VAULT_IMAGE_OCR_ENABLED` the same mechanism covers `.png`, `.jpg`, `.jpeg` and `.webp`, which also makes screenshot text findable through `vault_search`.
 - **Vault analytics and hygiene.** Broken links, missing frontmatter, tag variants, and encoding issues.
