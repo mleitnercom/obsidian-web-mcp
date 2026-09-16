@@ -1015,6 +1015,8 @@ def scan_markdown_encoding_issues(
                 continue
             if not is_vault_path_allowed(path):
                 continue
+            if has_extra_hard_links(path):
+                continue
             try:
                 path.read_text(encoding="utf-8")
             except UnicodeDecodeError as e:
@@ -1067,6 +1069,8 @@ def repair_markdown_encoding_issues(
             if path.is_symlink() or not path.is_file():
                 continue
             if not is_vault_path_allowed(path):
+                continue
+            if has_extra_hard_links(path):
                 continue
 
             raw = path.read_bytes()

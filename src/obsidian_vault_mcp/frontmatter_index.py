@@ -12,7 +12,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from . import config
-from .vault import is_vault_path_allowed
+from .vault import has_extra_hard_links, is_vault_path_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +148,8 @@ class FrontmatterIndex:
         rel_parts = path.relative_to(config.VAULT_PATH).parts
         if bool(config.EXCLUDED_DIRS & set(rel_parts)):
             return True
+        if has_extra_hard_links(path):
+            return True
         return not is_vault_path_allowed(path)
 
     def _parse_frontmatter(self, path: Path) -> dict | None:
@@ -273,6 +275,12 @@ class FrontmatterIndex:
             return
 
         if not is_vault_path_allowed(abs_path):
+            with self._lock:
+                self._index.pop(rel, None)
+            return
+
+        # A file can gain a second link after it was indexed; drop it then, too.
+        if abs_path.exists() and has_extra_hard_links(abs_path):
             with self._lock:
                 self._index.pop(rel, None)
             return

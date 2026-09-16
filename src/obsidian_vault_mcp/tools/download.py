@@ -25,7 +25,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from .. import config
-from ..vault import is_vault_path_allowed, resolve_vault_path, vault_json_dumps
+from ..vault import has_extra_hard_links, is_vault_path_allowed, resolve_vault_path, vault_json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +140,10 @@ def vault_request_download_url(path: str, ttl_seconds: int | None = None) -> str
             return vault_json_dumps({"error": f"File not found: {path}", "path": path})
         if not resolved.is_file():
             return vault_json_dumps({"error": f"Not a file: {path}", "path": path})
+        if has_extra_hard_links(resolved):
+            # A signed URL would otherwise serve the bytes of whatever file outside the
+            # vault this entry is linked to.
+            return vault_json_dumps({"error": f"Refusing hardlinked file: {path}", "path": path})
 
         sha256_hex, size = _sha256_file(resolved)
         requested_ttl = (
@@ -250,7 +254,7 @@ def resolve_direct_download(
         # The policy tightened after the URL was issued (excluded prefix, narrowed
         # roots). A stale token must not outlive the rule that allowed it.
         return {"error": "File is no longer available", "download_id": download_id}, 404
-    if not is_vault_path_allowed(resolved) or not resolved.is_file():
+    if not is_vault_path_allowed(resolved) or not resolved.is_file() or has_extra_hard_links(resolved):
         # The file moved, was deleted, or the policy changed after the URL was issued.
         return {"error": "File is no longer available", "download_id": download_id}, 404
 

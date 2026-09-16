@@ -108,6 +108,7 @@ def _search_ripgrep(
     # 2026-08-29, when installing ripgrep silently shortened every search result.
     emitted_lines: dict[str, dict[int, str]] = {}
     hits: list[tuple[str, int]] = []
+    refused_files: set[str] = set()
 
     for line in result.stdout.splitlines():
         try:
@@ -128,6 +129,17 @@ def _search_ripgrep(
             continue
 
         file_path = event["path"]["text"]
+        if file_path in refused_files:
+            continue
+        # ripgrep read these bytes in its own process before any of our code ran, and it
+        # cannot tell a hardlink from an ordinary file. The guard therefore has to discard
+        # a match ripgrep already handed back - dropping it whole, not degrading it to the
+        # bare matched line, which would still ship the disclosure. Checked once per file,
+        # on its first event.
+        if file_path not in emitted_lines and has_extra_hard_links(Path(file_path)):
+            refused_files.add(file_path)
+            logger.warning("vault_search: dropping ripgrep matches from hardlinked file %s", file_path)
+            continue
         emitted_lines.setdefault(file_path, {})[line_number] = line_text
 
         if event_type == "match":
