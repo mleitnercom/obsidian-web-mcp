@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config
+from .content_extractors import apply_content_extractors
 
 
 def _publish_mode(target: Path, tmp_fd: int) -> None:
@@ -79,15 +80,25 @@ def _iso_timestamp(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
-def read_file(relative_path: str) -> tuple[str, dict]:
+def read_file(relative_path: str, *, extract: bool = False) -> tuple[str, dict]:
     """Read a file and return (content, metadata).
 
     Metadata keys: size (int), modified (ISO str), created (ISO str).
+
+    extract: offer a file that is not valid UTF-8 to the registered content extractors
+    (``content_extractors``). Only the read tools pass True. Every other caller reads in
+    order to write back, and extracted text written back would replace the binary.
     """
     path = resolve_vault_read_path(relative_path)
 
     stat = path.stat()
-    content = path.read_text(encoding="utf-8")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        extracted = apply_content_extractors(relative_path, path) if extract else None
+        if extracted is None:
+            raise
+        content = extracted
 
     metadata = {
         "size": stat.st_size,
