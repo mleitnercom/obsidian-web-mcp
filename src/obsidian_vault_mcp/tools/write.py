@@ -298,10 +298,28 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
     tmp_path.replace(path)
 
 
+_STAGING_ID_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+
+
+def _is_staging_record_dir(entry: Path) -> bool:
+    """Whether a staging entry is one of our own records and safe to sweep.
+
+    The sweep used to rmtree any old directory under the staging root. Only entries this
+    server created qualify now: a real directory, not a symlink, named like an id.
+    Anything else found there is left alone and never followed.
+    """
+    return (
+        not entry.is_symlink()
+        and entry.is_dir()
+        and bool(entry.name)
+        and all(ch in _STAGING_ID_CHARS for ch in entry.name)
+    )
+
+
 def _cleanup_stale_uploads() -> None:
     cutoff = time.time() - UPLOAD_EXPIRY_SECONDS
     for entry in _upload_root().iterdir():
-        if not entry.is_dir():
+        if not _is_staging_record_dir(entry):
             continue
         try:
             if entry.stat().st_mtime < cutoff:
@@ -396,6 +414,50 @@ def vault_request_upload_url(
         return vault_json_dumps({"error": str(e), "path": path, "media_type": media_type})
 
 
+def _check_direct_upload_grant(
+    upload_id: str,
+    metadata: dict,
+    expires: str,
+    signature: str,
+) -> tuple[dict, int] | None:
+    """Return (error, status) if the grant is not valid for this request, else None."""
+    if metadata.get("type") != DIRECT_UPLOAD_TYPE:
+        return {"error": "Upload id is not a direct upload session", "upload_id": upload_id}, 400
+    try:
+        expires_at = int(expires)
+    except (TypeError, ValueError):
+        return {"error": "Invalid expires parameter", "upload_id": upload_id}, 400
+    if expires_at != int(metadata["expires_at"]):
+        return {"error": "Upload expiry mismatch", "upload_id": upload_id}, 403
+    if time.time() > expires_at:
+        return {"error": "Upload URL has expired", "upload_id": upload_id}, 410
+    expected_signature = _direct_upload_signature(metadata, expires_at)
+    if not signature or not hmac.compare_digest(signature, expected_signature):
+        return {"error": "Invalid upload signature", "upload_id": upload_id}, 403
+    if metadata.get("completed_at"):
+        return {"error": "Upload URL has already been used", "upload_id": upload_id}, 409
+    return None
+
+
+def validate_direct_upload_grant(upload_id: str, expires: str, signature: str) -> tuple[dict, int]:
+    """Check a signed upload URL without touching the request body.
+
+    Returns (metadata, 200) for a valid grant, otherwise (error, status). The HTTP route
+    calls this before reading any body bytes. Previously the body was read first and the
+    signature checked afterwards, so anyone on the internet could make the server buffer
+    up to MAX_BINARY_SIZE per request without holding a valid URL. (Reported upstream in
+    the review of #64.)
+    """
+    try:
+        metadata, _upload_dir, _metadata_path, _parts_dir = _load_upload(upload_id)
+    except (ValueError, OSError, json.JSONDecodeError):
+        return {"error": "Unknown upload id", "upload_id": upload_id}, 404
+    refusal = _check_direct_upload_grant(upload_id, metadata, expires, signature)
+    if refusal is not None:
+        return refusal
+    return metadata, 200
+
+
 def commit_direct_upload(
     upload_id: str,
     content: bytes,
@@ -406,22 +468,12 @@ def commit_direct_upload(
     """Validate and commit a signed direct HTTP upload."""
     try:
         metadata, _upload_dir, metadata_path, _parts_dir = _load_upload(upload_id)
-        if metadata.get("type") != DIRECT_UPLOAD_TYPE:
-            return {"error": "Upload id is not a direct upload session", "upload_id": upload_id}, 400
-
-        try:
-            expires_at = int(expires)
-        except (TypeError, ValueError):
-            return {"error": "Invalid expires parameter", "upload_id": upload_id}, 400
-        if expires_at != int(metadata["expires_at"]):
-            return {"error": "Upload expiry mismatch", "upload_id": upload_id}, 403
-        if time.time() > expires_at:
-            return {"error": "Upload URL has expired", "upload_id": upload_id}, 410
-        expected_signature = _direct_upload_signature(metadata, expires_at)
-        if not signature or not hmac.compare_digest(signature, expected_signature):
-            return {"error": "Invalid upload signature", "upload_id": upload_id}, 403
-        if metadata.get("completed_at"):
-            return {"error": "Upload URL has already been used", "upload_id": upload_id}, 409
+        # Checked again here even though the route validated before reading the body:
+        # two requests on the same URL can both pass that first check, and only this
+        # one, immediately before the write, sees whether the other already completed.
+        refusal = _check_direct_upload_grant(upload_id, metadata, expires, signature)
+        if refusal is not None:
+            return refusal
 
         media_type = metadata["media_type"]
         normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()

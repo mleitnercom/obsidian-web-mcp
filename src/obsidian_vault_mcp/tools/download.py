@@ -101,7 +101,10 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
 def _cleanup_stale_downloads() -> None:
     cutoff = time.time() - DOWNLOAD_RECORD_RETENTION_SECONDS
     for entry in _download_root().iterdir():
-        if not entry.is_dir():
+        # Only our own records: a real directory named like an id, never a symlink.
+        if entry.is_symlink() or not entry.is_dir() or not all(
+            ch in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-" for ch in entry.name
+        ):
             continue
         try:
             if entry.stat().st_mtime < cutoff:
