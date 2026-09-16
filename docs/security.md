@@ -67,9 +67,17 @@ Binary operations enforce media type and size checks:
 
 It is format-agnostic on purpose. It does not widen what a caller may read; it changes the transport for a read they could already perform.
 
+### Binary files and text writes
+
+`read_file` is not only the read tool's read; it is also the read half of every tool that reads, transforms and writes back. It therefore extracts text from PDFs and images only when called with `extract_binary=True`, which only `vault_read` and `vault_batch_read` do. Independently, `write_file_atomic` refuses text writes to binary extensions, so no text tool can replace a binary, including tools added later.
+
+### Upload grant before body
+
+`POST /upload/{id}` validates id, expiry, signature and single use before reading any body bytes, then caps the body by the grant's `max_size_bytes` rather than the global limit. A raw body is streamed and cut off at the cap; multipart requires a declared `Content-Length`. The grant is checked again immediately before the write. Rejected grants are logged, not audited.
+
 ### Hardlinks
 
-A hardlink inside the vault pointing at a file outside it is a real directory entry: there is nothing to follow, so path containment cannot see it. Any file with `st_nlink > 1` is therefore refused by `vault_read` (before PDF/image dispatch, so a hardlinked scan is not handed to OCR either), skipped by the Python search backend, and skipped when attaching a frontmatter excerpt.
+A hardlink inside the vault pointing at a file outside it is a real directory entry: there is nothing to follow, so path containment cannot see it. Any file with `st_nlink > 1` is therefore refused by `read_file` (before PDF/image dispatch, so a hardlinked scan is not handed to OCR either) and skipped by every path that reads vault content: both search backends (ripgrep drops the file's matches whole, since it reads the bytes before our code runs), the name pass, the frontmatter excerpt, the frontmatter index, the semantic index, analytics, the markdown encoding scan and repair, and signed download URLs at issuing and at redemption.
 
 Legitimate in-vault hardlinks are unsupported as a consequence. Nothing in this server creates one: the write tools write files, the import tools copy, and Obsidian Sync does not make links. (upstream issue #53)
 

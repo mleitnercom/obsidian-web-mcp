@@ -89,7 +89,7 @@ def test_read_file_rejects_binary_pdf(vault_dir):
     pdf_file = vault_dir / "sample.pdf"
     pdf_file.write_bytes(build_simple_pdf_bytes("Hello PDF"))
 
-    content, metadata = read_file("sample.pdf")
+    content, metadata = read_file("sample.pdf", extract_binary=True)
 
     assert "Hello PDF" in content
     assert metadata["type"] == "pdf"
@@ -130,7 +130,7 @@ def test_read_file_uses_external_ocr_fallback_for_image_only_pdf(vault_dir, monk
         )(),
     )
 
-    content, metadata = read_file("scan.pdf")
+    content, metadata = read_file("scan.pdf", extract_binary=True)
 
     assert content == "OCR text from scan"
     assert metadata["content_source"] == "pdf_ocr_sidecar"
@@ -154,8 +154,8 @@ def test_pdf_ocr_sidecar_cache_hit_skips_second_ocr_run(vault_dir, monkeypatch):
 
     monkeypatch.setattr(vault_module.subprocess, "run", _run)
 
-    first_content, first_metadata = read_file("scan.pdf")
-    second_content, second_metadata = read_file("scan.pdf")
+    first_content, first_metadata = read_file("scan.pdf", extract_binary=True)
+    second_content, second_metadata = read_file("scan.pdf", extract_binary=True)
 
     assert first_content == "Cached OCR text"
     assert second_content == "Cached OCR text"
@@ -178,9 +178,9 @@ def test_pdf_ocr_sidecar_invalidates_when_pdf_changes(vault_dir, monkeypatch):
         lambda *args, **kwargs: type("Completed", (), {"returncode": 0, "stdout": next(outputs), "stderr": ""})(),
     )
 
-    first_content, _ = read_file("scan.pdf")
+    first_content, _ = read_file("scan.pdf", extract_binary=True)
     pdf_file.write_bytes(build_simple_pdf_bytes("changed"))
-    second_content, second_metadata = read_file("scan.pdf")
+    second_content, second_metadata = read_file("scan.pdf", extract_binary=True)
 
     assert first_content == "First OCR text"
     assert second_content == "Second OCR text"
@@ -200,8 +200,8 @@ def test_pdf_ocr_sidecar_disabled_preserves_on_demand_behavior(vault_dir, monkey
 
     monkeypatch.setattr(vault_module.subprocess, "run", _run)
 
-    read_file("scan.pdf")
-    read_file("scan.pdf")
+    read_file("scan.pdf", extract_binary=True)
+    read_file("scan.pdf", extract_binary=True)
 
     assert len(calls) == 2
     assert not (vault_dir / "scan.pdf.ocr.txt").exists()
@@ -218,7 +218,7 @@ def test_pdf_ocr_missing_binary_raises_stable_error(vault_dir, monkeypatch):
     monkeypatch.setattr(vault_module.subprocess, "run", _missing)
 
     with pytest.raises(vault_module.OcrError) as exc:
-        read_file("scan.pdf")
+        read_file("scan.pdf", extract_binary=True)
 
     assert exc.value.error_code == "ocr_tool_unavailable"
     assert not (vault_dir / "scan.pdf.ocr.txt").exists()
@@ -235,7 +235,7 @@ def test_pdf_ocr_timeout_raises_stable_error(vault_dir, monkeypatch):
     monkeypatch.setattr(vault_module.subprocess, "run", _timeout)
 
     with pytest.raises(vault_module.OcrError) as exc:
-        read_file("scan.pdf")
+        read_file("scan.pdf", extract_binary=True)
 
     assert exc.value.error_code == "ocr_timeout"
     assert not (vault_dir / "scan.pdf.ocr.txt").exists()
@@ -252,7 +252,7 @@ def test_pdf_ocr_failure_raises_stable_error(vault_dir, monkeypatch):
     )
 
     with pytest.raises(vault_module.OcrError) as exc:
-        read_file("scan.pdf")
+        read_file("scan.pdf", extract_binary=True)
 
     assert exc.value.error_code == "ocr_failed"
     assert "boom" in str(exc.value)
@@ -275,7 +275,7 @@ def test_pdf_ocr_sidecar_lock_prevents_duplicate_ocr_runs(vault_dir, monkeypatch
 
     def _read():
         barrier.wait(timeout=5)
-        results.append(read_file("scan.pdf")[0])
+        results.append(read_file("scan.pdf", extract_binary=True)[0])
 
     threads = [threading.Thread(target=_read), threading.Thread(target=_read)]
     for thread in threads:

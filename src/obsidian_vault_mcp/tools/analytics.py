@@ -10,6 +10,7 @@ import frontmatter
 from .. import config
 from ..vault import (
     allowed_root_paths,
+    has_extra_hard_links,
     is_vault_path_allowed,
     resolve_vault_path,
     scan_markdown_encoding_issues,
@@ -42,6 +43,8 @@ def _iter_vault_files(path_prefix: str = "", pattern: str = "*") -> tuple[Path, 
             if path.is_symlink() or not path.is_file():
                 continue
             if not is_vault_path_allowed(path):
+                continue
+            if has_extra_hard_links(path):
                 continue
             files.append(path)
     return (roots[0] if len(roots) == 1 else config.VAULT_PATH.resolve()), files

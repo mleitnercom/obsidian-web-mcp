@@ -595,6 +595,7 @@ from .tools.download import (
 )
 from .tools.write import (
     commit_direct_upload,
+    validate_direct_upload_grant,
     vault_append as _vault_append,
     vault_batch_replace as _vault_batch_replace,
     vault_batch_frontmatter_update as _vault_batch_frontmatter_update,
@@ -1900,25 +1901,51 @@ def build_app():
         return Response(body, status_code=200, media_type=result["mime_type"], headers=headers)
 
     async def direct_upload(request: Request):
-        """Accept bytes for a signed direct upload URL."""
+        """Accept bytes for a signed direct upload URL.
+
+        Order matters and is the whole point: the grant is validated before a single
+        body byte is read. The previous order read the body first, so anyone on the
+        internet could make the server buffer up to MAX_BINARY_SIZE per request without
+        a valid URL. Then the body is capped by what the grant allows, not by the global
+        limit: a URL issued for 2 MB cannot be used to push 100 MB.
+        """
         upload_id = request.path_params["upload_id"]
+        expires = request.query_params.get("expires", "")
+        signature = request.query_params.get("signature", "")
+
+        grant, grant_status = validate_direct_upload_grant(upload_id, expires, signature)
+        if grant_status != 200:
+            # Not audited: an unauthenticated flood would otherwise grow the audit log
+            # without bound. Rejections are logged, which rotates.
+            logger.warning("Direct upload refused before reading the body: %s (%s)", upload_id, grant.get("error"))
+            return JSONResponse(grant, status_code=grant_status)
+
+        cap = min(int(grant["max_size_bytes"]), config.MAX_BINARY_SIZE)
+        too_large = {
+            "error": f"Uploaded content exceeds the {cap} bytes this upload URL allows",
+            "upload_id": upload_id,
+        }
         content_length = request.headers.get("content-length")
-        if content_length:
+        if content_length is not None:
             try:
-                if int(content_length) > config.MAX_BINARY_SIZE:
-                    return JSONResponse(
-                        {
-                            "error": f"Uploaded content exceeds server limit of {config.MAX_BINARY_SIZE} bytes",
-                            "upload_id": upload_id,
-                        },
-                        status_code=413,
-                    )
+                if int(content_length) > cap:
+                    return JSONResponse(too_large, status_code=413)
             except ValueError:
                 return JSONResponse({"error": "Invalid Content-Length", "upload_id": upload_id}, status_code=400)
 
         content_type = request.headers.get("content-type", "")
         body = b""
         if content_type.split(";", 1)[0].strip().lower() == "multipart/form-data":
+            # The multipart parser reads the whole part before it can be inspected, so it
+            # is only allowed with a declared length, which the check above has capped.
+            if content_length is None:
+                return JSONResponse(
+                    {
+                        "error": "Multipart uploads must declare Content-Length; send raw bytes with --data-binary to stream",
+                        "upload_id": upload_id,
+                    },
+                    status_code=411,
+                )
             try:
                 form = await request.form()
             except Exception as exc:
@@ -1928,19 +1955,31 @@ def build_app():
                     status_code=400,
                 )
             uploaded = form.get("file")
-            if uploaded is None:
-                return JSONResponse({"error": "Multipart upload must include a 'file' field", "upload_id": upload_id}, status_code=400)
+            # A "file" part sent without a filename parses as a plain string, not an
+            # upload; calling .read() on it crashed the route with a 500. Refuse it.
+            if uploaded is None or not hasattr(uploaded, "read"):
+                return JSONResponse(
+                    {"error": "Multipart upload must include a 'file' field carrying file content", "upload_id": upload_id},
+                    status_code=400,
+                )
             content_type = getattr(uploaded, "content_type", "") or content_type
             body = await uploaded.read()
         else:
-            body = await request.body()
+            received = bytearray()
+            async for chunk in request.stream():
+                received.extend(chunk)
+                if len(received) > cap:
+                    # Stop reading the moment the grant's cap is passed; a missing or
+                    # understated Content-Length does not buy an unbounded buffer.
+                    return JSONResponse(too_large, status_code=413)
+            body = bytes(received)
 
         result, status_code = commit_direct_upload(
             upload_id=upload_id,
             content=body,
             content_type=content_type,
-            expires=request.query_params.get("expires", ""),
-            signature=request.query_params.get("signature", ""),
+            expires=expires,
+            signature=signature,
         )
         target_path = result.get("path")
         audit_record = build_audit_record(

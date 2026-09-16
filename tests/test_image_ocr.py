@@ -79,7 +79,7 @@ def test_first_read_runs_ocr_and_writes_a_sidecar(vault_dir, screenshot, monkeyp
     _enable_image_ocr(monkeypatch)
     _stub_ocr(monkeypatch)
 
-    content, metadata = read_file("00_Inbox/Pasted image 20260902093756.png")
+    content, metadata = read_file("00_Inbox/Pasted image 20260902093756.png", extract_binary=True)
 
     assert "NIS2" in content
     assert metadata["type"] == "image"
@@ -98,10 +98,10 @@ def test_second_read_uses_the_sidecar_and_does_not_run_ocr(vault_dir, screenshot
     calls = []
     _stub_ocr(monkeypatch, calls=calls)
 
-    read_file("00_Inbox/Pasted image 20260902093756.png")
+    read_file("00_Inbox/Pasted image 20260902093756.png", extract_binary=True)
     assert len(calls) == 1
 
-    content, metadata = read_file("00_Inbox/Pasted image 20260902093756.png")
+    content, metadata = read_file("00_Inbox/Pasted image 20260902093756.png", extract_binary=True)
 
     assert len(calls) == 1, "OCR ran again for an unchanged image"
     assert metadata["ocr"]["cache_hit"] is True
@@ -113,11 +113,11 @@ def test_changed_image_invalidates_the_sidecar(vault_dir, screenshot, monkeypatc
     _enable_image_ocr(monkeypatch)
     calls = []
     _stub_ocr(monkeypatch, calls=calls)
-    read_file("00_Inbox/Pasted image 20260902093756.png")
+    read_file("00_Inbox/Pasted image 20260902093756.png", extract_binary=True)
 
     screenshot.write_bytes(png_bytes(800, 600))
     _stub_ocr(monkeypatch, text="Anderer Folieninhalt", calls=calls)
-    content, metadata = read_file("00_Inbox/Pasted image 20260902093756.png")
+    content, metadata = read_file("00_Inbox/Pasted image 20260902093756.png", extract_binary=True)
 
     assert len(calls) == 2
     assert content == "Anderer Folieninhalt"
@@ -157,7 +157,7 @@ def test_sidecar_text_is_searchable(vault_dir, screenshot, monkeypatch):
     original_run = vault_module.subprocess.run
     _enable_image_ocr(monkeypatch)
     _stub_ocr(monkeypatch)
-    read_file("00_Inbox/Pasted image 20260902093756.png")
+    read_file("00_Inbox/Pasted image 20260902093756.png", extract_binary=True)
     monkeypatch.setattr(vault_module.subprocess, "run", original_run)
 
     result = json.loads(vault_search("Zulieferer"))

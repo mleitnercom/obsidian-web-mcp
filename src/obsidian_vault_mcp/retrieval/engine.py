@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from .. import config
-from ..vault import is_vault_path_allowed
+from ..vault import has_extra_hard_links, is_vault_path_allowed
 from .chunker import chunk_markdown_file
 from .models import Chunk
 
@@ -675,5 +675,10 @@ class SemanticSearchEngine:
             return False
         parts = Path(rel_path).parts
         if bool(set(parts) & config.EXCLUDED_DIRS):
+            return False
+        # Chunks of a hardlinked file would put outside content into semantic search
+        # results. All three indexing paths ask this function first, and each drops a
+        # path from the manifest once it answers False.
+        if has_extra_hard_links(config.VAULT_PATH / rel_path):
             return False
         return is_vault_path_allowed(config.VAULT_PATH / rel_path)

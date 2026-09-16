@@ -301,6 +301,12 @@ def refuse_hard_linked_file(path: Path) -> None:
         )
 
 
+# Text writes refuse these targets outright. PDF is not in UNSUPPORTED_BINARY_EXTENSIONS
+# because read_file extracts its text, and that is exactly why it belongs here: a file
+# whose text can be read out must never have that text written back over its bytes.
+TEXT_WRITE_REFUSED_EXTENSIONS = UNSUPPORTED_BINARY_EXTENSIONS | frozenset({".pdf"})
+
+
 def _reject_unsupported_binary(path: Path) -> None:
     """Reject known binary formats before attempting UTF-8 text reads."""
     suffix = path.suffix.lower()
@@ -676,10 +682,19 @@ def _run_pdf_ocr(path: Path) -> dict | None:
     return metadata
 
 
-def read_file(relative_path: str) -> tuple[str, dict]:
+def read_file(relative_path: str, *, extract_binary: bool = False) -> tuple[str, dict]:
     """Read a file and return (content, metadata).
 
     Metadata keys: size (int), modified (ISO str), created (ISO str).
+
+    ``extract_binary`` defaults to False on purpose. read_file is not only the read
+    tool's read: it is also the read half of vault_edit, vault_append,
+    vault_batch_frontmatter_update and vault_write(merge_frontmatter=True), each of
+    which reads, transforms and writes back. With extraction on, those tools received
+    a PDF's or a screenshot's extracted text and wrote it over the binary. Verified
+    against a real 907 KB screenshot on 2026-09-16: vault_append left 947 bytes of OCR
+    text behind, and then reported an error because it re-read the file it had just
+    destroyed. Only vault_read and vault_batch_read pass True.
     """
     path = resolve_vault_path(relative_path)
 
@@ -689,6 +704,14 @@ def read_file(relative_path: str) -> tuple[str, dict]:
     # Before any dispatch: a hardlinked PDF or image would otherwise be handed to OCR
     # and leak just as readily as a hardlinked note.
     refuse_hard_linked_file(path)
+
+    suffix = path.suffix.lower()
+    if not extract_binary and (suffix == ".pdf" or suffix in IMAGE_OCR_EXTENSIONS):
+        raise ValueError(
+            f"{relative_path} is a binary file ({suffix}). Text can be extracted from it "
+            "only by vault_read and vault_batch_read; tools that write a file back must "
+            "never see extracted text. Use vault_request_download_url for the bytes."
+        )
 
     if path.suffix.lower() == ".pdf":
         return _read_pdf_file(path)
@@ -724,7 +747,18 @@ def write_file_atomic(
 
     Returns (is_new_file, bytes_written). Writes to a tempfile in the same
     directory then replaces the target, so readers never see a partial write.
+
+    Refuses binary targets. This is the one chokepoint every text write passes through,
+    so the guard holds for every tool, including ones added later, instead of depending
+    on each tool remembering not to read a binary as text first.
     """
+    suffix = Path(relative_path).suffix.lower()
+    if suffix in TEXT_WRITE_REFUSED_EXTENSIONS:
+        raise ValueError(
+            f"Refusing to write text to {relative_path}: {suffix} is a binary format. "
+            "Use vault_write_binary or vault_request_upload_url for binary content."
+        )
+
     encoded = content.encode("utf-8")
     if len(encoded) > config.MAX_CONTENT_SIZE:
         raise ValueError(
@@ -981,6 +1015,8 @@ def scan_markdown_encoding_issues(
                 continue
             if not is_vault_path_allowed(path):
                 continue
+            if has_extra_hard_links(path):
+                continue
             try:
                 path.read_text(encoding="utf-8")
             except UnicodeDecodeError as e:
@@ -1033,6 +1069,8 @@ def repair_markdown_encoding_issues(
             if path.is_symlink() or not path.is_file():
                 continue
             if not is_vault_path_allowed(path):
+                continue
+            if has_extra_hard_links(path):
                 continue
 
             raw = path.read_bytes()
