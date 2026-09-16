@@ -22,6 +22,7 @@ from ..vault import (
     resolve_vault_path,
     vault_json_dumps,
     write_bytes_atomic,
+    write_file_from_path_atomic,
     write_file_atomic,
 )
 
@@ -301,6 +302,12 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
 _STAGING_ID_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
 
 
+def upload_staging_dir(upload_id: str) -> Path:
+    """The staging dir of an existing upload, where the route streams its body."""
+    upload_dir, _metadata_path, _parts_dir = _upload_paths(upload_id)
+    return upload_dir
+
+
 def _is_staging_record_dir(entry: Path) -> bool:
     """Whether a staging entry is one of our own records and safe to sweep.
 
@@ -460,20 +467,54 @@ def validate_direct_upload_grant(upload_id: str, expires: str, signature: str) -
 
 def commit_direct_upload(
     upload_id: str,
-    content: bytes,
+    staged_path: Path,
+    sha256: str,
     content_type: str,
     expires: str,
     signature: str,
 ) -> tuple[dict, int]:
-    """Validate and commit a signed direct HTTP upload."""
+    """Validate and commit a signed direct HTTP upload streamed to ``staged_path``.
+
+    The route streams the body to a file in the upload's staging dir; nothing here holds
+    the content in memory.
+    """
     try:
-        metadata, _upload_dir, metadata_path, _parts_dir = _load_upload(upload_id)
+        metadata, upload_dir, metadata_path, _parts_dir = _load_upload(upload_id)
         # Checked again here even though the route validated before reading the body:
-        # two requests on the same URL can both pass that first check, and only this
-        # one, immediately before the write, sees whether the other already completed.
+        # two requests on the same URL can both pass that first check.
         refusal = _check_direct_upload_grant(upload_id, metadata, expires, signature)
         if refusal is not None:
             return refusal
+    except ValueError as e:
+        return {"error": str(e), "upload_id": upload_id}, 400
+
+    # Checking completed_at is not enough when two requests race: both can read it unset
+    # and both write. mkdir either creates the marker or fails, so exactly one proceeds.
+    # A commit refused before anything was written releases the claim, so a wrong
+    # Content-Type does not burn the URL.
+    claim = upload_dir / "claimed"
+    try:
+        claim.mkdir()
+    except FileExistsError:
+        return {"error": "Upload URL has already been used", "upload_id": upload_id}, 409
+    result, status = _commit_claimed_upload(upload_id, metadata, metadata_path, staged_path, sha256, content_type)
+    if "error" in result and not metadata.get("completed_at"):
+        try:
+            claim.rmdir()
+        except OSError:
+            pass
+    return result, status
+
+
+def _commit_claimed_upload(
+    upload_id: str,
+    metadata: dict,
+    metadata_path: Path,
+    staged_path: Path,
+    sha256: str,
+    content_type: str,
+) -> tuple[dict, int]:
+    try:
 
         media_type = metadata["media_type"]
         normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
@@ -489,22 +530,23 @@ def commit_direct_upload(
                 "upload_id": upload_id,
                 "media_type": media_type,
             }, 415
-        if not content:
+        content_size = staged_path.stat().st_size
+        if content_size == 0:
             return {"error": "Upload body is empty", "upload_id": upload_id}, 400
-        if len(content) > metadata["max_size_bytes"]:
+        if content_size > metadata["max_size_bytes"]:
             return {
                 "error": f"Uploaded content exceeds max_size_bytes of {metadata['max_size_bytes']} bytes",
                 "upload_id": upload_id,
-                "size": len(content),
+                "size": content_size,
             }, 413
-        if len(content) > config.MAX_BINARY_SIZE:
+        if content_size > config.MAX_BINARY_SIZE:
             return {
                 "error": f"Uploaded content exceeds server limit of {config.MAX_BINARY_SIZE} bytes",
                 "upload_id": upload_id,
-                "size": len(content),
+                "size": content_size,
             }, 413
 
-        actual_sha256 = _sha256_bytes(content)
+        actual_sha256 = sha256
         expected_sha256 = metadata.get("expected_sha256")
         if expected_sha256 and actual_sha256 != expected_sha256:
             return {
@@ -522,9 +564,9 @@ def commit_direct_upload(
                 "path": metadata["path"],
             }, 409
 
-        is_new, size = write_bytes_atomic(
+        is_new, size = write_file_from_path_atomic(
             metadata["path"],
-            content,
+            staged_path,
             create_dirs=metadata["create_dirs"],
             overwrite=metadata["overwrite"],
         )
