@@ -1,11 +1,11 @@
 [project]
 name = "obsidian-web-mcp"
-version = "0.13.1"
+version = "0.13.2"
 description = "Secure remote MCP server for Obsidian vaults -- access your notes from Claude, your phone, or any MCP client, anywhere"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "mcp[cli]>=1.9.0,<1.27.0",
+    "mcp[cli]>=1.9.0,<2",
     "python-frontmatter>=1.1.0",
     "pypdf>=5.4.0",
     "pydantic>=2.0",
