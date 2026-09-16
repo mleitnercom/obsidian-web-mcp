@@ -5,6 +5,41 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.13.0] - 2026-09-16
+
+Three defects, all live in production, all verified against real data before and after. None was an outside attack; each survived because a test exercised a substitute rather than the thing production runs. That is the subject of `docs/testing.md`, added the same day.
+
+### Security
+
+- **Text writes can no longer replace a binary.** `read_file` is also the read half of `vault_edit`, `vault_append`, `vault_batch_frontmatter_update` and `vault_write(merge_frontmatter=True)`. It extracted text from PDFs and OCR'd images for every caller, and those tools wrote the extracted text back over the binary. Verified on a real 907 KB screenshot: `vault_append` left 947 bytes of OCR text and then reported an error, because it re-read the file it had just destroyed. A before/after probe with identical code showed the scope was wider than OCR: a PDF with an ordinary text layer was destroyed by 5 of 5 write tools, so every extractable PDF in the vault was exposed, not only scans.
+
+  Two layers now. `write_file_atomic`, the chokepoint every text write passes, refuses binary targets, so the guard also covers tools added later. And `read_file(extract_binary=False)` by default; only `vault_read` and `vault_batch_read` pass `True`. Surfaced by upstream review of #63.
+
+- **Hardlink guard on every path that reads vault content.** v0.10.0 was reported as closing the hardlink escape and did not. An inventory of every place that reads or enumerates vault files found six unguarded paths, including the ripgrep search backend, which is the one production uses and which had been reported upstream in June (#39). Now guarded: the ripgrep backend (drops a hardlinked file's matches whole), the frontmatter index (build and per-path update), the semantic index (one decision point for all three indexing paths), analytics, the markdown encoding scan and repair, and signed download URLs at issuing and at redemption.
+
+  The encoding repair was worse than a read leak: it rewrites with `path.write_text()`, in place, so on a hardlink it wrote *through* the link and altered the file outside the vault. Proven against the old code.
+
+- **The upload route validates the grant before reading a single body byte.** It read the whole body and checked the signature afterwards, so anyone on the internet could make the server buffer up to `MAX_BINARY_SIZE` (100 MB in production) per request without a valid URL. Now: id, expiry, signature and single use are checked with no body read; the body is capped by the grant's `max_size_bytes`, not the global limit; a raw body is streamed and cut off at the first chunk past the cap; multipart requires a declared length. `commit_direct_upload` re-checks the grant immediately before the write, so two requests on one URL cannot both succeed. Rejected grants are logged, not audited, so an unauthenticated flood cannot grow the audit log. Reported upstream in the review of #64.
+
+### Fixed
+
+- A multipart `file` part without a filename parses as a string; the upload route called `.read()` on it and answered 500. Found by running the new tests against the old code.
+- The staging sweep for uploads and downloads removed any old directory under its root. It now removes only real directories named like an id and never follows a symlink.
+
+### Changed
+
+- `read_file` extracts from binaries only with `extract_binary=True`. Direct callers of the helper that relied on extraction must pass it; the registered tools are unaffected.
+
+### Tests
+
+Every new test proves the hazard before asserting the protection, and was run against the old code to show it fails there for the right reason:
+
+- Binary writes: 5 of 5 write tools destroyed a real PDF before, 0 of 5 after.
+- Hardlinks: the same content sits in the vault as an ordinary copy and as a hardlink; each path must return the copy and not the link. Against the old code 7 of 8 local tests fail, every one on a guard assertion; the one that passes is the Python backend, which v0.10.0 did cover.
+- Upload: assertions are on the bytes the application pulls, counted at the ASGI boundary, because status codes alone pass on the old code too. Old code read 2 MB before refusing a bad signature and pulled all 64 streamed chunks past a 1 KB cap; new code pulls 1.
+
+Server run with `VAULT_TEST_REQUIRE_TOOLS=1`, from an isolated clone of the branch with its own venv (the production venv would have imported production code): 554 passed, 0 skipped.
+
 ## [v0.12.0] - 2026-09-09
 
 ### Added
