@@ -5,6 +5,23 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.13.1] - 2026-09-16
+
+### Changed
+
+- **Upload bodies stream to disk.** The upload route collected a raw body in a bytearray and read a multipart part whole, so an upload of the grant's size sat in memory, up to `MAX_BINARY_SIZE` (100 MB in production). The body now goes into a temp file in the upload's staging dir as it arrives, hashed on the way, and a multipart part is copied across in 1 MB chunks. `commit_direct_upload` takes the staged file instead of bytes and runs in a worker thread.
+
+### Fixed
+
+- **One upload URL writes once, also under concurrency.** With the commit in a worker thread, two requests on the same URL could both pass the "already used" check and both write. The grant is now claimed atomically (`mkdir`) before the write; a commit refused before writing (wrong Content-Type, checksum mismatch) releases the claim, so the URL stays usable.
+- **The audit record of an overwriting upload carries the size and checksum before.** It recorded `null`.
+
+### Tests
+
+`tests/test_upload_streams_to_disk.py` observes streaming rather than inferring it: while chunk k is pulled, the part file must already hold the k-1 chunks before it. Against v0.13.0 the streaming, multipart and audit tests fail on their assertion. The race test carries its own negative control, the commit step without the claim, where both requests reach the vault write.
+
+The same design is the basis of the upstream rework of #64 (branch `feat/signed-upload-v2`).
+
 ## [v0.13.0] - 2026-09-16
 
 Three defects, all live in production, all verified against real data before and after. None was an outside attack; each survived because a test exercised a substitute rather than the thing production runs. That is the subject of `docs/testing.md`, added the same day.

@@ -835,6 +835,55 @@ def write_bytes_atomic(
     return is_new, len(content)
 
 
+def write_file_from_path_atomic(
+    relative_path: str,
+    source: Path,
+    create_dirs: bool = True,
+    overwrite: bool = True,
+) -> tuple[bool, int]:
+    """Copy a file (a streamed upload in the staging dir) into the vault atomically.
+
+    Same placement as write_bytes_atomic without holding the content in memory. The
+    source may be on another filesystem, so it is copied into a temp file next to the
+    target rather than renamed.
+    """
+    size = source.stat().st_size
+    if size > config.MAX_BINARY_SIZE:
+        raise ValueError(f"Content size {size} bytes exceeds limit of {config.MAX_BINARY_SIZE} bytes")
+
+    path = resolve_vault_path(relative_path)
+    is_new = not path.exists()
+
+    if create_dirs:
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f, open(source, "rb") as src:
+            shutil.copyfileobj(src, f, 1024 * 1024)
+        if overwrite:
+            os.replace(tmp_path, path)
+        else:
+            try:
+                os.link(tmp_path, path)
+            except FileExistsError:
+                raise FileExistsError(f"File already exists: {relative_path}")
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            is_new = True
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+    return is_new, size
+
+
 def move_path(
     source: str, destination: str, create_dirs: bool = True
 ) -> bool:

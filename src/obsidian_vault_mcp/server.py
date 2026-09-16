@@ -6,13 +6,16 @@ Designed to run behind Cloudflare Tunnel for secure remote access.
 
 import asyncio
 import functools
+import hashlib
 import json
 import logging
 import sys
+import tempfile
 import time
 import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated, Any, Callable, Literal
 
 import anyio.to_thread
@@ -595,6 +598,7 @@ from .tools.download import (
 )
 from .tools.write import (
     commit_direct_upload,
+    upload_staging_dir,
     validate_direct_upload_grant,
     vault_append as _vault_append,
     vault_batch_replace as _vault_batch_replace,
@@ -1904,10 +1908,11 @@ def build_app():
         """Accept bytes for a signed direct upload URL.
 
         Order matters and is the whole point: the grant is validated before a single
-        body byte is read. The previous order read the body first, so anyone on the
-        internet could make the server buffer up to MAX_BINARY_SIZE per request without
-        a valid URL. Then the body is capped by what the grant allows, not by the global
-        limit: a URL issued for 2 MB cannot be used to push 100 MB.
+        body byte is read, so a request without a valid URL costs the server nothing.
+        The body is then capped by what the grant allows, not by the global limit, and
+        streamed into a temp file in the upload's staging dir; it is never held in
+        memory. The commit checks the grant again, claims it atomically and places the
+        file.
         """
         upload_id = request.path_params["upload_id"]
         expires = request.query_params.get("expires", "")
@@ -1934,59 +1939,78 @@ def build_app():
                 return JSONResponse({"error": "Invalid Content-Length", "upload_id": upload_id}, status_code=400)
 
         content_type = request.headers.get("content-type", "")
-        body = b""
-        if content_type.split(";", 1)[0].strip().lower() == "multipart/form-data":
-            # The multipart parser reads the whole part before it can be inspected, so it
-            # is only allowed with a declared length, which the check above has capped.
-            if content_length is None:
-                return JSONResponse(
-                    {
-                        "error": "Multipart uploads must declare Content-Length; send raw bytes with --data-binary to stream",
-                        "upload_id": upload_id,
-                    },
-                    status_code=411,
-                )
-            try:
-                form = await request.form()
-            except Exception as exc:
-                logger.warning("Direct upload multipart parse failed for %s: %s", upload_id, exc)
-                return JSONResponse(
-                    {"error": "Could not parse multipart upload; send field 'file' or use --data-binary", "upload_id": upload_id},
-                    status_code=400,
-                )
-            uploaded = form.get("file")
-            # A "file" part sent without a filename parses as a plain string, not an
-            # upload; calling .read() on it crashed the route with a 500. Refuse it.
-            if uploaded is None or not hasattr(uploaded, "read"):
-                return JSONResponse(
-                    {"error": "Multipart upload must include a 'file' field carrying file content", "upload_id": upload_id},
-                    status_code=400,
-                )
-            content_type = getattr(uploaded, "content_type", "") or content_type
-            body = await uploaded.read()
-        else:
-            received = bytearray()
-            async for chunk in request.stream():
-                received.extend(chunk)
-                if len(received) > cap:
-                    # Stop reading the moment the grant's cap is passed; a missing or
-                    # understated Content-Length does not buy an unbounded buffer.
-                    return JSONResponse(too_large, status_code=413)
-            body = bytes(received)
+        is_multipart = content_type.split(";", 1)[0].strip().lower() == "multipart/form-data"
+        if is_multipart and content_length is None:
+            # The multipart parser consumes the whole request before a part can be
+            # inspected, so it is only allowed with a declared length, capped above.
+            return JSONResponse(
+                {
+                    "error": "Multipart uploads must declare Content-Length; send raw bytes with --data-binary to stream",
+                    "upload_id": upload_id,
+                },
+                status_code=411,
+            )
 
-        result, status_code = commit_direct_upload(
-            upload_id=upload_id,
-            content=body,
-            content_type=content_type,
-            expires=expires,
-            signature=signature,
-        )
-        target_path = result.get("path")
+        fd, part_name = tempfile.mkstemp(dir=upload_staging_dir(upload_id), suffix=".part")
+        part = Path(part_name)
+        digest = hashlib.sha256()
+        received = 0
+        try:
+            with open(fd, "wb") as out:
+
+                async def keep(chunk: bytes) -> bool:
+                    nonlocal received
+                    received += len(chunk)
+                    if received > cap:
+                        return False
+                    digest.update(chunk)
+                    await anyio.to_thread.run_sync(out.write, chunk)
+                    return True
+
+                if is_multipart:
+                    try:
+                        form = await request.form()
+                    except Exception as exc:
+                        logger.warning("Direct upload multipart parse failed for %s: %s", upload_id, exc)
+                        return JSONResponse(
+                            {"error": "Could not parse multipart upload; send field 'file' or use --data-binary", "upload_id": upload_id},
+                            status_code=400,
+                        )
+                    uploaded = form.get("file")
+                    # A "file" part sent without a filename parses as a plain string, not an
+                    # upload; calling .read() on it crashed the route with a 500. Refuse it.
+                    if uploaded is None or not hasattr(uploaded, "read"):
+                        return JSONResponse(
+                            {"error": "Multipart upload must include a 'file' field carrying file content", "upload_id": upload_id},
+                            status_code=400,
+                        )
+                    content_type = getattr(uploaded, "content_type", "") or content_type
+                    # Starlette spools the part to disk past 1 MB; copy it across in chunks
+                    # rather than reading it whole.
+                    while chunk := await uploaded.read(1024 * 1024):
+                        if not await keep(chunk):
+                            return JSONResponse(too_large, status_code=413)
+                else:
+                    async for chunk in request.stream():
+                        # Stop at the first chunk past the grant's cap; a missing or
+                        # understated Content-Length does not buy more than the grant allows.
+                        if not await keep(chunk):
+                            return JSONResponse(too_large, status_code=413)
+
+            target_path = grant.get("path")
+            before = await anyio.to_thread.run_sync(snapshot_path, target_path)
+            result, status_code = await anyio.to_thread.run_sync(
+                commit_direct_upload, upload_id, part, digest.hexdigest(), content_type, expires, signature
+            )
+        finally:
+            part.unlink(missing_ok=True)
+
+        target_path = result.get("path") or target_path
         audit_record = build_audit_record(
             operation="POST /upload/{id}",
             target_path=target_path,
-            before={"size": None, "checksum": None},
-            after=snapshot_path(target_path),
+            before=before,
+            after=snapshot_path(target_path) if "error" not in result else None,
             operation_status="error" if "error" in result else "success",
             error=result.get("error"),
         )
