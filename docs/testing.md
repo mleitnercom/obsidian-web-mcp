@@ -105,3 +105,54 @@ Read paths that can return file-derived data today:
 - canvas and analytics readers
 
 A guard that does not cover all of them is not a guard.
+
+### 8. Test cases come from the surface, not from the diff
+
+A test written from the implementation only covers what the code already knows about. For
+anything reachable from outside, enumerate the inputs before writing a line: methods, path
+shapes including percent-encoding and a trailing slash, query keys encoded
+(`%73ignature=`), headers missing or hostile, non-ASCII values, bodies with and without a
+declared length.
+
+Two examples from the reviews of upstream #80, both found by the maintainer and not here:
+
+- The upload namespace was guarded with three probe paths, so a literal
+  `Route("/upload/export")` passed the guard while the exemption regex matched it. The
+  test only tried parameterized routes, the shape the implementation handled.
+- `hmac.compare_digest` raises `TypeError` on a non-ASCII `str`, so `signature=%C3%A9`
+  answered 500. Every test used a well-formed hex signature.
+
+### 9. Attack your own surface once, by hand
+
+Before submitting a new externally reachable path, spend a session probing it yourself:
+wrong method, wrong content type, the id that does not exist, the directory swapped for a
+symlink after the grant, the same URL twice. The maintainer did exactly this on #80 and
+found three issues the green suite did not.
+
+### 10. Someone else's repository, someone else's rules
+
+Read `CONTRIBUTING.md` before choosing defaults, and look for the precedent in the target
+project for every new setting. Upstream validates the audit log path at startup and
+requires new security-relevant features to be off until enabled; #80 shipped with a
+feature on by default and settings that silently fell back to their defaults, because it
+carried the fork's habits instead of the project's rules.
+
+### 11. Test tooling is code with its own risk
+
+`tests/_live_server.py` started a real server from `**os.environ`. A developer with
+`VAULT_AUDIT_LOG_PATH` exported got test writes in their real audit log,
+`VAULT_MCP_HEARTBEAT_URL` pinged their real monitor, and `VAULT_MCP_HOST=0.0.0.0`
+published a server with a token from this repository. Helpers build their environment
+from scratch, point `HOME` into `tmp_path`, and never depend on the developer's machine.
+
+### 12. The client is a model
+
+Asking "can this code corrupt data" is not enough; ask what a model does next. `vault_read`
+returning OCR text with nothing marking it as extracted is safe in the write path and still
+dangerous: a model that gets the safe error from `vault_edit` falls back to `vault_write`
+and replaces the PDF with the text it was just shown. Hence `metadata["extracted"]`.
+
+### 13. A claim in prose needs the same proof as a line of code
+
+The #80 description said `/upload/x/y` was rejected. No test covered it, and the guard did
+not reject it. If there is no test, the claim comes out of the text.
