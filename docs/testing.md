@@ -156,3 +156,30 @@ and replaces the PDF with the text it was just shown. Hence `metadata["extracted
 
 The #80 description said `/upload/x/y` was rejected. No test covered it, and the guard did
 not reject it. If there is no test, the claim comes out of the text.
+
+### 14. A public function that takes a function: test the function's shapes
+
+`run_audited(operation, func)` was made public for extensions (upstream #93). The names
+passed to it were attacked by hand; the shape of `func` was not. The maintainer found that
+an `async` function returns before its body runs, so the audit record said "success" for a
+call that raised afterwards. Six fork tools have been coroutines since v0.10.0, so this was
+foreseeable. When a public function takes a callable, the input matrix includes a
+synchronous one, an async one, one that raises, one that returns the wrong type, and every
+path the wrapper has (passthrough, single call, batch).
+
+### 15. A negative control that passes is a finding
+
+The partial-OCR wrapper test passed against the old wrapper too, which could not do what
+the test claimed. The assertion only checked that the OCR text appeared somewhere; the old
+wrapper put the whole document on page 2 and the text still appeared. Assert where the
+text is, not only that it is there, and treat a control that does not fail as a bug in the
+test.
+
+### 16. Between processes, match by label, not by position
+
+The first partial-OCR contract matched output blocks to pages by position and relied on
+tesseract's form feeds. tesseract 5.3 prints none, and a wrapper that ignores the page list
+prints one stream; by position that stream is a perfect match for one missing page. The
+contract now labels every block with its page number and rejects anything unlabelled,
+unrequested or duplicated. Position-based matching fails silently exactly when the other
+side answers differently than assumed.
