@@ -164,19 +164,20 @@ def _png_to_image_pdf_page(png: bytes) -> bytes:
     """A one-page PDF whose only content is the PNG as an image: a scan, no text layer.
     The PNG's zlib data goes in as is, with the PNG predictor declared."""
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
-    pos, idat, width = 8, b"", 0
+    pos, idat, width, space, colors = 8, b"", 0, "/DeviceGray", 1
     while pos < len(png):
         length, kind = struct.unpack(">I4s", png[pos:pos + 8])
         data = png[pos + 8:pos + 8 + length]
         if kind == b"IHDR":
             width, height, depth, color = struct.unpack(">IIBB", data[:10])
-            assert depth == 8 and color == 0, "expects 8-bit grayscale"
+            assert depth == 8 and color in (0, 2), "expects 8-bit gray or RGB without alpha"
+            space, colors = ("/DeviceGray", 1) if color == 0 else ("/DeviceRGB", 3)
         elif kind == b"IDAT":
             idat += data
         pos += 12 + length
     image = (
-        f"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceGray "
-        f"/BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 "
+        f"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace {space} "
+        f"/BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors {colors} "
         f"/BitsPerComponent 8 /Columns {width} >> /Length {len(idat)} >>\nstream\n"
     ).encode() + idat + b"\nendstream"
     draw = f"q 300 0 0 200 0 0 cm /Im1 Do Q".encode()
