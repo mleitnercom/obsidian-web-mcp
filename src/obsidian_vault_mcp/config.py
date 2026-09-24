@@ -228,9 +228,9 @@ VAULT_AUDIT_LOG_INCLUDE_READS = _env_bool("VAULT_AUDIT_LOG_INCLUDE_READS", False
 # created, and what must they contain" is a property of one vault, not of this
 # server.
 #
-# The tool is inert until VAULT_CREATE_NOTE_PATH_PATTERN is set: with no
-# statement about which paths are eligible, any creation would be a guess, so
-# the unconfigured state refuses rather than allows.
+# All of these are optional. Unset, the tool creates any Markdown note that
+# does not exist yet, which is strictly less than vault_write can do. Set, they
+# narrow it for a vault whose only create-only client has a fixed form.
 #
 # PATH_PATTERN            regex the vault-relative path must fully match
 # REQUIRED_FRONTMATTER    JSON object {field: regex}; each field must be present
@@ -240,7 +240,7 @@ VAULT_AUDIT_LOG_INCLUDE_READS = _env_bool("VAULT_AUDIT_LOG_INCLUDE_READS", False
 # ID_FIELD                frontmatter field whose value must equal the filename
 #                         stem, catching an id/path mismatch before the write
 # REQUIRE_BODY_SECTION    literal string the body must contain (e.g. a heading)
-# MAX_BYTES               per-note ceiling, independent of MAX_CONTENT_SIZE
+# MAX_BYTES               per-note ceiling; 0 (default) means MAX_CONTENT_SIZE
 VAULT_CREATE_NOTE_PATH_PATTERN = os.environ.get(
     "VAULT_CREATE_NOTE_PATH_PATTERN", ""
 ).strip()
@@ -252,7 +252,7 @@ VAULT_CREATE_NOTE_ID_FIELD = os.environ.get("VAULT_CREATE_NOTE_ID_FIELD", "").st
 VAULT_CREATE_NOTE_REQUIRE_BODY_SECTION = os.environ.get(
     "VAULT_CREATE_NOTE_REQUIRE_BODY_SECTION", ""
 ).strip()
-VAULT_CREATE_NOTE_MAX_BYTES = _env_int("VAULT_CREATE_NOTE_MAX_BYTES", 16000)
+VAULT_CREATE_NOTE_MAX_BYTES = _env_int("VAULT_CREATE_NOTE_MAX_BYTES", 0)
 
 VAULT_RECURRING_ENABLED = _env_bool("VAULT_RECURRING_ENABLED", False)
 VAULT_RECURRING_TEMPLATES_FOLDER = os.environ.get(

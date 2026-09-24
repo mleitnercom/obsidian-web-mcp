@@ -6,11 +6,17 @@ schedule needs the opposite guarantee -- it may add a note, and must not be able
 to damage one that already exists, including when two of its own calls race or
 when a lost response makes it retry.
 
-This module provides that narrow path. Everything it accepts is described by
-configuration (``VAULT_CREATE_NOTE_*``), because which paths are eligible and
-what a note must contain are properties of one vault, not of this server. With
-no path pattern configured the tool refuses: an unconfigured policy is not a
-permissive one.
+This module provides that narrow path for any caller: a Markdown note, created
+only if nothing is there, never a replacement. It is strictly weaker than
+``vault_write``, which the same token can call, so it needs no policy to be safe.
+
+An operator can still narrow it (``VAULT_CREATE_NOTE_*``: path pattern, required
+and allowed frontmatter, id field, body section, size). That used to be the only
+mode, and the tool refused everything without a pattern. It turned out to be a
+trap: the name invites every client, and a policy written for one client rejected
+the others field by field without saying what would pass (three failed sessions,
+17.09.2026). A client with a form contract checks its own form; the server
+guarantees the creation.
 
 The creation itself is ``write_bytes_atomic(overwrite=False)``, which claims the
 name with ``os.link`` and therefore cannot replace an existing file even under a
@@ -122,11 +128,12 @@ def _scalar(value: Any) -> str | None:
 def _validate_path(path: str) -> None:
     pattern = config.VAULT_CREATE_NOTE_PATH_PATTERN
     if not pattern:
-        raise CreateNoteError(
-            "create_note_disabled",
-            "vault_create_note is not configured on this server; set "
-            "VAULT_CREATE_NOTE_PATH_PATTERN to the paths it may create",
-        )
+        if not path.endswith(".md"):
+            raise CreateNoteError(
+                "path_not_allowed",
+                "vault_create_note creates Markdown notes; the path must end in .md",
+            )
+        return
     if not _compile(pattern, "VAULT_CREATE_NOTE_PATH_PATTERN").fullmatch(path):
         raise CreateNoteError(
             "path_not_allowed",
@@ -135,13 +142,24 @@ def _validate_path(path: str) -> None:
 
 
 def _validate_frontmatter(path: str, metadata: Any) -> None:
+    required = _required_frontmatter_policy()
+    allowed = set(config.VAULT_CREATE_NOTE_ALLOWED_FRONTMATTER)
+    id_field = config.VAULT_CREATE_NOTE_ID_FIELD
+    if not (required or allowed or id_field):
+        # No frontmatter policy: a plain note without frontmatter is a note. A
+        # frontmatter block that does not parse was already refused by
+        # _validate_content, which fails closed.
+        if metadata and not isinstance(metadata, dict):
+            raise CreateNoteError(
+                "invalid_frontmatter", "Frontmatter must be a YAML mapping"
+            )
+        return
+
     if not isinstance(metadata, dict) or not metadata:
         raise CreateNoteError(
             "invalid_frontmatter", "Note must start with a YAML frontmatter mapping"
         )
 
-    required = _required_frontmatter_policy()
-    allowed = set(config.VAULT_CREATE_NOTE_ALLOWED_FRONTMATTER)
     if allowed:
         missing_from_allowlist = set(required) - allowed
         if missing_from_allowlist:
@@ -178,7 +196,6 @@ def _validate_frontmatter(path: str, metadata: Any) -> None:
                 f"Frontmatter field '{field}' does not match the configured policy",
             )
 
-    id_field = config.VAULT_CREATE_NOTE_ID_FIELD
     if id_field:
         if id_field not in metadata:
             raise CreateNoteError(
@@ -196,11 +213,15 @@ def _validate_frontmatter(path: str, metadata: Any) -> None:
 
 def _validate_content(content: str) -> Any:
     encoded_length = len(content.encode("utf-8"))
-    if encoded_length > config.VAULT_CREATE_NOTE_MAX_BYTES:
+    # 0 (the default) means the server's general content limit, the same one
+    # vault_write applies: a stricter create-only limit would push a client whose
+    # note is merely long towards vault_write, which overwrites.
+    limit = config.VAULT_CREATE_NOTE_MAX_BYTES or config.MAX_CONTENT_SIZE
+    if encoded_length > limit:
         raise CreateNoteError(
             "content_too_large",
             f"Note size {encoded_length} bytes exceeds the create-only limit of "
-            f"{config.VAULT_CREATE_NOTE_MAX_BYTES} bytes",
+            f"{limit} bytes",
         )
 
     try:

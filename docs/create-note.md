@@ -5,8 +5,8 @@ their own vault, and the wrong one for an unattended client that files notes on
 a schedule: a retry after a dropped response, or two workers picking the same
 filename, must never cost an existing note.
 
-`vault_create_note` is the narrow path for that case. It adds a note or it
-refuses. It never modifies a file that already exists.
+`vault_create_note` is the narrow path for that case, for any client. It adds a
+Markdown note or it refuses. It never modifies a file that already exists.
 
 ## Guarantees
 
@@ -17,31 +17,38 @@ refuses. It never modifies a file that already exists.
 - **Verified.** The note is read back and compared byte-for-byte before
   `created: true` is returned. A caller that sees success knows the bytes on
   disk are the bytes it sent.
-- **No folder creation.** The configured path pattern says which notes may be
-  created, not which folders may appear. A missing parent is
-  `parent_folder_missing`, not a new directory.
-- **Inert until configured.** With no `VAULT_CREATE_NOTE_PATH_PATTERN` the tool
-  returns `create_note_disabled`. An unconfigured policy is not a permissive
-  one.
+- **No folder creation.** A missing parent is `parent_folder_missing`, not a new
+  directory.
+- **Works without configuration.** Unconfigured, any `.md` path the vault's path
+  policy allows can be created, with or without frontmatter; a frontmatter block
+  that does not parse is refused. That is strictly less than `vault_write` can do
+  under the same token, so no policy is needed for safety.
 
 ## What it does not give you
 
 The tool constrains *shape*, not *identity*. It runs under the same bearer
 token as every other tool, so a client holding that token can still call
-`vault_write` and overwrite anything. Treat the policy below as a guard against
-a misbehaving client, not as a privilege boundary. Real separation needs
+`vault_write` and overwrite anything. Treat the optional policy below as a guard
+against a misbehaving client, not as a privilege boundary. Real separation needs
 per-client tokens with per-tool scopes, which this server does not have yet.
 
-## Configuration
+## Optional narrowing
+
+Until v0.15.0 the policy was mandatory and the tool refused everything without a
+path pattern. With a policy written for one client, the generic name then invited
+every other client into a wall of field-by-field refusals that never said what
+would pass. A client with a fixed form is better served by checking its own form
+before it calls; the server guarantees the creation. The settings remain for a
+vault that wants the server to enforce a shape anyway.
 
 | Variable | Meaning |
 |---|---|
-| `VAULT_CREATE_NOTE_PATH_PATTERN` | Regex the vault-relative path must fully match. Empty disables the tool. |
+| `VAULT_CREATE_NOTE_PATH_PATTERN` | Regex the vault-relative path must fully match. Empty: any `.md` path. |
 | `VAULT_CREATE_NOTE_REQUIRED_FRONTMATTER` | JSON object `{field: regex}`. Each field must be present and its value must fully match. Map a field to `true` instead of a regex to require it without constraining its value. |
 | `VAULT_CREATE_NOTE_ALLOWED_FRONTMATTER` | Comma-separated field allowlist. Empty means any field; non-empty must cover every required field. |
 | `VAULT_CREATE_NOTE_ID_FIELD` | Frontmatter field whose value must equal the filename stem. Empty disables the check. |
 | `VAULT_CREATE_NOTE_REQUIRE_BODY_SECTION` | Literal string the body must contain, e.g. a heading. |
-| `VAULT_CREATE_NOTE_MAX_BYTES` | Per-note ceiling (default `16000`), independent of `VAULT_MAX_CONTENT_SIZE`. |
+| `VAULT_CREATE_NOTE_MAX_BYTES` | Per-note ceiling. `0` (default) means `VAULT_MAX_CONTENT_SIZE`, the limit `vault_write` applies. |
 
 Values are matched with `fullmatch`, so patterns are anchored without `^`/`$`.
 
@@ -74,11 +81,10 @@ section in the body.
 
 | Code | Meaning |
 |---|---|
-| `create_note_disabled` | No path pattern configured; the tool is inert. |
-| `path_not_allowed` | Path does not match the pattern, or violates vault path policy. |
+| `path_not_allowed` | Not a `.md` path, outside the configured pattern, or against vault path policy. |
 | `note_exists` | A note is already there. Nothing was modified. |
 | `parent_folder_missing` | The target folder does not exist. |
-| `invalid_frontmatter` | Missing, unterminated, or malformed YAML frontmatter. |
+| `invalid_frontmatter` | Unterminated or malformed YAML frontmatter, or none where a policy requires it. |
 | `frontmatter_missing_field` | A required field is absent. |
 | `frontmatter_not_allowed` | A field outside the allowlist was present. |
 | `frontmatter_value_rejected` | A required field's value failed its pattern, or is not a scalar. |
@@ -107,14 +113,9 @@ Because a lost response is indistinguishable from a failure at the client, step
 3 is what makes a retry harmless: the second attempt either finds its own note
 or refuses.
 
-## Enabling and disabling
+## Narrowing and widening
 
-The tool ships with the server; there is nothing to install. To enable it, set
-`VAULT_CREATE_NOTE_PATH_PATTERN` (plus whatever policy you want) in the
-server's environment and restart.
-
-To disable it, unset `VAULT_CREATE_NOTE_PATH_PATTERN` and restart. The tool
-stays registered and answers `create_note_disabled` for every call, so a client
-still configured against it fails loudly instead of silently writing somewhere
-unexpected. Notes already created are ordinary vault files and are not touched
-by disabling the tool.
+The tool ships with the server and works without configuration. To narrow it,
+set any of the `VAULT_CREATE_NOTE_*` variables and restart; to widen it again,
+unset them. Notes already created are ordinary vault files and are not touched
+either way.
