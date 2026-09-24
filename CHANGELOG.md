@@ -5,6 +5,17 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.14.0] - 2026-09-24
+
+### Added
+
+- **OCR for the scanned pages of a mixed PDF** (`VAULT_PDF_OCR_PARTIAL`, off by default). A contract scan with an e-signature audit trail appended has a text layer on the trail pages only, so the whole-document OCR never ran and the contract stayed unreadable (the Cash-Pooling contract: 3 of 26 pages). With the switch on, only the pages without text go to the OCR command, listed in `VAULT_PDF_OCR_PAGES`; the command prints one form-feed terminated block per page and the server puts each block in its page's place. The merged text is cached in the sidecar, so a second read runs no OCR and `vault_search` finds the scanned pages. A command that answers with more blocks than requested pages is not trusted (its blocks cannot be matched to pages), and a failed run leaves the PDF exactly as readable as before: text layer only, the reason in `metadata.ocr`.
+- **The production OCR wrapper is in the repo** (`docs/deploy/obsidian-mcp-pdf-ocr.sh`), with `VAULT_PDF_OCR_PAGES` support and one form feed per requested page even when a page fails to render.
+
+### Changed
+
+- The PDF environment test isolates the environment: it uses an unencrypted scan, so on v0.13.2 it fails on the leaked secrets and not on the owner-password refusal.
+
 ## [v0.13.3] - 2026-09-24
 
 ### Fixed

@@ -562,17 +562,17 @@ def _read_pdf_file(path: Path) -> tuple[str, dict]:
         if decrypt_result == 0:
             raise ValueError("Encrypted PDF files are not supported by vault_read")
 
-    page_texts: list[str] = []
-    extracted_page_count = 0
+    per_page: list[str] = []
     for page in reader.pages:
         try:
             text = page.extract_text() or ""
         except Exception:
             text = ""
-        text = text.strip()
-        if text:
-            extracted_page_count += 1
-            page_texts.append(text)
+        per_page.append(text.strip())
+    page_texts = [text for text in per_page if text]
+    extracted_page_count = len(page_texts)
+    missing_pages = [number for number, text in enumerate(per_page, start=1) if not text]
+    partial = bool(page_texts) and bool(missing_pages) and config.VAULT_PDF_OCR_PARTIAL
 
     stat = path.stat()
     metadata = {
@@ -586,7 +586,37 @@ def _read_pdf_file(path: Path) -> tuple[str, dict]:
         "extractable_text": extracted_page_count > 0,
     }
 
-    if extracted_page_count == 0:
+    if extracted_page_count == 0 or partial:
+        ocr_pages = missing_pages if partial else None
+
+        def ocr_content(ocr_metadata: dict) -> str | None:
+            if not ocr_pages:
+                return ocr_metadata["content"]
+            merged = _merge_partial_ocr(per_page, ocr_pages, ocr_metadata["raw_stdout"])
+            if merged is None:
+                ocr_metadata["applied"] = False
+                ocr_metadata["error"] = "page_count_mismatch"
+                return None
+            text, done = merged
+            ocr_metadata["partial"] = True
+            ocr_metadata["pages"] = done
+            ocr_metadata["pages_still_without_text"] = [p for p in ocr_pages if p not in done]
+            return text
+
+        attempted = False
+
+        def run_ocr() -> dict | None:
+            nonlocal attempted
+            attempted = True
+            try:
+                return _run_pdf_ocr(path, pages=ocr_pages)
+            except OcrError as exc:
+                if not ocr_pages:
+                    raise
+                # A mixed PDF was readable before partial OCR existed. A failed run
+                # (timeout, missing tool, no text) keeps it readable: text layer only.
+                return {"applied": False, "partial": True, "error": exc.error_code}
+
         sidecar_path = _ocr_sidecar_path(path)
         if config.VAULT_PDF_OCR_ENABLED and config.VAULT_PDF_OCR_CMD and config.VAULT_PDF_OCR_SIDECAR_ENABLED:
             cached_content = _read_valid_ocr_sidecar(path, sidecar_path)
@@ -613,29 +643,64 @@ def _read_pdf_file(path: Path) -> tuple[str, dict]:
                     }
                     return cached_content, metadata
 
-                ocr_metadata = _run_pdf_ocr(path)
+                ocr_metadata = run_ocr()
                 if ocr_metadata is not None:
-                    metadata["ocr"] = {k: v for k, v in ocr_metadata.items() if k != "content"}
-                    if ocr_metadata.get("applied") and ocr_metadata.get("content"):
-                        bytes_written = _write_ocr_sidecar(path, sidecar_path, ocr_metadata["content"])
+                    content = ocr_content(ocr_metadata) if ocr_metadata.get("applied") else None
+                    metadata["ocr"] = _public_ocr_metadata(ocr_metadata)
+                    if content:
+                        bytes_written = _write_ocr_sidecar(path, sidecar_path, content)
                         metadata["ocr"]["sidecar_path"] = _relative_to_vault_root(sidecar_path)
                         metadata["ocr"]["sidecar_bytes"] = bytes_written
                         metadata["ocr"]["cache_hit"] = False
                         metadata["content_source"] = "pdf_ocr_sidecar"
-                        return ocr_metadata["content"], metadata
+                        return content, metadata
 
-        ocr_metadata = _run_pdf_ocr(path)
+        ocr_metadata = None if attempted else run_ocr()
         if ocr_metadata is not None:
-            metadata["ocr"] = {k: v for k, v in ocr_metadata.items() if k != "content"}
-            if ocr_metadata.get("applied") and ocr_metadata.get("content"):
+            content = ocr_content(ocr_metadata) if ocr_metadata.get("applied") else None
+            metadata["ocr"] = _public_ocr_metadata(ocr_metadata)
+            if content:
                 metadata["content_source"] = "pdf_ocr_fallback"
-                return ocr_metadata["content"], metadata
+                return content, metadata
 
     return "\n\n".join(page_texts), metadata
 
 
-def _run_pdf_ocr(path: Path) -> dict | None:
-    """Optionally run an external OCR command for image-only PDFs."""
+def _public_ocr_metadata(ocr_metadata: dict) -> dict:
+    return {k: v for k, v in ocr_metadata.items() if k not in ("content", "raw_stdout")}
+
+
+def _merge_partial_ocr(per_page: list[str], ocr_pages: list[int], raw_stdout: str) -> tuple[str, list[int]] | None:
+    """Put OCR text into the pages that had none, in document order.
+
+    The command prints one form-feed terminated block per requested page (tesseract ends
+    every page with a form feed), possibly fewer when it caps the page count. More
+    blocks than requested pages means the command ignored VAULT_PDF_OCR_PAGES and read
+    the whole document; its blocks cannot be matched to pages, so nothing is merged.
+    """
+    blocks = raw_stdout.split("\f")
+    if blocks and not blocks[-1].strip():
+        blocks = blocks[:-1]
+    if len(blocks) > len(ocr_pages):
+        return None
+    texts = list(per_page)
+    done: list[int] = []
+    for number, block in zip(ocr_pages, blocks):
+        block = block.strip()
+        if block:
+            texts[number - 1] = block
+            done.append(number)
+    if not done:
+        return None
+    return "\n\n".join(text for text in texts if text), done
+
+
+def _run_pdf_ocr(path: Path, pages: list[int] | None = None) -> dict | None:
+    """Optionally run an external OCR command for a PDF.
+
+    ``pages`` (1-based) limits the run to those pages through VAULT_PDF_OCR_PAGES; without
+    it the command reads the whole document.
+    """
     if not config.VAULT_PDF_OCR_ENABLED or not config.VAULT_PDF_OCR_CMD:
         return None
 
@@ -651,6 +716,11 @@ def _run_pdf_ocr(path: Path) -> dict | None:
         "VAULT_PDF_PATH": str(path),
         "VAULT_PDF_OCR_LANGUAGES": config.VAULT_PDF_OCR_LANGUAGES,
     })
+    # Set only by this call: a value inherited from the server's environment would turn
+    # a whole-document run into a partial one.
+    env.pop("VAULT_PDF_OCR_PAGES", None)
+    if pages:
+        env["VAULT_PDF_OCR_PAGES"] = ",".join(str(number) for number in pages)
 
     try:
         result = subprocess.run(
@@ -685,6 +755,7 @@ def _run_pdf_ocr(path: Path) -> dict | None:
     if not content:
         raise OcrError("ocr_failed", "OCR command returned no text")
     metadata["content"] = content
+    metadata["raw_stdout"] = result.stdout
     return metadata
 
 

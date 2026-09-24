@@ -105,6 +105,7 @@ is set. See [create-note.md](create-note.md).
 | `VAULT_PDF_OCR_LANGUAGES` | `deu+eng` | OCR language hint exposed to the command |
 | `VAULT_PDF_OCR_SIDECAR_ENABLED` | same as `VAULT_PDF_OCR_ENABLED` | Cache OCR output as sidecar text files |
 | `VAULT_PDF_OCR_SIDECAR_SUFFIX` | `.ocr.txt` | Sidecar suffix |
+| `VAULT_PDF_OCR_PARTIAL` | `false` | Also OCR the pages without text in a PDF that has a text layer elsewhere (a scan with an e-signature trail attached). Only those pages are requested, in `VAULT_PDF_OCR_PAGES` (comma-separated, 1-based); the command prints one form-feed terminated block per page, in order. The merged text is cached in the sidecar |
 | `VAULT_IMAGE_OCR_ENABLED` | `false` | Enable OCR for `.png`, `.jpg`, `.jpeg`, `.webp` in `vault_read` |
 | `VAULT_IMAGE_OCR_CMD` | empty | External command that prints OCR text to stdout |
 | `VAULT_IMAGE_OCR_TIMEOUT` | `60` | Image OCR timeout seconds |
