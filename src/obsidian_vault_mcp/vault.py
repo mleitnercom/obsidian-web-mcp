@@ -3,6 +3,7 @@
 import fnmatch
 import hashlib
 import json
+import re
 import os
 import shlex
 import shutil
@@ -595,7 +596,7 @@ def _read_pdf_file(path: Path) -> tuple[str, dict]:
             merged = _merge_partial_ocr(per_page, ocr_pages, ocr_metadata["raw_stdout"])
             if merged is None:
                 ocr_metadata["applied"] = False
-                ocr_metadata["error"] = "page_count_mismatch"
+                ocr_metadata["error"] = "page_contract_violation"
                 return None
             text, done = merged
             ocr_metadata["partial"] = True
@@ -670,29 +671,42 @@ def _public_ocr_metadata(ocr_metadata: dict) -> dict:
     return {k: v for k, v in ocr_metadata.items() if k not in ("content", "raw_stdout")}
 
 
+_OCR_PAGE_BLOCK = re.compile(r"PAGE (\d+)\n?(.*)", re.DOTALL)
+
+
 def _merge_partial_ocr(per_page: list[str], ocr_pages: list[int], raw_stdout: str) -> tuple[str, list[int]] | None:
     """Put OCR text into the pages that had none, in document order.
 
-    The command prints one form-feed terminated block per requested page (tesseract ends
-    every page with a form feed), possibly fewer when it caps the page count. More
-    blocks than requested pages means the command ignored VAULT_PDF_OCR_PAGES and read
-    the whole document; its blocks cannot be matched to pages, so nothing is merged.
+    The command labels every page it read: a form feed, ``PAGE <n>`` on its own line,
+    then the text. A page may be missing (capped, failed to render). Anything else is a
+    command that did not follow the contract, typically one that ignores
+    VAULT_PDF_OCR_PAGES and prints the whole document as one stream; matching that by
+    position would put a cover sheet's text where page 2 belongs, silently. So: text
+    before the first label, a block without a label, a page that was not requested or
+    one labelled twice rejects the whole output.
     """
-    blocks = raw_stdout.split("\f")
-    if blocks and not blocks[-1].strip():
-        blocks = blocks[:-1]
-    if len(blocks) > len(ocr_pages):
+    head, *blocks = raw_stdout.split("\f")
+    if head.strip():
         return None
+    wanted = set(ocr_pages)
     texts = list(per_page)
+    seen: set[int] = set()
     done: list[int] = []
-    for number, block in zip(ocr_pages, blocks):
-        block = block.strip()
-        if block:
-            texts[number - 1] = block
+    for block in blocks:
+        match = _OCR_PAGE_BLOCK.fullmatch(block)
+        if match is None:
+            return None
+        number = int(match.group(1))
+        if number not in wanted or number in seen:
+            return None
+        seen.add(number)
+        text = match.group(2).strip()
+        if text:
+            texts[number - 1] = text
             done.append(number)
     if not done:
         return None
-    return "\n\n".join(text for text in texts if text), done
+    return "\n\n".join(text for text in texts if text), sorted(done)
 
 
 def _run_pdf_ocr(path: Path, pages: list[int] | None = None) -> dict | None:

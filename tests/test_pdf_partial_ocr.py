@@ -5,8 +5,10 @@ twenty-three scanned ones. The whole-document OCR only runs when no page has tex
 the contract itself was unreadable (the Cash-Pooling contract in the vault, 24.09.).
 
 The OCR commands here are real child processes. One follows the page contract
-(VAULT_PDF_OCR_PAGES in, one form-feed terminated block per page out), others break it
-in the ways a real command can. The last class runs the production wrapper from
+(VAULT_PDF_OCR_PAGES in; out, per page read, a form feed, "PAGE <n>" on its own line and
+the text), others break it in the ways a real command can. The one that matters most
+is the old production wrapper: it ignored the page list and printed the whole document
+as one unlabelled stream, which a position-based merge would have put on page 2. The last class runs the production wrapper from
 docs/deploy against a PDF whose scanned page is a real image, with pdftoppm and
 tesseract, where production runs.
 """
@@ -52,11 +54,14 @@ def ocr_command(tmp_path: Path, body: str) -> str:
     return f"{sys.executable} {script}"
 
 
-# Follows the contract: one block per requested page, in order.
+# Follows the contract: a labelled block per requested page; the whole document, unlabelled,
+# when no page list is given.
 FOLLOWS = (
     "pages = [p for p in os.environ.get('VAULT_PDF_OCR_PAGES', '').split(',') if p]\n"
-    "for p in pages or ['ALL']:\n"
-    "    sys.stdout.write(f'OCR page {p}\\n\\f')\n"
+    "if not pages:\n"
+    "    sys.stdout.write('OCR page ALL\\n')\n"
+    "for p in pages:\n"
+    "    sys.stdout.write(f'\\fPAGE {p}\\nOCR page {p}\\n')\n"
 )
 
 
@@ -119,14 +124,42 @@ def test_a_command_that_ignores_the_page_list_is_not_merged(vault_dir, ocr):
     content, metadata = read_file("vertrag.pdf", extract_binary=True)
 
     assert content == "Deckblatt"
-    assert metadata["ocr"]["error"] == "page_count_mismatch"
+    assert metadata["ocr"]["error"] == "page_contract_violation"
     assert not (vault_dir / "vertrag.pdf.ocr.txt").exists()
 
 
+def test_one_unlabelled_stream_is_not_put_on_the_missing_page(vault_dir, ocr):
+    """What the old production wrapper printed for a 3-page PDF with page 2 requested:
+    all three pages, no separator (tesseract 5.3 prints none). One block for one missing
+    page looks like a match by count; the cover sheet's text would land on page 2."""
+    ocr(body="sys.stdout.write('Deckblatt\\nVertragstext\\nAudit trail\\n')\n")
+    (vault_dir / "vertrag.pdf").write_bytes(mixed_pdf({1: "Deckblatt", 3: "Audit trail"}, total=3))
+
+    content, metadata = read_file("vertrag.pdf", extract_binary=True)
+
+    assert content == "Deckblatt\n\nAudit trail"
+    assert metadata["ocr"]["error"] == "page_contract_violation"
+
+
+@pytest.mark.parametrize("output", [
+    "\\fPAGE 1\\nnot requested\\n",            # a page that has text already
+    "\\fPAGE 2\\nfirst\\n\\fPAGE 2\\nagain\\n",  # labelled twice
+    "\\fPAGE 2\\nok\\n\\fno label\\n",          # a block without a label
+])
+def test_a_block_that_breaks_the_labels_rejects_the_output(vault_dir, ocr, output):
+    ocr(body=f"sys.stdout.write('{output}')\n")
+    (vault_dir / "vertrag.pdf").write_bytes(mixed_pdf({1: "Deckblatt"}, total=3))
+
+    content, metadata = read_file("vertrag.pdf", extract_binary=True)
+
+    assert content == "Deckblatt"
+    assert metadata["ocr"]["error"] == "page_contract_violation"
+
+
 def test_a_capped_or_failed_page_stays_without_text(vault_dir, ocr):
-    """The wrapper caps at VAULT_PDF_OCR_MAX_PAGES and prints an empty block for a page
+    """The wrapper caps at VAULT_PDF_OCR_MAX_PAGES and prints only the label for a page
     it could not render; both leave that page as it was, and the response says which."""
-    ocr(body="sys.stdout.write('OCR page 2\\n\\f\\f')\n")  # page 3 failed, page 4 capped
+    ocr(body="sys.stdout.write('\\fPAGE 2\\nOCR page 2\\n\\fPAGE 3\\n')\n")  # 3 failed, 4 capped
     (vault_dir / "vertrag.pdf").write_bytes(mixed_pdf({1: "Deckblatt"}, total=4))
 
     content, metadata = read_file("vertrag.pdf", extract_binary=True)
@@ -235,8 +268,8 @@ def test_the_production_wrapper_reads_only_the_scanned_page(vault_dir, tmp_path,
     content, metadata = read_file("vertrag.pdf", extract_binary=True)
 
     parts = content.split("\n\n")
-    assert parts[0] == "Deckblatt" and parts[-1] == "Audit trail", content
-    assert "Laufzeit 36" in content, content
+    assert len(parts) == 3 and parts[0] == "Deckblatt" and parts[2] == "Audit trail", content
+    assert parts[1].strip() == "Laufzeit 36", content
     assert metadata["ocr"]["pages"] == [2]
 
 
