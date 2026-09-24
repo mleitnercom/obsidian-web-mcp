@@ -13,6 +13,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from . import config
+from .child_env import content_parser_env
 # Converged to upstream's serialization module (#9). vault_json_dumps is kept as a
 # thin alias so existing call sites work unchanged; the canonical name is
 # serialization.dumps (call-site rename happens at the Phase-2 re-fork).
@@ -410,9 +411,10 @@ def _run_image_ocr(path: Path) -> dict | None:
     else:
         argv = [*argv, str(path)]
 
-    env = os.environ.copy()
-    env["VAULT_IMAGE_PATH"] = str(path)
-    env["VAULT_IMAGE_OCR_LANGUAGES"] = config.VAULT_IMAGE_OCR_LANGUAGES
+    env = content_parser_env({
+        "VAULT_IMAGE_PATH": str(path),
+        "VAULT_IMAGE_OCR_LANGUAGES": config.VAULT_IMAGE_OCR_LANGUAGES,
+    })
 
     try:
         result = subprocess.run(
@@ -550,11 +552,14 @@ def _read_pdf_file(path: Path) -> tuple[str, dict]:
         raise ValueError(f"Failed to open PDF file: {e}") from e
 
     if getattr(reader, "is_encrypted", False):
+        # Many PDFs carry only an owner password (print/copy restrictions) and open with
+        # the empty user password. pypdf keeps is_encrypted True after that succeeds, so
+        # the decrypt result is the only signal: 0 means a user password is required.
         try:
             decrypt_result = reader.decrypt("")
         except Exception as e:
             raise ValueError("Encrypted PDF files are not supported by vault_read") from e
-        if decrypt_result == 0 or getattr(reader, "is_encrypted", False):
+        if decrypt_result == 0:
             raise ValueError("Encrypted PDF files are not supported by vault_read")
 
     page_texts: list[str] = []
@@ -642,9 +647,10 @@ def _run_pdf_ocr(path: Path) -> dict | None:
     else:
         argv = [*argv, str(path)]
 
-    env = os.environ.copy()
-    env["VAULT_PDF_PATH"] = str(path)
-    env["VAULT_PDF_OCR_LANGUAGES"] = config.VAULT_PDF_OCR_LANGUAGES
+    env = content_parser_env({
+        "VAULT_PDF_PATH": str(path),
+        "VAULT_PDF_OCR_LANGUAGES": config.VAULT_PDF_OCR_LANGUAGES,
+    })
 
     try:
         result = subprocess.run(
