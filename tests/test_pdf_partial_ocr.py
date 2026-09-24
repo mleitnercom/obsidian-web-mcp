@@ -210,7 +210,7 @@ def real_tools():
 
 def test_the_production_wrapper_reads_only_the_scanned_page(vault_dir, tmp_path, monkeypatch, real_tools):
     source = tmp_path / "scan-source.pdf"
-    source.write_bytes(build_simple_pdf_bytes("Vertragslaufzeit 36 Monate"))
+    source.write_bytes(build_simple_pdf_bytes("Laufzeit 36"))
     subprocess.run(["pdftoppm", "-r", "300", "-gray", "-png", "-singlefile", str(source), str(tmp_path / "scan")], check=True)
     scanned = PdfReader(io.BytesIO(_png_to_image_pdf_page((tmp_path / "scan.png").read_bytes())))
     assert scanned.pages[0].extract_text().strip() == "", "the scanned page must have no text layer"
@@ -236,7 +236,7 @@ def test_the_production_wrapper_reads_only_the_scanned_page(vault_dir, tmp_path,
 
     parts = content.split("\n\n")
     assert parts[0] == "Deckblatt" and parts[-1] == "Audit trail", content
-    assert "36 Monate" in content, content
+    assert "Laufzeit 36" in content, content
     assert metadata["ocr"]["pages"] == [2]
 
 
