@@ -5,12 +5,12 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
-## [v0.14.0] - 2026-09-24
+## [v0.14.0] - 2026-09-25
 
 ### Added
 
-- **OCR for the scanned pages of a mixed PDF** (`VAULT_PDF_OCR_PARTIAL`, off by default). A contract scan with an e-signature audit trail appended has a text layer on the trail pages only, so the whole-document OCR never ran and the contract stayed unreadable (the Cash-Pooling contract: 3 of 26 pages). With the switch on, only the pages without text go to the OCR command, listed in `VAULT_PDF_OCR_PAGES`; the command prints one form-feed terminated block per page and the server puts each block in its page's place. The merged text is cached in the sidecar, so a second read runs no OCR and `vault_search` finds the scanned pages. A command that answers with more blocks than requested pages is not trusted (its blocks cannot be matched to pages), and a failed run leaves the PDF exactly as readable as before: text layer only, the reason in `metadata.ocr`.
-- **The production OCR wrapper is in the repo** (`docs/deploy/obsidian-mcp-pdf-ocr.sh`), with `VAULT_PDF_OCR_PAGES` support and one form feed per requested page even when a page fails to render.
+- **OCR for the scanned pages of a mixed PDF** (`VAULT_PDF_OCR_PARTIAL`, off by default). A contract scan with an e-signature audit trail appended has a text layer on the trail pages only, so the whole-document OCR never ran and the contract stayed unreadable (the Cash-Pooling contract: 3 of 26 pages). With the switch on, only the pages without text go to the OCR command, listed in `VAULT_PDF_OCR_PAGES`; the command labels each page it reads (a form feed, `PAGE <n>`, the text) and the server puts each block in its page's place. Matched by label, not position: tesseract 5.3 prints no page separator, so the old wrapper's single unlabelled stream would have landed on page 2. The merged text is cached in the sidecar, so a second read runs no OCR and `vault_search` finds the scanned pages. Output with text before the first label, an unlabelled block, a page that was not requested or one labelled twice is not merged, and a failed run leaves the PDF exactly as readable as before: text layer only, the reason in `metadata.ocr`.
+- **The production OCR wrapper is in the repo** (`docs/deploy/obsidian-mcp-pdf-ocr.sh`), with `VAULT_PDF_OCR_PAGES` support and the page labels.
 
 ### Changed
 
