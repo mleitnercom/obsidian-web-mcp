@@ -779,7 +779,7 @@ class VaultCreateNoteInput(BaseModel):
 
     path: str = Field(
         ...,
-        description="Relative path from vault root; must match VAULT_CREATE_NOTE_PATH_PATTERN",
+        description="Relative path from vault root for a new .md note; the parent folder must exist",
         min_length=1,
         max_length=500,
     )

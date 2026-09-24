@@ -5,6 +5,14 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.15.0] - 2026-09-25
+
+### Changed
+
+- **`vault_create_note` works without a policy.** It was inert until `VAULT_CREATE_NOTE_PATH_PATTERN` was set, and production's only policy was written for one client (Family Intake). The generic name invited every other client, and the policy refused them field by field without saying what would pass: three failed sessions, 17.09.2026. Unconfigured, the tool now creates any `.md` note that does not exist yet, with or without frontmatter; broken or non-mapping frontmatter is still refused, the parent folder must exist, and nothing is ever replaced. That is strictly less than `vault_write` can do under the same token. The `VAULT_CREATE_NOTE_*` settings remain as optional narrowing; a client with a fixed form checks its own form. `create_note_disabled` is gone.
+- `VAULT_CREATE_NOTE_MAX_BYTES` defaults to `0`, meaning `VAULT_MAX_CONTENT_SIZE`: a stricter create-only limit pushed long notes towards `vault_write`, which overwrites.
+- The tool description tells a model that `note_exists` means nothing changed and that `vault_write` is not the fallback.
+
 ## [v0.14.0] - 2026-09-25
 
 ### Added
