@@ -120,8 +120,17 @@ def _assert_no_secrets(env: dict) -> None:
     assert not leaked, f"secrets reached the child process: {sorted(leaked)}"
 
 
+def _plain_scan() -> bytes:
+    """An unencrypted PDF without a text layer, so this test isolates the environment."""
+    writer = PdfWriter()
+    writer.add_blank_page(width=300, height=200)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 def test_pdf_ocr_gets_no_secrets_but_what_it_needs(vault_dir, env_reporting_ocr):
-    (vault_dir / "scan.pdf").write_bytes(_encrypted(None, user="", owner="restrict"))
+    (vault_dir / "scan.pdf").write_bytes(_plain_scan())
 
     env = json.loads(read_file("scan.pdf", extract_binary=True)[0])
 

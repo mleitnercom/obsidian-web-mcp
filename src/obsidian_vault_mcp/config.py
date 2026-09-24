@@ -137,6 +137,13 @@ VAULT_PDF_OCR_TIMEOUT = _env_int("VAULT_PDF_OCR_TIMEOUT", 120)
 VAULT_PDF_OCR_LANGUAGES = os.environ.get("VAULT_PDF_OCR_LANGUAGES", "deu+eng").strip()
 VAULT_PDF_OCR_SIDECAR_ENABLED = _env_bool("VAULT_PDF_OCR_SIDECAR_ENABLED", VAULT_PDF_OCR_ENABLED)
 VAULT_PDF_OCR_SIDECAR_SUFFIX = os.environ.get("VAULT_PDF_OCR_SIDECAR_SUFFIX", ".ocr.txt").strip() or ".ocr.txt"
+# Mixed PDFs: a scan with a few text pages attached (an e-signature audit trail, a typed
+# cover sheet) has a text layer, so the whole-document OCR above never runs and the
+# scanned pages stay unreadable. With this on, only the pages without text go to the
+# OCR command, named in VAULT_PDF_OCR_PAGES; the command must print one form-feed
+# terminated block per requested page, in order. Off by default: it needs a command
+# that understands VAULT_PDF_OCR_PAGES, and it costs OCR time on PDFs read today.
+VAULT_PDF_OCR_PARTIAL = _env_bool("VAULT_PDF_OCR_PARTIAL", False)
 # Image OCR reuses the PDF sidecar mechanics but keeps its own switches: screenshots are
 # a different workload from scanned documents (many small files, a lower sane timeout),
 # and one should be enableable without the other. Off by default -- with it off,
