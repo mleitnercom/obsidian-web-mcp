@@ -11,6 +11,7 @@ from pathlib import Path
 import frontmatter
 
 from .. import config
+from ..child_env import content_parser_env
 from ..vault import (
     allowed_root_paths,
     has_extra_hard_links,
@@ -89,7 +90,7 @@ def _search_ripgrep(
     cmd += ["-e", query, "--", str(search_path)]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=content_parser_env())
     except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError):
         return None
 

@@ -5,6 +5,13 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.13.3] - 2026-09-24
+
+### Fixed
+
+- **PDFs with only an owner password are read.** Such PDFs (print or copy restrictions) open with the empty user password, but pypdf keeps `is_encrypted` True after that succeeds, and `read_file` treated the flag as failure. They were refused, text layer or not, and a scan never reached OCR (a 26-page contract in the vault). Only a failed `decrypt("")` refuses now; a PDF that needs a user password still does.
+- **Programs that parse vault content no longer get the server's secrets.** The PDF and image OCR commands and ripgrep ran with a copy of the server environment, `VAULT_MCP_TOKEN` and the OAuth secret included. They now get an allowlist (`child_env.py`): what a program needs to start and find its data, the `VAULT_*OCR*` tuning variables the wrapper reads, and the per-file variables. A `RIPGREP_CONFIG_PATH` in the server environment no longer steers the search either. The post-write hook keeps the full environment on purpose: it is the operator's automation, parses no vault content, and may need things like `SSH_AUTH_SOCK`.
+
 ## [v0.13.2] - 2026-09-17
 
 ### Changed
