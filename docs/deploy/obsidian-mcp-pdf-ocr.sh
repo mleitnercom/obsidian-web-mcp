@@ -50,17 +50,25 @@ pages=$(printf '%s\n' "$pages" | head -n "$MAX_PAGES")
 # page bitmap at once; page by page keeps peak memory at roughly one page, which matters
 # more here than the few extra PDF parses it costs.
 #
-# With a page list, every page read is labelled: a form feed and "PAGE <n>" on its own
-# line, then the text. The server matches text to pages by these labels only, never by
-# position (tesseract 5.3 prints no page separator of its own). A page that fails keeps
-# its label and has no text. Without a page list the output is unlabelled, as before.
+# With a page list, every page handled is labelled: a form feed and "PAGE <n>" on its
+# own line, then the text (none for a blank page). A page that could not be rendered or
+# read is labelled "PAGE <n> FAILED", so the server does not cache it as blank. The
+# server matches text to pages by these labels only, never by position (tesseract 5.3
+# prints no page separator of its own). Without a page list the output is unlabelled,
+# as before.
+label() { [ -n "${VAULT_PDF_OCR_PAGES:-}" ] && printf '\fPAGE %s%s\n' "$1" "$2"; return 0; }
 for page in $pages; do
-  [ -n "${VAULT_PDF_OCR_PAGES:-}" ] && printf '\fPAGE %s\n' "$page"
   if ! pdftoppm -f "$page" -l "$page" -r "$DPI" -png -singlefile "$PDF" "$WORK/page" 2>/dev/null; then
     echo "pdf-ocr: render failed on page $page" >&2
+    label "$page" " FAILED"
     continue
   fi
-  tesseract "$WORK/page.png" - -l "$LANGS" -c page_separator= 2>/dev/null \
-    || echo "pdf-ocr: tesseract failed on page $page" >&2
+  if text=$(tesseract "$WORK/page.png" - -l "$LANGS" -c page_separator= 2>/dev/null); then
+    label "$page" ""
+    [ -n "$text" ] && printf '%s\n' "$text"
+  else
+    echo "pdf-ocr: tesseract failed on page $page" >&2
+    label "$page" " FAILED"
+  fi
   rm -f "$WORK/page.png"
 done

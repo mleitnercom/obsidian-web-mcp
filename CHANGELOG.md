@@ -5,6 +5,12 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.15.1] - 2026-09-25
+
+### Fixed
+
+- **Partial OCR: blank pages are a result, failed pages are not cached.** The warm run over 55 mixed PDFs refused 5 as `page_contract_violation`: their scanned pages were genuinely blank (separator sheets, empty backs), every label arrived without text, and the merge treated "no text anywhere" as a broken contract. Nothing was cached, so each read ran OCR again, up to 40 s. A labelled page without text now counts as read and blank, and the result is cached. The wrapper labels a page it could not render or read `PAGE <n> FAILED`; such a result is answered but not cached, so a passing failure does not become permanent. Output without any label is still refused.
+
 ## [v0.15.0] - 2026-09-25
 
 ### Changed

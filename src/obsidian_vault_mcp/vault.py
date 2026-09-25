@@ -598,10 +598,16 @@ def _read_pdf_file(path: Path) -> tuple[str, dict]:
                 ocr_metadata["applied"] = False
                 ocr_metadata["error"] = "page_contract_violation"
                 return None
-            text, done = merged
+            text, done, failed = merged
             ocr_metadata["partial"] = True
             ocr_metadata["pages"] = done
             ocr_metadata["pages_still_without_text"] = [p for p in ocr_pages if p not in done]
+            if failed:
+                # A page the command could not read is not a blank page. Caching the
+                # result would make a passing failure permanent, so this read answers
+                # with what it has and the next read tries again.
+                ocr_metadata["failed_pages"] = failed
+                ocr_metadata["cacheable"] = False
             return text
 
         attempted = False
@@ -648,12 +654,15 @@ def _read_pdf_file(path: Path) -> tuple[str, dict]:
                 if ocr_metadata is not None:
                     content = ocr_content(ocr_metadata) if ocr_metadata.get("applied") else None
                     metadata["ocr"] = _public_ocr_metadata(ocr_metadata)
-                    if content:
+                    if content and ocr_metadata.get("cacheable", True):
                         bytes_written = _write_ocr_sidecar(path, sidecar_path, content)
                         metadata["ocr"]["sidecar_path"] = _relative_to_vault_root(sidecar_path)
                         metadata["ocr"]["sidecar_bytes"] = bytes_written
                         metadata["ocr"]["cache_hit"] = False
                         metadata["content_source"] = "pdf_ocr_sidecar"
+                        return content, metadata
+                    if content:
+                        metadata["content_source"] = "pdf_ocr_fallback"
                         return content, metadata
 
         ocr_metadata = None if attempted else run_ocr()
@@ -668,30 +677,37 @@ def _read_pdf_file(path: Path) -> tuple[str, dict]:
 
 
 def _public_ocr_metadata(ocr_metadata: dict) -> dict:
-    return {k: v for k, v in ocr_metadata.items() if k not in ("content", "raw_stdout")}
+    return {k: v for k, v in ocr_metadata.items() if k not in ("content", "raw_stdout", "cacheable")}
 
 
-_OCR_PAGE_BLOCK = re.compile(r"PAGE (\d+)\n?(.*)", re.DOTALL)
+_OCR_PAGE_BLOCK = re.compile(r"PAGE (\d+)( FAILED)?\n?(.*)", re.DOTALL)
 
 
-def _merge_partial_ocr(per_page: list[str], ocr_pages: list[int], raw_stdout: str) -> tuple[str, list[int]] | None:
+def _merge_partial_ocr(
+    per_page: list[str], ocr_pages: list[int], raw_stdout: str
+) -> tuple[str, list[int], list[int]] | None:
     """Put OCR text into the pages that had none, in document order.
 
-    The command labels every page it read: a form feed, ``PAGE <n>`` on its own line,
-    then the text. A page may be missing (capped, failed to render). Anything else is a
-    command that did not follow the contract, typically one that ignores
-    VAULT_PDF_OCR_PAGES and prints the whole document as one stream; matching that by
-    position would put a cover sheet's text where page 2 belongs, silently. So: text
-    before the first label, a block without a label, a page that was not requested or
-    one labelled twice rejects the whole output.
+    The command labels every page it handled: a form feed, ``PAGE <n>`` on its own
+    line, then the text. A label without text is a page OCR found blank (a separator
+    sheet, an empty back side); ``PAGE <n> FAILED`` is a page it could not read. A
+    requested page without a label was capped. Anything else is a command that did not
+    follow the contract, typically one that ignores VAULT_PDF_OCR_PAGES and prints the
+    whole document as one stream; matching that by position would put a cover sheet's
+    text where page 2 belongs, silently. So: text before the first label, a block
+    without a label, a page that was not requested or one labelled twice, and output
+    with no label at all reject the whole output.
+
+    Returns (merged text, pages that got text, pages that failed).
     """
     head, *blocks = raw_stdout.split("\f")
-    if head.strip():
+    if head.strip() or not blocks:
         return None
     wanted = set(ocr_pages)
     texts = list(per_page)
     seen: set[int] = set()
     done: list[int] = []
+    failed: list[int] = []
     for block in blocks:
         match = _OCR_PAGE_BLOCK.fullmatch(block)
         if match is None:
@@ -700,13 +716,14 @@ def _merge_partial_ocr(per_page: list[str], ocr_pages: list[int], raw_stdout: st
         if number not in wanted or number in seen:
             return None
         seen.add(number)
-        text = match.group(2).strip()
+        if match.group(2):
+            failed.append(number)
+            continue
+        text = match.group(3).strip()
         if text:
             texts[number - 1] = text
             done.append(number)
-    if not done:
-        return None
-    return "\n\n".join(text for text in texts if text), sorted(done)
+    return "\n\n".join(text for text in texts if text), sorted(done), sorted(failed)
 
 
 def _run_pdf_ocr(path: Path, pages: list[int] | None = None) -> dict | None:
