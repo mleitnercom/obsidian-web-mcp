@@ -5,6 +5,12 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.15.2] - 2026-09-25
+
+### Fixed
+
+- **Note content is written byte for byte.** The input models of `vault_write` and `vault_create_note` stripped surrounding whitespace from every string field, content included, so every note written through them lost its trailing newline, and a note starting with indented text lost the indent. Family Intake noticed it when appending to a freshly created task. `content` is now taken verbatim in both; paths are normalised as before. The model is upstream's, so upstream has the same behaviour.
+
 ## [v0.15.1] - 2026-09-25
 
 ### Fixed
