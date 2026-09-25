@@ -5,6 +5,12 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.15.3] - 2026-09-25
+
+### Fixed
+
+- **Atomic writes stage under a dot name.** `write_file_atomic`, `write_bytes_atomic` and `write_file_from_path_atomic` staged the new bytes in mkstemp's default `tmpXXXX.tmp` next to the target. Obsidian Sync picked those files up and logged ENOENT when the rename made them vanish (backlog since 14.05.2026, noise only). The temp file is now `.~mcp-XXXX.tmp`, hidden from Obsidian and its sync; the rename stays atomic.
+
 ## [v0.15.2] - 2026-09-25
 
 ### Fixed
