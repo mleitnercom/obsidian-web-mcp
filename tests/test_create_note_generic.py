@@ -55,9 +55,7 @@ def test_a_plain_note_without_frontmatter_is_created(vault):
     result = create("notes/idee.md", "# Idee\n\nNur Text.\n")
 
     assert result.get("created") is True, result
-    # The input model strips surrounding whitespace, as vault_write's does; the note
-    # is what vault_write would have written.
-    assert (vault / "notes/idee.md").read_bytes() == "# Idee\n\nNur Text.".encode()
+    assert (vault / "notes/idee.md").read_bytes() == "# Idee\n\nNur Text.\n".encode()
 
 
 def test_any_frontmatter_fields_are_accepted(vault):
@@ -67,7 +65,7 @@ def test_any_frontmatter_fields_are_accepted(vault):
     result = create("notes/gastherme.md", content)
 
     assert result.get("created") is True, result
-    assert (vault / "notes/gastherme.md").read_text(encoding="utf-8") == content.strip()
+    assert (vault / "notes/gastherme.md").read_text(encoding="utf-8") == content
 
 
 def test_an_existing_note_is_not_replaced(vault):
