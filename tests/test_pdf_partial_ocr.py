@@ -298,3 +298,82 @@ def test_a_rejected_run_is_not_repeated(vault_dir, ocr, tmp_path):
     read_file("vertrag.pdf", extract_binary=True)
 
     assert counter.read_text() == "x"
+
+
+# --- blank and failed pages (warm run 25.09.: 5 PDFs refused as contract violations) -----
+
+def test_blank_pages_are_a_result_and_are_cached(vault_dir, ocr):
+    """OCR found nothing on the pages: that is an answer, not a broken contract. Before
+    this, the PDF was OCR'd again on every read (up to 40 s each)."""
+    ocr(body="sys.stdout.write('\\fPAGE 2\\n\\fPAGE 3\\n')\n")
+    (vault_dir / "folien.pdf").write_bytes(mixed_pdf({1: "Titel"}, total=3))
+
+    content, metadata = read_file("folien.pdf", extract_binary=True)
+
+    assert content == "Titel"
+    assert metadata["ocr"]["pages"] == [] and metadata["ocr"]["pages_still_without_text"] == [2, 3]
+    assert "error" not in metadata["ocr"]
+    assert (vault_dir / "folien.pdf.ocr.txt").exists()
+
+    ocr(body="raise SystemExit('OCR ran a second time')\n")
+    again, metadata = read_file("folien.pdf", extract_binary=True)
+    assert again == "Titel" and metadata["ocr"]["cache_hit"] is True
+
+
+def test_a_failed_page_is_answered_but_not_cached(vault_dir, ocr, tmp_path):
+    """A page the command could not read must not be cached as blank: the next read
+    tries again."""
+    runs = tmp_path / "runs.txt"
+    ocr(body=(
+        f"open({str(runs)!r}, 'a').write('x')\n"
+        "sys.stdout.write('\\fPAGE 2 FAILED\\n\\fPAGE 3\\nOCR page 3\\n')\n"
+    ))
+    (vault_dir / "vertrag.pdf").write_bytes(mixed_pdf({1: "Deckblatt"}, total=3))
+
+    content, metadata = read_file("vertrag.pdf", extract_binary=True)
+    read_file("vertrag.pdf", extract_binary=True)
+
+    assert content.split("\n\n") == ["Deckblatt", "OCR page 3"]
+    assert metadata["ocr"]["failed_pages"] == [2] and metadata["content_source"] == "pdf_ocr_fallback"
+    assert not (vault_dir / "vertrag.pdf.ocr.txt").exists()
+    assert runs.read_text() == "xx"
+
+
+def test_output_without_any_label_is_still_refused(vault_dir, ocr):
+    ocr(body="sys.stdout.write('   \\n')\nsys.stdout.write('text')\n")
+    (vault_dir / "vertrag.pdf").write_bytes(mixed_pdf({1: "Deckblatt"}, total=2))
+
+    content, metadata = read_file("vertrag.pdf", extract_binary=True)
+
+    assert content == "Deckblatt" and metadata["ocr"]["error"] == "page_contract_violation"
+
+
+def test_the_production_wrapper_reports_a_white_page_as_blank(vault_dir, tmp_path, monkeypatch, real_tools):
+    blank = tmp_path / "blank.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=300, height=200)
+    writer.write(str(blank))
+    subprocess.run(["pdftoppm", "-r", "150", "-gray", "-png", "-singlefile", str(blank), str(tmp_path / "white")], check=True)
+    white = PdfReader(io.BytesIO(_png_to_image_pdf_page((tmp_path / "white.png").read_bytes())))
+
+    writer = PdfWriter()
+    writer.append(PdfReader(io.BytesIO(build_simple_pdf_bytes("Titel"))))
+    writer.append(white)
+    out = io.BytesIO()
+    writer.write(out)
+    (vault_dir / "folien.pdf").write_bytes(out.getvalue())
+
+    monkeypatch.setenv("VAULT_PDF_OCR_MAX_PAGES", "12")
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_ENABLED", True)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_CMD", f"bash {WRAPPER}")
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_TIMEOUT", 120)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_LANGUAGES", "eng")
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_SIDECAR_ENABLED", True)
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_SIDECAR_SUFFIX", ".ocr.txt")
+    monkeypatch.setattr(config, "VAULT_PDF_OCR_PARTIAL", True)
+
+    content, metadata = read_file("folien.pdf", extract_binary=True)
+
+    assert content == "Titel", content
+    assert metadata["ocr"]["pages"] == [] and metadata["ocr"]["pages_still_without_text"] == [2], metadata
+    assert (vault_dir / "folien.pdf.ocr.txt").exists()
