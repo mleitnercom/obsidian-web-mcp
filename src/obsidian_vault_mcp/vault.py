@@ -52,6 +52,12 @@ UNSUPPORTED_BINARY_EXTENSIONS = frozenset({
 # vault_json_dumps is now imported from .serialization (see top of file, #9).
 
 
+# Atomic writes stage the new bytes in a temp file next to the target and rename it into
+# place. mkstemp's default name ("tmpXXXX.tmp") is an ordinary file to Obsidian Sync,
+# which picked it up and then logged ENOENT when the rename made it vanish. A dot name is
+# hidden from Obsidian and its sync; the rename stays atomic.
+_TMP_PREFIX = ".~mcp-"
+
 class OcrError(RuntimeError):
     """OCR-specific failure with a stable client-facing error code."""
 
@@ -880,7 +886,7 @@ def write_file_atomic(
         path.parent.mkdir(parents=True, exist_ok=True)
 
     # Write to a temp file in the same directory, then atomic-replace.
-    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=_TMP_PREFIX, suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(encoded)
@@ -914,7 +920,7 @@ def write_bytes_atomic(
     if create_dirs:
         path.parent.mkdir(parents=True, exist_ok=True)
 
-    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=_TMP_PREFIX, suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)
@@ -965,7 +971,7 @@ def write_file_from_path_atomic(
     if create_dirs:
         path.parent.mkdir(parents=True, exist_ok=True)
 
-    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=_TMP_PREFIX, suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f, open(source, "rb") as src:
             shutil.copyfileobj(src, f, 1024 * 1024)
