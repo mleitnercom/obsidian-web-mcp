@@ -247,3 +247,18 @@ def test_an_index_that_does_not_match_its_chunks_is_not_reused(semantic):
 
     result, embedded = semantic.cli("A", "reindex", "--mode", "incremental")
     assert result["reused_chunks"] == 0 and result["embedded_chunks"] == len(embedded)
+
+
+def test_the_live_refresh_embeds_only_the_named_file(semantic):
+    """The debounced live path (VAULT_SEMANTIC_AUTO_REINDEX) passes the changed paths itself."""
+    full, _ = semantic.cli("A", "reindex", "--mode", "full")
+    (semantic.vault / "a.md").write_text("# A\n\nLive geändert.\n", encoding="utf-8")
+    engine = SemanticSearchEngine()  # on cache A, like the server after its start
+    before = len(semantic.embedders)
+
+    result = engine.reindex(full=False, paths=["a.md"])
+
+    embedded = [text for embedder in semantic.embedders[before:] for text in embedder.texts]
+    assert result["embedded_chunks"] == len(embedded) == 1
+    assert result["reused_chunks"] == full["indexed_chunks"] - 1
+    assert "Live geändert." in embedded[0]
