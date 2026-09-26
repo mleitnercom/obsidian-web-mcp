@@ -259,6 +259,7 @@ def test_the_live_refresh_embeds_only_the_named_file(semantic):
     result = engine.reindex(full=False, paths=["a.md"])
 
     embedded = [text for embedder in semantic.embedders[before:] for text in embedder.texts]
-    assert result["embedded_chunks"] == len(embedded) == 1
+    assert len(embedded) == 1, f"{len(embedded)} texts embedded for one changed note"
+    assert result["embedded_chunks"] == 1
     assert result["reused_chunks"] == full["indexed_chunks"] - 1
     assert "Live geändert." in embedded[0]
