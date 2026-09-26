@@ -18,6 +18,7 @@ one uses the real model in real worker processes.
 
 import hashlib
 import json
+import logging
 import os
 import sys
 
@@ -207,7 +208,7 @@ def _real_model_available():
         return False, str(exc)
 
 
-def test_the_real_model_in_real_worker_processes(tmp_path, monkeypatch, capsys):
+def test_the_real_model_in_real_worker_processes(tmp_path, monkeypatch, capsys, caplog):
     """Production path: fastembed, the configured model, two worker processes."""
     available, reason = _real_model_available()
     if not available:
@@ -223,17 +224,20 @@ def test_the_real_model_in_real_worker_processes(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(config, "SEMANTIC_SEARCH_ENABLED", True)
     monkeypatch.setattr(config, "SEMANTIC_EMBED_BACKEND", "fastembed")
     monkeypatch.setattr(config, "SEMANTIC_EMBED_BATCH_SIZE", 4)
+    caplog.set_level(logging.INFO, logger="obsidian_vault_mcp.retrieval.engine")
 
     def run(cache, parallel):
         monkeypatch.setattr(config, "SEMANTIC_EMBED_PARALLEL", parallel)
         monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", tmp_path / cache)
         monkeypatch.setattr(sys, "argv", ["vault-semantic", "reindex", "--mode", "full"])
+        caplog.clear()
         semantic_cli.main()
-        captured = capsys.readouterr()
+        capsys.readouterr()
+        log = caplog.text
         chunks = json.loads((tmp_path / cache / "chunks.json").read_text(encoding="utf-8"))
         index = faiss.read_index(str(tmp_path / cache / "faiss.index"))
         vectors = index.reconstruct_n(0, index.ntotal)
-        return captured.err, {c["id"]: vectors[row] for row, c in enumerate(chunks)}
+        return log, {c["id"]: vectors[row] for row, c in enumerate(chunks)}
 
     log_seq, sequential = run("A", 0)
     log_par, parallel = run("B", 2)
