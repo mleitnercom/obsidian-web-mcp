@@ -39,6 +39,9 @@ class SemanticSearchEngine:
         self._chunk_path = self._cache_dir / "chunks.json"
         self._manifest_path = self._cache_dir / "manifest.json"
         self._path_index_path = self._cache_dir / "path_index.json"
+        # Which embedder built faiss.index. An incremental run keeps the vectors of
+        # unchanged files only when it would embed them with the same one.
+        self._index_meta_path = self._cache_dir / "index_meta.json"
         self._pending_updates: dict[str, str] = {}
         self._update_timer: threading.Timer | None = None
 
@@ -282,6 +285,8 @@ class SemanticSearchEngine:
                 "removed_files": 0,
                 "indexed_files": len(self._path_index),
                 "indexed_chunks": len(self._chunks),
+                "embedded_chunks": 0,
+                "reused_chunks": len(self._chunks),
                 "cache_path": str(self._cache_dir),
                 "duration_seconds": 0.0,
             }
@@ -289,6 +294,10 @@ class SemanticSearchEngine:
         updated_files = 0
         removed_files = 0
         logger.info("Semantic incremental reindex queued for %s paths", len(updates))
+        # Rows of the current index by chunk id, taken before any chunk is removed. Chunks
+        # of a file not in `updates` keep their vector; only new and changed files are
+        # embedded. Until 0.15.3 every incremental run re-embedded the whole vault.
+        previous_rows = self._reusable_rows_unlocked()
 
         for rel_path, action in updates.items():
             self._remove_file_chunks_unlocked(rel_path)
@@ -318,16 +327,20 @@ class SemanticSearchEngine:
             updated_files += 1
 
         self._chunk_map = {chunk.id: chunk for chunk in self._chunks}
-        self._rebuild_indices_unlocked()
+        self._bm25 = self._build_bm25(self._chunks)
+        self._index, embedded = self._build_faiss_index_reusing(self._chunks, previous_rows, set(updates))
         self._persist_unlocked()
         self._available = True
         self._unavailable_reason = ""
         duration = round(time.monotonic() - started, 3)
         logger.info(
-            "Semantic incremental reindex complete: %s updated, %s removed, %s total chunks in %.3fs",
+            "Semantic incremental reindex complete: %s updated, %s removed, %s total chunks "
+            "(%s embedded, %s reused) in %.3fs",
             updated_files,
             removed_files,
             len(self._chunks),
+            embedded,
+            len(self._chunks) - embedded,
             duration,
         )
         return {
@@ -336,6 +349,8 @@ class SemanticSearchEngine:
             "removed_files": removed_files,
             "indexed_files": len(self._path_index),
             "indexed_chunks": len(self._chunks),
+            "embedded_chunks": embedded,
+            "reused_chunks": len(self._chunks) - embedded,
             "cache_path": str(self._cache_dir),
             "duration_seconds": duration,
         }
@@ -456,6 +471,85 @@ class SemanticSearchEngine:
         )
         self._manifest_path.write_text(json.dumps(self._manifest, ensure_ascii=True, indent=2), encoding="utf-8")
         self._path_index_path.write_text(json.dumps(self._path_index, ensure_ascii=True, indent=2), encoding="utf-8")
+        self._index_meta_path.write_text(json.dumps(self._index_meta(), indent=2), encoding="utf-8")
+
+    def _index_meta(self) -> dict:
+        """Identify the embedder whose vectors are in the index."""
+        return {"embed_backend": self._embed_backend, "embed_model": config.SEMANTIC_EMBED_MODEL}
+
+    def _reusable_rows_unlocked(self) -> dict[str, int]:
+        """Map chunk id to its row in the current index, or {} if no vector may be kept.
+
+        Nothing is kept when the index does not line up with the chunk list, or when it
+        was built by another embedder, or by a version that did not record which one
+        (no index_meta.json). Vectors of two models in one index would rank silently wrong.
+        """
+        index = self._index
+        if index is None or index.ntotal != len(self._chunks):
+            return {}
+        try:
+            recorded = json.loads(self._index_meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            recorded = None
+        if recorded != self._index_meta():
+            logger.info("Semantic index was built by another or an unrecorded embedder; embedding every chunk")
+            return {}
+        return {chunk.id: row for row, chunk in enumerate(self._chunks)}
+
+    def _build_faiss_index_reusing(
+        self,
+        chunks: list[Chunk],
+        previous_rows: dict[str, int],
+        changed_paths: set[str],
+    ) -> tuple[object, int]:
+        """Build the index for `chunks`, embedding only what `previous_rows` cannot supply.
+
+        A chunk keeps its vector when its file is not in `changed_paths` and its id has a
+        row in the current index. Chunk ids are "<path>::<n>", so a changed file's ids can
+        recur with different text; that is why the file, not the id, decides. Returns the
+        new index and the number of chunks embedded.
+        """
+        if not chunks:
+            return None, 0
+        reuse_positions: list[int] = []
+        reuse_rows: list[int] = []
+        embed_positions: list[int] = []
+        for position, chunk in enumerate(chunks):
+            row = None if chunk.path in changed_paths else previous_rows.get(chunk.id)
+            if row is None:
+                embed_positions.append(position)
+            else:
+                reuse_positions.append(position)
+                reuse_rows.append(row)
+        if not reuse_positions:
+            return self._build_faiss_index(chunks), len(chunks)
+
+        np = self._numpy
+        dim = self._index.d
+        logger.info(
+            "Updating semantic vector index: %s chunks reused, %s to embed using %s",
+            len(reuse_positions),
+            len(embed_positions),
+            self._embed_backend or config.SEMANTIC_EMBED_BACKEND,
+        )
+        matrix = np.empty((len(chunks), dim), dtype="float32")
+        matrix[np.asarray(reuse_positions, dtype="int64")] = self._index.reconstruct_batch(
+            np.asarray(reuse_rows, dtype="int64")
+        )
+        to_embed = [chunks[position] for position in embed_positions]
+        for start, embedded in self._embedded_batches(to_embed):
+            if embedded.shape[1] != dim:
+                logger.warning(
+                    "Embedding dimension %s differs from the index (%s); embedding every chunk",
+                    embedded.shape[1],
+                    dim,
+                )
+                return self._build_faiss_index(chunks), len(chunks)
+            matrix[np.asarray(embed_positions[start:start + len(embedded)], dtype="int64")] = embedded
+
+        index = self._faiss.IndexFlatIP(dim)
+        index.add(matrix)
+        return index, len(embed_positions)
 
     def _rebuild_indices_unlocked(self) -> None:
         """Rebuild BM25 and FAISS search structures from in-memory chunks."""
@@ -474,15 +568,23 @@ class SemanticSearchEngine:
         if not chunks:
             return None
         batch_size = max(config.SEMANTIC_EMBED_BATCH_SIZE, 1)
-        index = None
-        total_batches = (len(chunks) + batch_size - 1) // batch_size
         logger.info(
             "Building semantic vector index: %s chunks in %s batch(es) using %s",
             len(chunks),
-            total_batches,
+            (len(chunks) + batch_size - 1) // batch_size,
             self._embed_backend or config.SEMANTIC_EMBED_BACKEND,
         )
+        index = None
+        for _start, matrix in self._embedded_batches(chunks):
+            if index is None:
+                index = self._faiss.IndexFlatIP(matrix.shape[1])
+            index.add(matrix)
+        return index
 
+    def _embedded_batches(self, chunks: list[Chunk]):
+        """Yield (offset, L2-normalised float32 matrix) for `chunks`, batch by batch."""
+        batch_size = max(config.SEMANTIC_EMBED_BATCH_SIZE, 1)
+        total_batches = (len(chunks) + batch_size - 1) // batch_size
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start:start + batch_size]
             texts = [self._embedding_text(chunk) for chunk in batch]
@@ -497,10 +599,6 @@ class SemanticSearchEngine:
 
             matrix = self._numpy.asarray(embeddings, dtype="float32")
             self._faiss.normalize_L2(matrix)
-
-            if index is None:
-                index = self._faiss.IndexFlatIP(matrix.shape[1])
-            index.add(matrix)
             batch_number = (start // batch_size) + 1
             if batch_number == 1 or batch_number == total_batches or batch_number % 10 == 0:
                 logger.info(
@@ -510,8 +608,7 @@ class SemanticSearchEngine:
                     min(start + len(batch), len(chunks)),
                     len(chunks),
                 )
-
-        return index
+            yield start, matrix
 
     def _semantic_scores(
         self,
