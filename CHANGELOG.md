@@ -5,6 +5,13 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.16.0] - 2026-09-26
+
+### Changed
+
+- **An incremental semantic reindex embeds only new and changed files.** `vault-semantic reindex --mode incremental` detected changed files correctly and then re-embedded every chunk of the vault, so on the live vault it took as long as a full rebuild: 8 h for 72,000 chunks. Chunks of unchanged files now keep their vector from the existing index; only chunks of new, changed and renamed files are embedded. The same applies to the debounced live refresh (`VAULT_SEMANTIC_AUTO_REINDEX`). Measured on a copy of the production cache against the live vault: 274 changed and 19 deleted files, 5,986 chunks embedded and 67,545 kept, 41 min instead of about 8 h; chunks equal a full chunking of the same vault, kept vectors are bit-identical, new ones equal the real model's. The result reports `embedded_chunks` and `reused_chunks`.
+- **The cache records its embedder** in `index_meta.json` (backend and model). Vectors are kept only when the record matches the current embedder and the index lines up with the chunk list. Another model, a missing or unreadable record (every cache written before this version) or a mismatched index means every chunk is embedded again, so vectors of two models never share one index. The first incremental run on an old cache therefore still takes as long as a full one; a full rebuild writes the record.
+
 ## [v0.15.3] - 2026-09-25
 
 ### Fixed
