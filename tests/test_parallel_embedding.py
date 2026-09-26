@@ -83,7 +83,7 @@ def env(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(config, "VAULT_PATH", vault)
     monkeypatch.setattr(config, "SEMANTIC_SEARCH_ENABLED", True)
     monkeypatch.setattr(config, "SEMANTIC_EMBED_BATCH_SIZE", 4)
-    monkeypatch.setattr(config, "SEMANTIC_EMBED_PARALLEL", 0)
+    monkeypatch.setattr(config, "SEMANTIC_EMBED_PARALLEL", 0, raising=False)
     embedders: list = []
     backend = {"name": "fastembed", "cls": RecordingEmbedder}
 
@@ -102,7 +102,7 @@ def env(tmp_path, monkeypatch, capsys):
     e.vault, e.root, e.embedders, e.backend = vault, tmp_path, embedders, backend
 
     def cli(cache, *args, parallel=0):
-        monkeypatch.setattr(config, "SEMANTIC_EMBED_PARALLEL", parallel)
+        monkeypatch.setattr(config, "SEMANTIC_EMBED_PARALLEL", parallel, raising=False)
         monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", tmp_path / cache)
         monkeypatch.setattr(sys, "argv", ["vault-semantic", *args])
         before = len(embedders)
@@ -227,7 +227,7 @@ def test_the_real_model_in_real_worker_processes(tmp_path, monkeypatch, capsys, 
     caplog.set_level(logging.INFO, logger="obsidian_vault_mcp.retrieval.engine")
 
     def run(cache, parallel):
-        monkeypatch.setattr(config, "SEMANTIC_EMBED_PARALLEL", parallel)
+        monkeypatch.setattr(config, "SEMANTIC_EMBED_PARALLEL", parallel, raising=False)
         monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", tmp_path / cache)
         monkeypatch.setattr(sys, "argv", ["vault-semantic", "reindex", "--mode", "full"])
         caplog.clear()
