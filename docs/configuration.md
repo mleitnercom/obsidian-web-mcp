@@ -137,6 +137,7 @@ is set. See [create-note.md](create-note.md).
 | `VAULT_SEMANTIC_CHUNK_SIZE` | `900` | Chunk size |
 | `VAULT_SEMANTIC_CHUNK_OVERLAP` | `150` | Chunk overlap |
 | `VAULT_SEMANTIC_EMBED_BATCH_SIZE` | `64` | Embedding batch size |
+| `VAULT_SEMANTIC_EMBED_PARALLEL` | `0` | fastembed only: number of worker processes (one thread each) for embedding during a reindex; `0` or `1` is off, one multi-threaded process as before. Each worker loads its own copy of the model. Set it for the reindex job, not for the server |
 | `VAULT_SEMANTIC_MAX_RESULTS` | `20` | Max semantic results |
 | `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | `4` | Reindex debounce seconds |
 

@@ -585,30 +585,51 @@ class SemanticSearchEngine:
         """Yield (offset, L2-normalised float32 matrix) for `chunks`, batch by batch."""
         batch_size = max(config.SEMANTIC_EMBED_BATCH_SIZE, 1)
         total_batches = (len(chunks) + batch_size - 1) // batch_size
-        for start in range(0, len(chunks), batch_size):
-            batch = chunks[start:start + batch_size]
-            texts = [self._embedding_text(chunk) for chunk in batch]
-            if self._embed_backend.startswith("sentence-transformers"):
-                embeddings = self._embedder.encode(
-                    texts,
-                    normalize_embeddings=False,
-                    convert_to_numpy=True,
-                )
-            else:
-                embeddings = list(self._embedder.embed(texts))
-
+        for batch_number, (start, embeddings) in enumerate(self._raw_embeddings(chunks, batch_size), start=1):
             matrix = self._numpy.asarray(embeddings, dtype="float32")
             self._faiss.normalize_L2(matrix)
-            batch_number = (start // batch_size) + 1
             if batch_number == 1 or batch_number == total_batches or batch_number % 10 == 0:
                 logger.info(
                     "Semantic embedding progress: batch %s/%s (%s/%s chunks)",
                     batch_number,
                     total_batches,
-                    min(start + len(batch), len(chunks)),
+                    min(start + len(matrix), len(chunks)),
                     len(chunks),
                 )
             yield start, matrix
+
+    def _raw_embeddings(self, chunks: list[Chunk], batch_size: int):
+        """Yield (offset, embeddings) for consecutive batches of `chunks`, in chunk order."""
+        if self._embed_backend.startswith("sentence-transformers"):
+            for start in range(0, len(chunks), batch_size):
+                texts = [self._embedding_text(chunk) for chunk in chunks[start:start + batch_size]]
+                yield start, self._embedder.encode(texts, normalize_embeddings=False, convert_to_numpy=True)
+            return
+
+        parallel = config.SEMANTIC_EMBED_PARALLEL
+        if parallel <= 1:  # fastembed reads parallel=0 as "every CPU", so 0 must never reach it
+            for start in range(0, len(chunks), batch_size):
+                texts = [self._embedding_text(chunk) for chunk in chunks[start:start + batch_size]]
+                yield start, list(self._embedder.embed(texts))
+            return
+
+        # One call for all chunks: fastembed starts its worker processes (one thread each)
+        # per call, so a call per batch would start them again for every batch. The stream
+        # comes back in input order.
+        logger.info("Semantic embedding with %s worker processes", parallel)
+        texts = [self._embedding_text(chunk) for chunk in chunks]
+        start, pending = 0, []
+        for vector in self._embedder.embed(texts, batch_size=batch_size, parallel=parallel):
+            pending.append(vector)
+            if len(pending) == batch_size:
+                yield start, pending
+                start, pending = start + batch_size, []
+        if pending:
+            yield start, pending
+            start += len(pending)
+        if start != len(chunks):
+            # Rows are matched to chunks by position; a short stream would shift every row after it.
+            raise RuntimeError(f"Embedding returned {start} vectors for {len(chunks)} chunks")
 
     def _semantic_scores(
         self,
