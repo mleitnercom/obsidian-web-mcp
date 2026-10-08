@@ -13,6 +13,8 @@ import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import frontmatter as _pyfrontmatter
+
 from . import config
 from .child_env import content_parser_env
 # Converged to upstream's serialization module (#9). vault_json_dumps is kept as a
@@ -313,6 +315,54 @@ def refuse_hard_linked_file(path: Path) -> None:
 # because read_file extracts its text, and that is exactly why it belongs here: a file
 # whose text can be read out must never have that text written back over its bytes.
 TEXT_WRITE_REFUSED_EXTENSIONS = UNSUPPORTED_BINARY_EXTENSIONS | frozenset({".pdf"})
+
+# Notes whose YAML frontmatter text writes must keep readable.
+FRONTMATTER_CHECKED_EXTENSIONS = frozenset({".md", ".markdown"})
+
+
+class FrontmatterBreakError(ValueError):
+    """A text write that would leave a note's YAML frontmatter unreadable."""
+
+
+def frontmatter_problem(text: str) -> str | None:
+    """Why the indexes could not read this note's frontmatter, or None if they can.
+
+    Uses python-frontmatter, the parser the frontmatter index and the semantic chunker
+    read notes with, not frontmatter_io (ruamel), which the merge writes use. The two
+    disagree on some input (an unknown tag such as ``!foo`` loads in ruamel and fails in
+    PyYAML), and "readable" has to mean readable where it otherwise breaks silently.
+    """
+    try:
+        dict(_pyfrontmatter.loads(text).metadata)
+    except Exception as exc:  # any parser failure is the answer, not an error here
+        return " ".join(str(exc).split())[:300] or type(exc).__name__
+    return None
+
+
+def refuse_frontmatter_breakage(relative_path: str, path: Path, content: str) -> None:
+    """Refuse a text write that turns readable (or absent) frontmatter into unreadable.
+
+    Found 2026-10: three notes written through vault_write and vault_str_replace carried
+    ``stand: 2026-10-07 (note: details)`` unquoted; the indexes dropped them silently.
+    A note whose frontmatter is already unreadable stays editable, so it can be fixed.
+    """
+    if Path(relative_path).suffix.lower() not in FRONTMATTER_CHECKED_EXTENSIONS:
+        return
+    problem = frontmatter_problem(content)
+    if problem is None:
+        return
+    if path.exists():
+        try:
+            before = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            before = None
+        if before is not None and frontmatter_problem(before) is not None:
+            return
+    raise FrontmatterBreakError(
+        f"Nothing was written to {relative_path}: its YAML frontmatter would become unreadable "
+        f"({problem}). Quote a value that contains ': ' or starts with a quote, [, {{, &, *, !, |, >, "
+        f"%, @ or a backtick, for example stand: \"2026-10-07 (note: details)\"."
+    )
 
 
 def _reject_unsupported_binary(path: Path) -> None:
@@ -880,6 +930,7 @@ def write_file_atomic(
         )
 
     path = resolve_vault_path(relative_path)
+    refuse_frontmatter_breakage(relative_path, path, content)
     is_new = not path.exists()
 
     if create_dirs:
