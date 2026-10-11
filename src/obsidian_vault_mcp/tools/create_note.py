@@ -36,7 +36,7 @@ from ruamel.yaml.error import YAMLError
 from .. import config
 from ..frontmatter_io import loads as frontmatter_loads
 from ..hooks import fire_post_write
-from ..vault import read_file, vault_json_dumps, write_bytes_atomic
+from ..vault import frontmatter_problem, read_file, vault_json_dumps, write_bytes_atomic
 from .write import _refresh_frontmatter_index
 
 logger = logging.getLogger(__name__)
@@ -228,6 +228,14 @@ def _validate_content(content: str) -> Any:
         metadata, body = frontmatter_loads(content)
     except YAMLError as exc:
         raise CreateNoteError("invalid_frontmatter", f"Frontmatter is not valid YAML: {exc}") from None
+    # ruamel (above) accepts some YAML the indexes' parser refuses, e.g. a "!tag".
+    problem = frontmatter_problem(content)
+    if problem is not None:
+        raise CreateNoteError(
+            "invalid_frontmatter",
+            f"Frontmatter would be unreadable for the vault's indexes ({problem}). Quote a value "
+            "that contains ': ', for example stand: \"2026-10-07 (note: details)\".",
+        )
 
     section = config.VAULT_CREATE_NOTE_REQUIRE_BODY_SECTION
     if section and section not in body:
