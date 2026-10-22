@@ -9,12 +9,23 @@ import frontmatter
 from .. import config
 from .models import Chunk
 
-_WORD_RE = re.compile(r"[A-Za-z0-9_]+")
+# Word characters of any script. Until 0.17.0 this was [A-Za-z0-9_]+, which cut every word
+# with an umlaut or ß in two ("prüferbank" -> "pr", "ferbank").
+_WORD_RE = re.compile(r"\w+")
 
 
 def _tokenize(text: str) -> list[str]:
-    """Tokenize text into lowercase alphanumeric words."""
+    """Tokenize text into lowercase words (letters, digits and underscores, any script)."""
     return [match.group(0).lower() for match in _WORD_RE.finditer(text)]
+
+
+def chunk_tokens(chunk: Chunk) -> list[str]:
+    """The keyword-index words of a chunk, derived from its stored fields.
+
+    Not read from ``chunk.tokens``: a cache written by an older tokenizer then still
+    matches queries tokenized by this one, without a reindex.
+    """
+    return _tokenize(f"{chunk.title}\n{chunk.section}\n{' '.join(chunk.tags)}\n{chunk.text}")
 
 
 def _split_with_overlap(text: str, chunk_size: int, overlap: int) -> list[str]:
