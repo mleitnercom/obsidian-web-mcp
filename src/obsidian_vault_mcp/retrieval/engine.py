@@ -9,10 +9,16 @@ from pathlib import Path
 
 from .. import config
 from ..vault import has_extra_hard_links, is_vault_path_allowed
-from .chunker import chunk_markdown_file
+from .chunker import _tokenize, chunk_markdown_file, chunk_tokens
 from .models import Chunk
 
 logger = logging.getLogger(__name__)
+
+# Candidates per signal, independent of max_results. The ranking of a chunk then depends
+# only on its own two scores, so asking for 20 results returns the 10 of a request for
+# 10 plus 10 more. Until 0.17.0 the semantic pool was max_results * 4 and a keyword match
+# outside it scored 0 for meaning, so the same note ranked differently by result count.
+_CANDIDATES = 200
 
 
 class SemanticSearchEngine:
@@ -28,6 +34,8 @@ class SemanticSearchEngine:
         self._path_index: dict[str, list[str]] = {}
         self._manifest: dict[str, str] = {}
         self._bm25 = None
+        # The chunks of the BM25 corpus, row for row: BM25 scores map to chunks by this list.
+        self._bm25_chunks: list[Chunk] = []
         self._embedder = None
         self._embed_backend = ""
         self._faiss = None
@@ -175,8 +183,14 @@ class SemanticSearchEngine:
                 return {"mode": search_mode, "results": [], "total": 0, "truncated": False}
 
             max_results = min(max_results, config.SEMANTIC_MAX_RESULTS)
-            semantic_scores = self._semantic_scores(query, path_prefix, filter_tags, max_results * 4)
-            keyword_scores = self._keyword_scores(query, path_prefix, filter_tags)
+            query_vec = self._query_vector(query)
+            semantic_scores = self._semantic_scores(query_vec, path_prefix, filter_tags, _CANDIDATES)
+            keyword_scores, keyword_rows = self._keyword_scores(query, path_prefix, filter_tags)
+            if search_mode == "hybrid":
+                # A keyword match outside the semantic candidates gets its real similarity,
+                # not 0.
+                missing = {cid: row for cid, row in keyword_rows.items() if cid not in semantic_scores}
+                semantic_scores.update(self._exact_semantic_scores(query_vec, missing))
             merged = self._merge_scores(semantic_scores, keyword_scores, search_mode)
 
             results = []
@@ -557,9 +571,15 @@ class SemanticSearchEngine:
         self._index = self._build_faiss_index(self._chunks)
 
     def _build_bm25(self, chunks: list[Chunk]):
-        """Build the BM25 index from tokenized chunks."""
-        corpus = [chunk.tokens for chunk in chunks if chunk.tokens]
-        if not corpus:
+        """Build the BM25 index, one document per chunk, in the order of ``chunks``.
+
+        Every chunk is a document, an empty one included: until 0.17.0 chunks without
+        tokens were left out while the scores were still matched to chunks by position,
+        so one empty chunk shifted every later score onto its neighbour.
+        """
+        self._bm25_chunks = list(chunks)
+        corpus = [chunk_tokens(chunk) for chunk in self._bm25_chunks]
+        if not any(corpus):
             return None
         return self._bm25_type(corpus)
 
@@ -610,14 +630,8 @@ class SemanticSearchEngine:
                 )
             yield start, matrix
 
-    def _semantic_scores(
-        self,
-        query: str,
-        path_prefix: str | None,
-        filter_tags: list[str] | None,
-        top_k: int,
-    ) -> dict[str, float]:
-        """Return semantic similarity scores keyed by chunk id."""
+    def _query_vector(self, query: str):
+        """The L2-normalised query embedding, as a 1 x d float32 matrix."""
         if self._embed_backend.startswith("sentence-transformers"):
             query_vec = self._embedder.encode(
                 [query],
@@ -628,7 +642,25 @@ class SemanticSearchEngine:
             query_vec = list(self._embedder.embed([query]))
         matrix = self._numpy.asarray(query_vec, dtype="float32")
         self._faiss.normalize_L2(matrix)
-        distances, indices = self._index.search(matrix, min(top_k, len(self._chunks)))
+        return matrix
+
+    def _exact_semantic_scores(self, query_vec, rows: dict[str, int]) -> dict[str, float]:
+        """Similarity of the given chunks (id -> index row) to the query, read from the index."""
+        scores: dict[str, float] = {}
+        for chunk_id, row in rows.items():
+            vector = self._index.reconstruct(int(row))
+            scores[chunk_id] = float(max(float(self._numpy.dot(query_vec[0], vector)), 0.0))
+        return scores
+
+    def _semantic_scores(
+        self,
+        query_vec,
+        path_prefix: str | None,
+        filter_tags: list[str] | None,
+        top_k: int,
+    ) -> dict[str, float]:
+        """Return semantic similarity scores keyed by chunk id."""
+        distances, indices = self._index.search(query_vec, min(top_k, len(self._chunks)))
 
         expected_tags = {tag.lower() for tag in (filter_tags or [])}
         scores: dict[str, float] = {}
@@ -648,30 +680,42 @@ class SemanticSearchEngine:
         query: str,
         path_prefix: str | None,
         filter_tags: list[str] | None,
-    ) -> dict[str, float]:
-        """Return BM25 keyword scores keyed by chunk id."""
+    ) -> tuple[dict[str, float], dict[str, int]]:
+        """Return the top BM25 keyword scores keyed by chunk id, and each one's index row.
+
+        The query is tokenized exactly as the chunks are. Until 0.17.0 it was only split on
+        whitespace, so a query word with a hyphen, an umlaut or trailing punctuation
+        ("netscaler-forensik", "prüferbank", "verlieren?") matched nothing.
+        """
         if self._bm25 is None:
-            return {}
-        tokens = [token.lower() for token in query.split() if token.strip()]
+            return {}, {}
+        tokens = _tokenize(query)
         if not tokens:
-            return {}
+            return {}, {}
 
         raw_scores = self._bm25.get_scores(tokens)
         if len(raw_scores) == 0:
-            return {}
+            return {}, {}
         max_score = max(float(score) for score in raw_scores) or 1.0
         expected_tags = {tag.lower() for tag in (filter_tags or [])}
 
-        scores: dict[str, float] = {}
-        for chunk, raw_score in zip(self._chunks, raw_scores, strict=False):
+        candidates: list[tuple[float, int]] = []
+        for row, (chunk, raw_score) in enumerate(zip(self._bm25_chunks, raw_scores, strict=True)):
             if path_prefix and not chunk.path.startswith(path_prefix):
                 continue
             if expected_tags and not expected_tags.issubset({tag.lower() for tag in chunk.tags}):
                 continue
             normalized = max(float(raw_score), 0.0) / max_score
             if normalized > 0.0:
-                scores[chunk.id] = normalized
-        return scores
+                candidates.append((normalized, row))
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        scores: dict[str, float] = {}
+        rows: dict[str, int] = {}
+        for normalized, row in candidates[:_CANDIDATES]:
+            chunk_id = self._bm25_chunks[row].id
+            scores[chunk_id] = normalized
+            rows[chunk_id] = row
+        return scores, rows
 
     def _merge_scores(
         self,
@@ -685,7 +729,7 @@ class SemanticSearchEngine:
                 (chunk_id, sem_score, sem_score, keyword_scores.get(chunk_id, 0.0))
                 for chunk_id, sem_score in semantic_scores.items()
             ]
-            merged.sort(key=lambda item: item[1], reverse=True)
+            merged.sort(key=lambda item: (-item[1], item[0]))
             return merged
 
         if search_mode == "keyword":
@@ -693,7 +737,7 @@ class SemanticSearchEngine:
                 (chunk_id, kw_score, semantic_scores.get(chunk_id, 0.0), kw_score)
                 for chunk_id, kw_score in keyword_scores.items()
             ]
-            merged.sort(key=lambda item: item[1], reverse=True)
+            merged.sort(key=lambda item: (-item[1], item[0]))
             return merged
 
         combined_ids = set(semantic_scores) | set(keyword_scores)
@@ -703,7 +747,7 @@ class SemanticSearchEngine:
             kw_score = keyword_scores.get(chunk_id, 0.0)
             total = sem_score * 0.75 + kw_score * 0.25
             merged.append((chunk_id, total, sem_score, kw_score))
-        merged.sort(key=lambda item: item[1], reverse=True)
+        merged.sort(key=lambda item: (-item[1], item[0]))
         return merged
 
     @staticmethod

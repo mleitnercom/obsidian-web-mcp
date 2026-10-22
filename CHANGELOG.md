@@ -5,6 +5,17 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.18.0] - 2026-10-22
+
+### Fixed
+
+- **The keyword half of the hybrid semantic search sees the query.** The query was split on whitespace only while the chunks were tokenized on `[A-Za-z0-9_]+`, so a query word with a hyphen, an umlaut or trailing punctuation (`netscaler-forensik`, `prüferbank`, `verlieren?`) matched nothing. The query now goes through the chunks' tokenizer.
+- **Umlaut words are one word.** The tokenizer is `\w+` (letters, digits and underscores in any script); `[A-Za-z0-9_]+` cut every word with an umlaut or ß in two. BM25 is built from the stored fields with the current tokenizer, so the existing cache works without a reindex.
+- **The ranking no longer depends on `max_results`.** The semantic candidates were `max_results * 4`, and a keyword match outside them scored 0 for meaning. Each signal now contributes its top 200, a keyword candidate outside the semantic top 200 gets its real similarity from the index, and ties order by chunk id, so asking for more results extends the list without reordering it.
+- **BM25 scores map to chunks by row.** Chunks without tokens were left out of the BM25 corpus while scores were matched to chunks by position, so one empty chunk would shift every later score onto its neighbour. The production index has no such chunk.
+
+Found by a known-item comparison (16.10.): 20 questions on random passages of random notes plus the real client queries, and 10 earlier ones. Measured with this code on a copy of the production cache (85,032 chunks), hybrid, 10 results: target in the top 5 for 13 of 20 questions instead of 8, MRR@10 0.54 instead of 0.38; on the earlier 10, 3 instead of 2. Queries whose top 10 changed when 20 results were asked for: 0 of 30 instead of 22. Seven questions improve, three get worse (English questions full of function words, which the keyword half now sees). Same change as obsidian-vault-mcp-ext v0.7.0. Tests: `tests/test_semantic_hybrid_ranking.py`, 11, with real FAISS and BM25; all 11 fail on v0.17.0.
+
 ## [v0.17.0] - 2026-10-08
 
 ### Added
