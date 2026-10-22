@@ -5,6 +5,12 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.18.1] - 2026-10-23
+
+### Fixed
+
+- **The token response tells clients how long the token really lives.** The access token is `VAULT_MCP_TOKEN` itself and stays valid until it is rotated, but the token endpoint answered `expires_in: 86400`. ChatGPT honours that and, with no refresh grant here, asked for a new login every day; the journal shows a new authorization almost daily since 11.10. Both grants now answer 365 days. Rotating the token still ends it at once. Tested through `build_app()`: both grants advertise a year and the issued token passes the bearer middleware; both tests fail on v0.18.0.
+
 ## [v0.18.0] - 2026-10-22
 
 ### Fixed

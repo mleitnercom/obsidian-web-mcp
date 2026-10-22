@@ -600,6 +600,13 @@ async def oauth_token(request: Request) -> JSONResponse:
         )
 
 
+# The access token is VAULT_MCP_TOKEN itself: it does not expire on the server and stays
+# valid until it is rotated. Until 0.18.0 the response said 86400 seconds, and a client
+# that honours expires_in (ChatGPT) asked for a new login every day, with no refresh grant
+# to renew silently. A year is what clients are told; rotating the token still ends it.
+ACCESS_TOKEN_EXPIRES_IN = 365 * 24 * 60 * 60
+
+
 async def _handle_authorization_code(form, client_id: str, client_secret: str) -> JSONResponse:
     """Exchange an authorization code for a bearer token."""
     code = form.get("code", "")
@@ -658,7 +665,7 @@ async def _handle_authorization_code(form, client_id: str, client_secret: str) -
     return JSONResponse({
         "access_token": config.VAULT_MCP_TOKEN,
         "token_type": "bearer",
-        "expires_in": 86400,
+        "expires_in": ACCESS_TOKEN_EXPIRES_IN,
     })
 
 
@@ -680,7 +687,7 @@ async def _handle_client_credentials(client_id: str, client_secret: str) -> JSON
     return JSONResponse({
         "access_token": config.VAULT_MCP_TOKEN,
         "token_type": "bearer",
-        "expires_in": 86400,
+        "expires_in": ACCESS_TOKEN_EXPIRES_IN,
     })
 
 
