@@ -7,6 +7,7 @@ Designed to run behind Cloudflare Tunnel for secure remote access.
 import asyncio
 import functools
 import hashlib
+import re
 import json
 import logging
 import sys
@@ -43,7 +44,7 @@ from .config import VAULT_MCP_PORT, VAULT_MCP_TOKEN, VAULT_PATH
 from .frontmatter_index import FrontmatterIndex
 from .hooks import clear_post_write_hooks, flush_post_write_hooks
 from .obsidian_rest import obsidian_rest_reachable, obsidian_rest_tls_warning
-from .rate_limit import check_rate_limit, current_auth_principal, current_request_metadata
+from .rate_limit import RateLimitExceeded, check_rate_limit, current_auth_principal, current_request_metadata
 from .retrieval import SemanticSearchEngine
 from .vault import vault_json_dumps
 
@@ -347,6 +348,14 @@ def _tool_rate_limit_error(scope: str, limit: int) -> str | None:
     """Return a JSON error payload if the current request exceeded its rate limit."""
     try:
         _enforce_tool_rate_limit(scope, limit)
+    except RateLimitExceeded as e:
+        metadata = current_request_metadata() or {}
+        client = re.sub(r"[^a-zA-Z0-9_.-]", "_", str(metadata.get("client_family", "unknown")))[:40]
+        principal_hash = hashlib.sha256((current_auth_principal() or "").encode()).hexdigest()[:12]
+        logger.warning("mcp_rate_limited scope=%s client=%s principal_hash=%s retry_after_seconds=%d",
+                       e.scope, client, principal_hash, e.retry_after_seconds)
+        return vault_json_dumps({"error": str(e), "error_code": "rate_limited",
+                                 "scope": e.scope, "retry_after_seconds": e.retry_after_seconds})
     except ValueError as e:
         return vault_json_dumps({"error": str(e)})
     return None
