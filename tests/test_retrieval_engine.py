@@ -42,6 +42,7 @@ def test_incremental_reindex_loads_cache_before_refresh(monkeypatch):
     def _load():
         calls.append("load")
         engine._chunks = ["cached"]
+        engine._generation_id = "20261118T000000Z-0000abcd"
 
     def _incremental(updates):
         calls.append(("incremental", updates))

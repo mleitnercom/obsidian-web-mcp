@@ -1,16 +1,21 @@
 """Tests for semantic markdown chunking."""
 
-from obsidian_vault_mcp.retrieval.chunker import chunk_markdown_file
+from obsidian_vault_mcp.retrieval.chunker import chunk_markdown_file, chunk_tokens
 
 
 def test_chunk_markdown_file_returns_chunks(vault_dir):
-    """Chunking a markdown note yields searchable chunks."""
+    """Chunking a markdown note yields searchable chunks.
+
+    Their keyword words come from chunk_tokens(), which the BM25 index reads; the stored
+    `tokens` list stays empty since 0.19.0 (nothing read it, and it held ~130 MB live).
+    """
     chunks = chunk_markdown_file(vault_dir / "test-note.md")
 
     assert chunks
     assert chunks[0].path == "test-note.md"
     assert chunks[0].title == "test-note"
-    assert chunks[0].tokens
+    assert chunks[0].tokens == []
+    assert {"test", "note", "content"} <= set(chunk_tokens(chunks[0]))
 
 
 def test_chunk_markdown_file_splits_long_content(vault_dir, monkeypatch):

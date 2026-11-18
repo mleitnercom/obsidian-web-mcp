@@ -38,6 +38,19 @@ def build_simple_pdf_bytes(text: str) -> bytes:
     return b"".join(parts)
 
 
+@pytest.fixture(autouse=True)
+def _private_semantic_cache(tmp_path, monkeypatch):
+    """Every test gets its own semantic cache directory.
+
+    Since 0.19.0 a reindex takes a writer lock and writes generations in the cache
+    directory; without this a test that builds an engine on the default path would do
+    that in ~/Obsidian/MyVault/.obsidian-vault-mcp of whoever runs the suite.
+    """
+    import obsidian_vault_mcp.config as config
+
+    monkeypatch.setattr(config, "SEMANTIC_CACHE_PATH", tmp_path / "semantic-cache")
+
+
 @pytest.fixture
 def vault_dir(tmp_path, monkeypatch):
     """Create a temporary vault directory with sample files."""

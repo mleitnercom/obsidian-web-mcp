@@ -30,6 +30,8 @@ from obsidian_vault_mcp import config
 from obsidian_vault_mcp.retrieval.engine import SemanticSearchEngine
 from obsidian_vault_mcp.retrieval.models import Chunk
 
+from .semantic_cache_helpers import flat_from_generation
+
 REQUIRE = os.environ.get("VAULT_TEST_REQUIRE_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}
 try:
     import faiss  # noqa: F401
@@ -120,6 +122,8 @@ def test_a_fragment_of_an_umlaut_word_no_longer_matches(vault):
 def test_a_cache_written_by_the_old_tokenizer_matches_without_a_reindex(vault):
     (vault / "befund.md").write_text("# Befund\n\nDie Prüferbank ist knapp.\n", encoding="utf-8")
     SemanticSearchEngine().search("x", max_results=1)  # builds the cache
+    # A flat cache of 0.16 carries tokens from the old tokenizer; they are never read.
+    flat_from_generation(config.SEMANTIC_CACHE_PATH)
     cache = config.SEMANTIC_CACHE_PATH / "chunks.json"
     chunks = json.loads(cache.read_text(encoding="utf-8"))
     old = re.compile(r"[A-Za-z0-9_]+")

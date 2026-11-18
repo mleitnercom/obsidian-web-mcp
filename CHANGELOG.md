@@ -5,6 +5,29 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ## [Unreleased]
 
+## [v0.19.0] - 2026-11-18
+
+### Fixed
+
+- **The semantic cache is written as complete generations.** Until now `_persist_unlocked()` wrote faiss.index, chunks.json, manifest.json, path_index.json and index_meta.json one after the other under their live names. On 16.11.2026 the OOM killer ended a run after faiss.index (99,134 vectors) and before chunks.json (99,015 chunks); the next run could not reuse any vector and embedded the whole vault again. A writer now builds a generation in `generations/.staging-<id>/`, writes `generation.json` last (embedder, dimension, counts, SHA-256 of every file and of the ordered chunk ids), reads the result back as a reader would, renames it into place and only then replaces `CURRENT` atomically. Readers resolve `CURRENT` once and read every file from that directory. Layout and rules: `docs/configuration.md`, "The semantic cache".
+- **A failed load no longer builds inside the server.** `_load_unlocked()` started a full rebuild in the calling process when a file did not parse. Now a generation that fails verification is refused; the server serves its parent generation and says so in `/health` (`semantic.note`), or switches semantic search off with the reason. Every other tool keeps working.
+- **Empty notes are not changes.** A note without chunks (empty, frontmatter only, unparsable frontmatter) was left out of the manifest and found changed on every run: 27 notes in each run on 18.11.2026. Every readable note is now in the manifest; a note that is not valid UTF-8 is neither indexed nor reported changed.
+- **One writer at a time.** Manual, nightly, weekly and (opt-in) server-side reindexing take one file lock; `vault-semantic reindex` waits up to `--lock-timeout` seconds (default 3600). A generation a reader is loading is never removed; kept are `CURRENT` and its parent.
+- **Rate limiting uses monotonic windows** (`e4fe19e`): a wall-clock jump no longer stretches or resets a window, a refused call does not use quota, and `retry_after` reports the real wait. Tests: `tests/test_rate_limit_clock.py`.
+
+### Changed
+
+- **Less memory.** Chunks are written and read as JSON lines, one at a time; the 310 MB indented `chunks.json` was parsed as a whole. Chunks no longer carry a token list (nothing read it). BM25 reads its corpus as a generator. The maintenance job (`vault-semantic reindex`) loads neither the FAISS index nor BM25: vectors of unchanged notes are read from the previous generation's file and the new file is written block by block. Measured on VM117 with the production cache (99,571 chunks): the server-side load holds 1,249 MiB RSS (the 0.18 server process held 3,125 MB of cgroup memory); a change run writing a new generation peaks at 834 MiB; a run without changes at 402 MiB and writes nothing. chunks.jsonl is 115 MB instead of 310 MB.
+- `vault-semantic verify` checks the current generation (`--shallow`: structure and sizes) and exits 1 if it fails. `vault-semantic status` lists the generations.
+
+### Upgrade
+
+The flat cache of 0.18 is served as it is until the first `vault-semantic reindex`, which writes it out as the first generation and reuses its vectors. A flat cache has no seal; before its vectors are served or reused, 32 evenly spread chunks are embedded again and must match (on the production cache: lowest similarity 1.0000). A cache whose rows are shifted against its chunks fails that and is rebuilt. The flat files are left untouched for a rollback to 0.18.
+
+### Tests
+
+`tests/test_index_generations.py` (39, real FAISS, BM25, files, locks and child processes): a writer SIGKILLed after each of eight steps and while embedding leaves exactly the old or the new generation, and the next run reuses the vectors and removes the leftovers; a write error publishes nothing; a generation that fails its own read-back is never published; eleven kinds of damage are refused, among them the 16.11 mix with equal counts and files reordered with intact per-file order, and the parent is served; with every generation damaged only semantic search stops and `vault_read` works; a second writer waits or gives up, two writers at once are serialised, readers always see one whole generation while writers publish, a generation being read is not removed; empty notes; the flat cache served, migrated and, with shifted rows, refused; the maintenance job reads no FAISS index and builds no BM25. Each of 16 protections removed on its own fails at least one test (Linux). Full suite on VM117 with `VAULT_TEST_REQUIRE_TOOLS=1`: 706 passed, 0 skipped.
+
 ## [v0.18.1] - 2026-10-23
 
 ### Fixed

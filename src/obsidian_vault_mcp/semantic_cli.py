@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .retrieval import SemanticSearchEngine
+from .retrieval import generations
 from .vault import repair_markdown_encoding_issues, scan_markdown_encoding_issues
 
 
@@ -27,6 +28,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default="full",
         help="Choose a full rebuild or incremental refresh.",
     )
+    reindex.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=3600.0,
+        help="Seconds to wait for another index writer before giving up (default 3600).",
+    )
+
+    verify = subparsers.add_parser("verify", help="Verify the generation CURRENT names; exit 1 if it fails.")
+    verify.add_argument("--shallow", action="store_true", help="Check structure and sizes only, no checksums.")
 
     search = subparsers.add_parser("search", help="Run a semantic/keyword/hybrid query.")
     search.add_argument("query", help="Natural-language query.")
@@ -75,24 +85,21 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _make_engine() -> SemanticSearchEngine:
+def _make_engine(maintenance: bool = False) -> SemanticSearchEngine:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         stream=sys.stderr,
     )
-    return SemanticSearchEngine()
+    # A reindex never answers a query: no FAISS index and no BM25 in memory.
+    return SemanticSearchEngine(maintenance=True) if maintenance else SemanticSearchEngine()
 
 
 def _status_payload(engine: SemanticSearchEngine) -> dict:
     payload = dict(engine.status)
     cache_path = engine.status["cache_path"]
-    payload["cache_files"] = {
-        "faiss_index": f"{cache_path}/faiss.index",
-        "chunks": f"{cache_path}/chunks.json",
-        "manifest": f"{cache_path}/manifest.json",
-        "path_index": f"{cache_path}/path_index.json",
-    }
+    payload["current_generation"] = generations.read_pointer_or_none(cache_path)
+    payload["generations"] = generations.list_generations(cache_path)
     return payload
 
 
@@ -108,7 +115,15 @@ def _maybe_write_report(path: str, payload: dict) -> None:
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
-    engine = _make_engine()
+
+    if args.command == "verify":
+        from . import config
+
+        result = generations.check_current(config.SEMANTIC_CACHE_PATH, deep=not args.shallow)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        sys.exit(0 if result["ok"] else 1)
+
+    engine = _make_engine(maintenance=args.command == "reindex")
 
     if args.command == "status":
         if args.init:
@@ -117,7 +132,11 @@ def main() -> None:
         return
 
     if args.command == "reindex":
-        result = engine.reindex(full=(args.mode == "full"))
+        try:
+            result = engine.reindex(full=(args.mode == "full"), lock_timeout=args.lock_timeout)
+        except generations.WriterBusy as exc:
+            print(json.dumps({"error": str(exc)}, indent=2))
+            sys.exit(1)
         print(json.dumps(result, indent=2))
         return
 

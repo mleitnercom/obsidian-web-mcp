@@ -140,6 +140,47 @@ is set. See [create-note.md](create-note.md).
 | `VAULT_SEMANTIC_MAX_RESULTS` | `20` | Max semantic results |
 | `VAULT_SEMANTIC_UPDATE_DEBOUNCE_SECONDS` | `4` | Reindex debounce seconds |
 
+### The semantic cache (generations, since 0.19.0)
+
+```
+<VAULT_SEMANTIC_CACHE_PATH>/
+  CURRENT                         id of the generation readers use
+  generations/<id>/               generation.json (the seal), faiss.index, chunks.jsonl,
+                                  path_index.json, manifest.json
+  generations/.staging-<id>/      being written; never read
+  .writer.lock                    one writer at a time, across processes
+```
+
+- A writer (`vault-semantic reindex`, or the server when `VAULT_SEMANTIC_ALLOW_MCP_REINDEX`
+  or `VAULT_SEMANTIC_AUTO_REINDEX` is on) builds the whole generation in a staging
+  directory, writes the seal last, reads the result back as a reader would, and only then
+  replaces `CURRENT`. A writer killed at any point leaves the previous generation in place;
+  the next writer removes what it left.
+- The seal records the embedder, dimension, counts, the SHA-256 of every file and of the
+  ordered chunk ids. A reader resolves `CURRENT` once and reads every file from that
+  directory. A generation that fails any check is refused; the server then serves the
+  previous generation (its parent) and reports that in `/health` (`semantic.note`), or
+  switches semantic search off with the reason. It never builds an index on its own,
+  unless `VAULT_SEMANTIC_BUILD_ON_DEMAND` is set and there is no cache at all.
+- Kept: `CURRENT` and its parent. A generation a reader is loading is not removed.
+- Every note that can be read is in the manifest, an empty one included, so an unchanged
+  empty note is not a change. A note that is not valid UTF-8 is not indexed and not
+  reported as changed.
+- `vault-semantic reindex` waits up to `--lock-timeout` seconds (default 3600) for another
+  writer. It loads neither the FAISS index nor BM25: vectors of unchanged notes are read
+  from the previous generation's file, block by block.
+- `vault-semantic verify` checks the generation `CURRENT` names (`--shallow`: sizes and
+  structure only) and exits 1 if it fails.
+
+**Upgrading from 0.18 or earlier.** The flat files (`faiss.index`, `chunks.json`,
+`manifest.json`, `path_index.json`, `index_meta.json`) are served as they are until the
+first `vault-semantic reindex`, which writes them out as the first generation. A flat
+cache has no seal, so before its vectors are served or reused 32 evenly spread chunks are
+embedded again and must match their stored vectors; a cache whose rows are shifted
+against its chunks fails that and is rebuilt. The flat files are never changed, so 0.18
+can still read them after a rollback (as of the day of the upgrade). Remove them once the
+rollback window is over.
+
 ## Tool Limits and Rate Limits
 
 | Variable | Default | Description |

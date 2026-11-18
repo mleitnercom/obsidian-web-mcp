@@ -14,6 +14,11 @@ index. What must hold:
 Everything runs through the `vault-semantic` CLI, as the nightly job does, with real
 FAISS and BM25. Only the model is replaced: a deterministic embedder that records
 every text it embeds, with vectors that depend on model name and text.
+
+Since 0.19.0 the cache is a generation (see test_index_generations.py). The tests about
+the embedder record and about rows that do not line up now start from the flat cache of
+0.18, written exactly as 0.18 wrote it, because that is the one cache that can still
+arrive without a seal: the first run after the upgrade migrates it.
 """
 
 import hashlib
@@ -26,6 +31,8 @@ import pytest
 from obsidian_vault_mcp import config, semantic_cli
 from obsidian_vault_mcp.retrieval.engine import SemanticSearchEngine
 from obsidian_vault_mcp.retrieval.models import Chunk
+
+from .semantic_cache_helpers import by_id, current_dir, flat_from_generation
 
 REQUIRE = os.environ.get("VAULT_TEST_REQUIRE_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}
 try:
@@ -94,13 +101,8 @@ def semantic(tmp_path, monkeypatch):
         return out, embedded
 
     def load(cache):
-        """Chunks by id with their vector, read from disk like the server does."""
-        chunks = json.loads((tmp_path / cache / "chunks.json").read_text(encoding="utf-8"))
-        index = faiss.read_index(str(tmp_path / cache / "faiss.index"))
-        assert index.ntotal == len(chunks)
-        vectors = index.reconstruct_n(0, index.ntotal)
-        # Row i belongs to chunks[i]; compare across builds by chunk id only.
-        return {chunk["id"]: (chunk, vectors[row]) for row, chunk in enumerate(chunks)}
+        """Chunks by id with their vector, read from the generation CURRENT names."""
+        return by_id(tmp_path / cache)
 
     env.cli = cli
     env.load = load
@@ -164,8 +166,9 @@ def test_the_updated_cache_serves_searches(semantic):
     found, _ = semantic.cli("A", "search", "--mode", "keyword", "Quittenkompott")
     assert [r["path"] for r in found["results"]] == ["new.md"]
     # Each row's vector is its own chunk's: its nearest neighbour is itself.
-    chunks = json.loads((semantic.vault.parent / "A" / "chunks.json").read_text(encoding="utf-8"))
-    index = faiss.read_index(str(semantic.vault.parent / "A" / "faiss.index"))
+    gen_dir = current_dir(semantic.vault.parent / "A")
+    chunks = [json.loads(line) for line in (gen_dir / "chunks.jsonl").read_text(encoding="utf-8").splitlines()]
+    index = faiss.read_index(str(gen_dir / "faiss.index"))
     _, nearest = index.search(index.reconstruct_n(0, index.ntotal), 1)
     assert [chunks[row[0]]["id"] for row in nearest] == [chunk["id"] for chunk in chunks]
 
@@ -207,6 +210,7 @@ def test_control_without_the_embedder_record_two_models_mix(semantic, monkeypatc
     """The problem the record prevents: with it ignored, model-a vectors stay next to model-b ones."""
     monkeypatch.setattr(SemanticSearchEngine, "_index_meta", lambda self: {"fixed": True})
     result, _, incremental, fresh = model_switch(semantic, monkeypatch)
+    assert result["mode"] == "incremental"
 
     assert result["reused_chunks"] > 0
     stale = [cid for cid, (_, vector) in fresh.items() if not np.allclose(incremental[cid][1], vector, atol=1e-6)]
@@ -214,8 +218,9 @@ def test_control_without_the_embedder_record_two_models_mix(semantic, monkeypatc
 
 
 def test_a_cache_without_a_record_embeds_every_chunk_once(semantic):
-    """A cache built before this change has no index_meta.json: its model is unknown."""
+    """A flat cache from before 0.15.3 has no index_meta.json: its model is unknown."""
     full, _ = semantic.cli("A", "reindex", "--mode", "full")
+    flat_from_generation(semantic.vault.parent / "A")
     (semantic.vault.parent / "A" / "index_meta.json").unlink()
     (semantic.vault / "a.md").write_text("# A\n\nGeänderte Notiz.\n", encoding="utf-8")
 
@@ -230,6 +235,7 @@ def test_a_cache_without_a_record_embeds_every_chunk_once(semantic):
 @pytest.mark.parametrize("meta", ["", "{kaputt", "[]", '{"embed_backend": "fastembed"}'])
 def test_an_unreadable_or_partial_record_embeds_every_chunk(semantic, meta):
     full, _ = semantic.cli("A", "reindex", "--mode", "full")
+    flat_from_generation(semantic.vault.parent / "A")
     (semantic.vault.parent / "A" / "index_meta.json").write_text(meta, encoding="utf-8")
     (semantic.vault / "a.md").write_text("# A\n\nGeänderte Notiz.\n", encoding="utf-8")
 
@@ -238,8 +244,10 @@ def test_an_unreadable_or_partial_record_embeds_every_chunk(semantic, meta):
 
 
 def test_an_index_that_does_not_match_its_chunks_is_not_reused(semantic):
-    """Rows are only meaningful while index and chunk list line up."""
+    """Rows are only meaningful while index and chunk list line up. A flat cache that
+    does not is refused as a base; the maintenance run then builds from scratch."""
     semantic.cli("A", "reindex", "--mode", "full")
+    flat_from_generation(semantic.vault.parent / "A")
     chunks_path = semantic.vault.parent / "A" / "chunks.json"
     chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
     chunks_path.write_text(json.dumps(chunks[1:]), encoding="utf-8")  # one row too many in faiss.index

@@ -56,14 +56,26 @@ def _split_with_overlap(text: str, chunk_size: int, overlap: int) -> list[str]:
     return chunks
 
 
+def content_hash(content: str) -> str:
+    """The source hash of a note's text, as the manifest records it."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
 def chunk_markdown_file(path: Path) -> list[Chunk]:
     """Read and chunk a markdown file into semantic retrieval units."""
-    rel_path = path.relative_to(config.VAULT_PATH).as_posix()
     content = path.read_text(encoding="utf-8")
-    source_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return chunk_markdown_text(path.relative_to(config.VAULT_PATH).as_posix(), content, content_hash(content))
+
+
+def chunk_markdown_text(rel_path: str, content: str, source_hash: str) -> list[Chunk]:
+    """Chunk a note's text, already read and hashed by the caller.
+
+    `tokens` stays empty: the keyword index derives its words from the stored fields
+    (`chunk_tokens`), and a token list per chunk held about 130 MB on the live vault.
+    """
     post = frontmatter.loads(content)
 
-    title = str(post.metadata.get("title", path.stem))
+    title = str(post.metadata.get("title", Path(rel_path).stem))
     raw_tags = post.metadata.get("tags", [])
     if isinstance(raw_tags, str):
         tags = [raw_tags]
@@ -106,7 +118,7 @@ def chunk_markdown_file(path: Path) -> list[Chunk]:
                     section=section_title,
                     tags=tags,
                     text=text,
-                    tokens=_tokenize(f"{title}\n{section_title}\n{' '.join(tags)}\n{text}"),
+                    tokens=[],
                     source_hash=source_hash,
                 )
             )
