@@ -17,12 +17,14 @@ This project follows semantic versioning. Release dates use YYYY-MM-DD.
 
 ### Changed
 
-- **Less memory.** Chunks are written and read as JSON lines, one at a time; the 310 MB indented `chunks.json` was parsed as a whole. Chunks no longer carry a token list (nothing read it). BM25 reads its corpus as a generator. The maintenance job (`vault-semantic reindex`) loads neither the FAISS index nor BM25: vectors of unchanged notes are read from the previous generation's file and the new file is written block by block. Measured on VM117 with the production cache (99,571 chunks): the server-side load holds 1,249 MiB RSS (the 0.18 server process held 3,125 MB of cgroup memory); a change run writing a new generation peaks at 834 MiB; a run without changes at 402 MiB and writes nothing. chunks.jsonl is 115 MB instead of 310 MB.
+- **Less memory.** Chunks are written and read as JSON lines, one at a time; the 310 MB indented `chunks.json` was parsed as a whole. Chunks no longer carry a token list (nothing read it). BM25 reads its corpus as a generator. The maintenance job (`vault-semantic reindex`) loads neither the FAISS index nor BM25: vectors of unchanged notes are read from the previous generation's file and the new file is written block by block. Measured on VM117 with the production cache (99,571 chunks): the server-side load holds 1,249 MiB RSS (the 0.18 server process held 3,125 MB of cgroup memory); a change run writing a new generation peaks at 834 MiB; a run without changes at 402 MiB and writes nothing. chunks.jsonl is 115 MB instead of 310 MB. In production on 18.11.2026 the weekly full rebuild (99,574 chunks, 3.4 h) peaked at 1.2 GiB unit memory without swap; the last full rebuild with 0.18 peaked at 2.5 GiB with 378 MiB swap. The following change run (21 notes) embedded 535 chunks, reused 99,092 and took 80 s.
 - `vault-semantic verify` checks the current generation (`--shallow`: structure and sizes) and exits 1 if it fails. `vault-semantic status` lists the generations.
 
 ### Upgrade
 
 The flat cache of 0.18 is served as it is until the first `vault-semantic reindex`, which writes it out as the first generation and reuses its vectors. A flat cache has no seal; before its vectors are served or reused, 32 evenly spread chunks are embedded again and must match (on the production cache: lowest similarity 1.0000). A cache whose rows are shifted against its chunks fails that and is rebuilt. The flat files are left untouched for a rollback to 0.18.
+
+Monitoring that dates the index by its files' modification times has to date a generation by its `generation.json`: a full rebuild writes `chunks.jsonl` when it starts and seals the generation hours later.
 
 ### Tests
 
