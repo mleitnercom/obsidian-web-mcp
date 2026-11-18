@@ -441,6 +441,9 @@ def _health_payload() -> dict:
             "initialized": semantic_status["initialized"],
             "chunk_count": semantic_status["chunk_count"],
             "reason": semantic_status["reason"],
+            # Which generation is served, and why it is not CURRENT's when it falls back.
+            "generation": semantic_status["generation"],
+            "note": semantic_status["note"],
         },
         "oauth": _oauth_health_payload(),
         "heartbeat": dict(_heartbeat_state),

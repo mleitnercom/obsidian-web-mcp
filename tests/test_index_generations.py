@@ -414,6 +414,19 @@ DAMAGE = [flip_vector_byte, truncate_chunks, swap_chunk_lines, files_in_another_
           wrong_dimension, no_seal]
 
 
+def test_health_names_the_generation_served_and_why(env, monkeypatch):
+    from obsidian_vault_mcp import server as server_module
+
+    first, second = two_generations(env)
+    flip_vector_byte(first, second)
+    monkeypatch.setattr(server_module, "semantic_engine", SemanticSearchEngine())
+
+    semantic = server_module._health_payload()["semantic"]
+
+    assert semantic["available"] is True and semantic["generation"] == first.name
+    assert second.name in semantic["note"] and "does not match the seal" in semantic["note"]
+
+
 @pytest.mark.parametrize("damage", DAMAGE, ids=[d.__name__ for d in DAMAGE])
 def test_a_damaged_generation_is_refused_and_the_previous_one_served(env, damage):
     first, second = two_generations(env)
